@@ -2,7 +2,6 @@ import os
 import pyautogui
 from PIL import Image
 import json
-from datetime import datetime
 
 # Paths
 INPUT_BASE_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 IT/20 Motion Detection/20 Input Files/60 Camera Base Images"
@@ -25,21 +24,37 @@ def capture_real_image(roi):
         raise ValueError(f"Invalid ROI dimensions: {roi}")
     return pyautogui.screenshot(region=(x, y, width, height))
 
-# Save base image
+# Save base image with a consistent name
 def save_base_image(image, camera_name):
     base_folder = INPUT_BASE_PATH
     os.makedirs(base_folder, exist_ok=True)  # Ensure the folder exists
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_image_path = os.path.join(base_folder, f"{camera_name.replace(' ', '_')}_Base_{timestamp}.jpg")
+    base_image_path = os.path.join(base_folder, f"{camera_name.replace(' ', '_')}_Base.jpg")
     if image.mode == "RGBA":
         image = image.convert("RGB")
     image.save(base_image_path)
     print(f"Saved base image for {camera_name} at: {base_image_path}")
     return base_image_path
 
+# Delete all existing base images
+def clear_base_images():
+    if os.path.exists(INPUT_BASE_PATH):
+        for file_name in os.listdir(INPUT_BASE_PATH):
+            file_path = os.path.join(INPUT_BASE_PATH, file_name)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+                    print(f"Deleted: {file_path}")
+            except Exception as e:
+                print(f"Error deleting file {file_path}: {e}")
+
 # Main function to capture base images for all cameras
 def capture_base_images():
     print("Starting base image capture...")
+
+    # Clear existing base images
+    print("Clearing existing base images...")
+    clear_base_images()
+
     configs = load_config()
     
     for camera_name, config in configs.items():
