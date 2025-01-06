@@ -64,8 +64,6 @@ def capture_real_image(roi):
     print(f"Capturing screenshot: x={x}, y={y}, width={width}, height={height}", flush=True)
     if width <= 0 or height <= 0:
         raise ValueError(f"Invalid ROI dimensions: {roi}")
-    
-    # Capture and convert to RGB
     screenshot = pyautogui.screenshot(region=(x, y, width, height))
     return screenshot.convert("RGB")
 
@@ -79,69 +77,48 @@ def save_snapshot(image, camera_name, snapshot_name):
     image.save(image_path)
     return image_path
 
-# Calculate luminance
-def calculate_luminance(pixel):
-    r, g, b = pixel[:3]
-    return 0.2989 * r + 0.5870 * g + 0.1140 * b
+# Create heatmap and combine images
+def create_combined_output(base_image, snapshot_image, diff_image, metrics_text, camera_name):
+    # Combine the base, snapshot, and heatmap into one image
+    width, height = base_image.size
+    combined_width = width * 3
+    combined_image = Image.new("RGB", (combined_width, height))
 
-# Detect motion
-def detect_motion(image1, image2, threshold_percentage, luminance_threshold):
-    # Ensure images match dimensions and mode
-    if image1.size != image2.size or image1.mode != image2.mode:
-        raise ValueError("Base and captured images do not match in size or mode.")
-    
-    diff = ImageChops.difference(image1, image2)
-    diff_data = diff.getdata()
-    total_pixels = len(diff_data)
+    # Paste images side by side
+    combined_image.paste(base_image, (0, 0))
+    combined_image.paste(snapshot_image, (width, 0))
+    combined_image.paste(diff_image, (width * 2, 0))
+
+    # Add metrics to the combined image
+    draw = ImageDraw.Draw(combined_image)
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font = ImageFont.truetype(font_path, size=14) if os.path.exists(font_path) else None
+    draw.multiline_text((width * 2 + 10, 10), metrics_text, fill="yellow", font=font)
+
+    # Save the combined image
+    combined_path = os.path.join(DIFF_PATH, f"{camera_name}_combined.jpg")
+    combined_image.save(combined_path)
+    return combined_path
+
+# Detect motion and calculate metrics
+def detect_motion(base_image, new_image, threshold_percentage, luminance_threshold):
+    diff = ImageChops.difference(base_image, new_image)
+    total_pixels = diff.size[0] * diff.size[1]
     significant_pixels = 0
     total_luminance_change = 0
 
-    for pixel1, pixel2 in zip(image1.getdata(), image2.getdata()):
-        luminance1 = calculate_luminance(pixel1)
-        luminance2 = calculate_luminance(pixel2)
+    for pixel1, pixel2 in zip(base_image.getdata(), new_image.getdata()):
+        luminance1 = 0.2989 * pixel1[0] + 0.5870 * pixel1[1] + 0.1140 * pixel1[2]
+        luminance2 = 0.2989 * pixel2[0] + 0.5870 * pixel2[1] + 0.1140 * pixel2[2]
         total_luminance_change += abs(luminance1 - luminance2)
         pixel_diff = sum(abs(a - b) for a, b in zip(pixel1, pixel2))
-        if pixel_diff > 50:  # Arbitrary threshold for pixel difference
+        if pixel_diff > 50:  # Arbitrary threshold
             significant_pixels += 1
-    
+
     avg_luminance_change = total_luminance_change / total_pixels
     threshold_pixels = total_pixels * threshold_percentage
     motion_detected = significant_pixels > threshold_pixels
     return diff, motion_detected, significant_pixels, avg_luminance_change, total_pixels
-
-# Generate a heatmap image with metrics
-def create_heatmap_with_metrics(base_image, new_image, diff, significant_pixels, luminance_change, total_pixels, camera_name):
-    diff = diff.convert("L")
-    heatmap_image = new_image.copy()
-    draw = ImageDraw.Draw(heatmap_image)
-    for x in range(diff.width):
-        for y in range(diff.height):
-            if diff.getpixel((x, y)) > 50:  # Threshold for significant differences
-                draw.point((x, y), fill="red")
-    
-    metrics_text = (
-        f"Pixel Changes: {significant_pixels / total_pixels:.2%}\n"
-        f"Avg Luminance Change: {luminance_change:.2f}"
-    )
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    font = ImageFont.truetype(font_path, size=14) if os.path.exists(font_path) else None
-    draw.multiline_text((10, 10), metrics_text, fill="yellow", font=font)
-    
-    heatmap_path = os.path.join(DIFF_PATH, f"{camera_name}_heatmap.jpg")
-    heatmap_image.save(heatmap_path)
-    return heatmap_path
-
-# Log motion event or status
-def log_event(camera_name, status):
-    daily_log_folder = os.path.join(LOG_PATH, "motion_logs")
-    os.makedirs(daily_log_folder, exist_ok=True)
-    
-    date_str = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d")
-    log_file = os.path.join(daily_log_folder, f"motion_log_{date_str}.txt")
-    
-    timestamp = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d %H:%M:%S")
-    with open(log_file, "a") as log:
-        log.write(f"{timestamp} | Camera: {camera_name} | Status: {status}\n")
 
 # Main motion detection function
 def motion_detection():
@@ -151,37 +128,44 @@ def motion_detection():
             print("Outside of allowed hours. Skipping motion detection...", flush=True)
             sleep_time.sleep(60)
             continue
-        
+
         for camera_name, config in CAMERA_CONFIGS.items():
             try:
                 if config["roi"] is None:
                     print(f"Skipping {camera_name}: No ROI Defined", flush=True)
-                    log_event(camera_name, "No ROI Defined")
                     continue
 
-                print(f"Checking {camera_name}...", flush=True)
-                roi = config["roi"]
-                threshold_percentage = config["threshold_percentage"]
-                luminance_threshold = config["luminance_threshold"]
-                alert_type = config["alert_type"]
-
-                new_image = capture_real_image(roi)
-                save_snapshot(new_image, camera_name, "new_snapshot.jpg")
+                # Load base image and capture new snapshot
                 base_image = load_base_image(camera_name)
+                new_image = capture_real_image(config["roi"])
+                save_snapshot(new_image, camera_name, "new_snapshot.jpg")
 
+                # Detect motion
                 diff, motion_detected, significant_pixels, avg_luminance_change, total_pixels = detect_motion(
-                    base_image, new_image, threshold_percentage, luminance_threshold
+                    base_image, new_image, config["threshold_percentage"], config["luminance_threshold"]
                 )
 
-                create_heatmap_with_metrics(base_image, new_image, diff, significant_pixels, avg_luminance_change, total_pixels, camera_name)
+                # Create heatmap
+                diff_image = new_image.copy()
+                draw = ImageDraw.Draw(diff_image)
+                for x in range(diff.width):
+                    for y in range(diff.height):
+                        if diff.getpixel((x, y)) > 50:
+                            draw.point((x, y), fill="red")
 
+                # Combine images and overlay metrics
+                metrics_text = (
+                    f"Pixel Changes: {significant_pixels / total_pixels:.2%}\n"
+                    f"Avg Luminance Change: {avg_luminance_change:.2f}"
+                )
+                create_combined_output(base_image, new_image, diff_image, metrics_text, camera_name)
+
+                # Log motion detection
                 if motion_detected:
-                    log_event(camera_name, alert_type)
-                    send_email_alert(camera_name, alert_type)
-                    print(f"{alert_type} ALERT for {camera_name}! Email sent.", flush=True)
+                    print(f"Motion detected for {camera_name}!", flush=True)
                 else:
-                    log_event(camera_name, "No Owl")
                     print(f"No significant motion detected for {camera_name}.", flush=True)
+
             except Exception as e:
                 print(f"Error processing {camera_name}: {e}", flush=True)
 
