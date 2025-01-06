@@ -79,6 +79,20 @@ def save_snapshot(image, camera_name, snapshot_name):
 
 # Create heatmap and combine images
 def create_combined_output(base_image, snapshot_image, diff_image, metrics_text, camera_name):
+    # Ensure the differences directory exists
+    os.makedirs(DIFF_PATH, exist_ok=True)
+
+    # Convert diff_image to grayscale for valid pixel comparison
+    diff_luminance = diff_image.convert("L")
+
+    # Create heatmap
+    heatmap = snapshot_image.copy()
+    draw = ImageDraw.Draw(heatmap)
+    for x in range(diff_luminance.width):
+        for y in range(diff_luminance.height):
+            if diff_luminance.getpixel((x, y)) > 50:  # Arbitrary threshold
+                draw.point((x, y), fill="red")
+
     # Combine the base, snapshot, and heatmap into one image
     width, height = base_image.size
     combined_width = width * 3
@@ -87,7 +101,7 @@ def create_combined_output(base_image, snapshot_image, diff_image, metrics_text,
     # Paste images side by side
     combined_image.paste(base_image, (0, 0))
     combined_image.paste(snapshot_image, (width, 0))
-    combined_image.paste(diff_image, (width * 2, 0))
+    combined_image.paste(heatmap, (width * 2, 0))
 
     # Add metrics to the combined image
     draw = ImageDraw.Draw(combined_image)
@@ -148,8 +162,8 @@ def motion_detection():
                 # Create heatmap
                 diff_image = new_image.copy()
                 draw = ImageDraw.Draw(diff_image)
-                for x in range(diff.width):
-                    for y in range(diff.height):
+                for x in range(diff.size[0]):
+                    for y in range(diff.size[1]):
                         if diff.getpixel((x, y)) > 50:
                             draw.point((x, y), fill="red")
 
