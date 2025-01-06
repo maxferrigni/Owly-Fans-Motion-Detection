@@ -21,7 +21,14 @@ OUTPUT_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 -
 SNAPSHOT_PATH = OUTPUT_PATH  # Redirect snapshots to the new output folder
 LOG_PATH = os.path.join(OUTPUT_PATH, "logs")
 DIFF_PATH = os.path.join(OUTPUT_PATH, "differences")
-ALERTS_PATH = os.path.join(OUTPUT_PATH, "alerts")  # New folder for saving alerts
+ALERTS_PATH = os.path.join(OUTPUT_PATH, "alerts")
+
+# Alert subfolders for each camera
+ALERT_SUBFOLDERS = {
+    "Upper Patio Camera": os.path.join(ALERTS_PATH, "Upper_Patio"),
+    "Bindy Patio Camera": os.path.join(ALERTS_PATH, "Bindy_Patio"),
+    "Wyze Internal Camera": os.path.join(ALERTS_PATH, "Wyze_Internal"),
+}
 
 # Mapping of camera names to base image filenames
 BASE_IMAGES = {
@@ -78,6 +85,29 @@ def save_snapshot(image, camera_name, snapshot_name):
     image.save(image_path)
     return image_path
 
+# Save triggered alerts with timestamp into camera-specific folders
+def save_alert_image(combined_image, camera_name):
+    os.makedirs(ALERT_SUBFOLDERS[camera_name], exist_ok=True)
+    timestamp = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d_%H-%M-%S")
+    alert_path = os.path.join(ALERT_SUBFOLDERS[camera_name], f"{camera_name}_{timestamp}.jpg")
+    combined_image.save(alert_path)
+    print(f"Alert saved for {camera_name} at {alert_path}")
+    return alert_path
+
+# Log motion events to a delimited text file
+def log_event(camera_name, status, pixel_change=None, luminance_change=None):
+    daily_log_folder = os.path.join(LOG_PATH, "motion_logs")
+    os.makedirs(daily_log_folder, exist_ok=True)
+
+    date_str = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d")
+    log_file = os.path.join(daily_log_folder, f"motion_log_{date_str}.txt")
+
+    timestamp = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d %H:%M:%S")
+    entry = f"{timestamp}|{camera_name}|{status}|{pixel_change or ''}|{luminance_change or ''}\n"
+
+    with open(log_file, "a") as log:
+        log.write(entry)
+
 # Detect motion and calculate metrics
 def detect_motion(base_image, new_image, threshold_percentage, luminance_threshold):
     diff = ImageChops.difference(base_image, new_image).convert("L")  # Convert to grayscale
@@ -115,7 +145,7 @@ def create_combined_output(base_image, snapshot_image, diff_image, metrics_text,
     combined_image.paste(snapshot_image, (width, 0))
     combined_image.paste(heatmap, (width * 2, 0))
 
-    # Add metrics
+    # Add metrics and thresholds
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     font = ImageFont.truetype(font_path, size=14) if os.path.exists(font_path) else None
     draw = ImageDraw.Draw(combined_image)
@@ -125,15 +155,6 @@ def create_combined_output(base_image, snapshot_image, diff_image, metrics_text,
     combined_path = os.path.join(DIFF_PATH, f"{camera_name}_combined.jpg")
     combined_image.save(combined_path)
     return combined_image, combined_path
-
-# Save triggered alerts with timestamp
-def save_alert_image(combined_image, camera_name):
-    os.makedirs(ALERTS_PATH, exist_ok=True)
-    timestamp = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d_%H-%M-%S")
-    alert_path = os.path.join(ALERTS_PATH, f"{camera_name}_{timestamp}.jpg")
-    combined_image.save(alert_path)
-    print(f"Alert saved for {camera_name} at {alert_path}")
-    return alert_path
 
 # Main motion detection function
 def motion_detection():
@@ -160,15 +181,18 @@ def motion_detection():
 
                 metrics_text = (
                     f"Pixel Changes: {significant_pixels / total_pixels:.2%}\n"
-                    f"Avg Luminance Change: {avg_luminance_change:.2f}"
+                    f"Avg Luminance Change: {avg_luminance_change:.2f}\n"
+                    f"Threshold: {config['threshold_percentage'] * 100:.2f}% pixels, "
+                    f"Luminance > {config['luminance_threshold']}"
                 )
                 combined_image, _ = create_combined_output(base_image, new_image, diff, metrics_text, camera_name)
 
                 if motion_detected:
                     print(f"Motion detected for {camera_name}!", flush=True)
-                    save_alert_image(combined_image, camera_name)  # Save alert image
+                    save_alert_image(combined_image, camera_name)
+                    log_event(camera_name, "Motion Detected", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
                 else:
-                    print(f"No significant motion detected for {camera_name}.", flush=True)
+                    log_event(camera_name, "No Motion", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
 
             except Exception as e:
                 print(f"Error processing {camera_name}: {e}", flush=True)
