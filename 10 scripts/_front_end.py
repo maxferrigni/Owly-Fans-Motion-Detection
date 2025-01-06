@@ -27,7 +27,7 @@ class OwlApp:
             self.log_message("Starting motion detection script...")
             try:
                 self.script_process = subprocess.Popen(
-                    ["python3", "motion_detection.py"],  # Replace with the actual script path if necessary
+                    ["python3", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 IT/20 Motion Detection/10 GIT/Owly-Fans-Motion-Detection-2/10 scripts/motion_detection.py"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
