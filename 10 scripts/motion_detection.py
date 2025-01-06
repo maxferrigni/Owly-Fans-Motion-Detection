@@ -1,7 +1,7 @@
 import os
 import json
 from datetime import datetime, time
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 import pyautogui
 import time as sleep_time
 import pytz
@@ -94,29 +94,42 @@ def detect_motion(image1, image2, threshold_percentage, luminance_threshold):
     diff_data = diff.getdata()
     total_pixels = len(diff_data)
     significant_pixels = 0
-    significant_brightness_changes = 0
+    total_luminance_change = 0
+
     for pixel1, pixel2 in zip(image1.getdata(), image2.getdata()):
         luminance1 = calculate_luminance(pixel1)
         luminance2 = calculate_luminance(pixel2)
-        if luminance2 > luminance1 and abs(luminance1 - luminance2) > luminance_threshold:
-            significant_brightness_changes += 1
+        total_luminance_change += abs(luminance1 - luminance2)
         pixel_diff = sum(abs(a - b) for a, b in zip(pixel1, pixel2))
-        if pixel_diff > 50:
+        if pixel_diff > 50:  # Arbitrary threshold for pixel difference
             significant_pixels += 1
+    
+    avg_luminance_change = total_luminance_change / total_pixels
     threshold_pixels = total_pixels * threshold_percentage
-    return diff, (significant_pixels > threshold_pixels) and (significant_brightness_changes > threshold_pixels)
+    motion_detected = significant_pixels > threshold_pixels
+    return diff, motion_detected, significant_pixels, avg_luminance_change, total_pixels
 
-# Highlight differences in the third image
-def create_diff_image(image1, image2, luminance_threshold):
-    diff = ImageChops.difference(image1, image2).convert("L")
-    diff_image = image2.copy()
-    draw = ImageDraw.Draw(diff_image)
-    threshold = 30
+# Generate a heatmap image with metrics
+def create_heatmap_with_metrics(base_image, new_image, diff, significant_pixels, luminance_change, total_pixels, camera_name):
+    diff = diff.convert("L")
+    heatmap_image = new_image.copy()
+    draw = ImageDraw.Draw(heatmap_image)
     for x in range(diff.width):
         for y in range(diff.height):
-            if diff.getpixel((x, y)) > threshold:
-                draw.rectangle([x, y, x + 1, y + 1], fill="red")
-    return diff_image
+            if diff.getpixel((x, y)) > 50:  # Threshold for significant differences
+                draw.point((x, y), fill="red")
+    
+    metrics_text = (
+        f"Pixel Changes: {significant_pixels / total_pixels:.2%}\n"
+        f"Avg Luminance Change: {luminance_change:.2f}"
+    )
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font = ImageFont.truetype(font_path, size=14) if os.path.exists(font_path) else None
+    draw.multiline_text((10, 10), metrics_text, fill="yellow", font=font)
+    
+    heatmap_path = os.path.join(DIFF_PATH, f"{camera_name}_heatmap.jpg")
+    heatmap_image.save(heatmap_path)
+    return heatmap_path
 
 # Log motion event or status
 def log_event(camera_name, status):
@@ -152,22 +165,19 @@ def motion_detection():
                 luminance_threshold = config["luminance_threshold"]
                 alert_type = config["alert_type"]
 
-                # Capture new snapshot
                 new_image = capture_real_image(roi)
                 save_snapshot(new_image, camera_name, "new_snapshot.jpg")
-
-                # Load base image
                 base_image = load_base_image(camera_name)
 
-                # Detect motion
-                diff, motion_detected = detect_motion(base_image, new_image, threshold_percentage, luminance_threshold)
+                diff, motion_detected, significant_pixels, avg_luminance_change, total_pixels = detect_motion(
+                    base_image, new_image, threshold_percentage, luminance_threshold
+                )
+
+                create_heatmap_with_metrics(base_image, new_image, diff, significant_pixels, avg_luminance_change, total_pixels, camera_name)
 
                 if motion_detected:
-                    diff_image = create_diff_image(base_image, new_image, luminance_threshold)
-                    save_snapshot(diff_image, camera_name, "difference_image.jpg")
                     log_event(camera_name, alert_type)
                     send_email_alert(camera_name, alert_type)
-                    last_alert_time[camera_name] = datetime.now()
                     print(f"{alert_type} ALERT for {camera_name}! Email sent.", flush=True)
                 else:
                     log_event(camera_name, "No Owl")
@@ -175,8 +185,7 @@ def motion_detection():
             except Exception as e:
                 print(f"Error processing {camera_name}: {e}", flush=True)
 
-        # Sleep for 5 seconds between snapshots
-        sleep_time.sleep(5)
+        sleep_time.sleep(20)
 
 if __name__ == "__main__":
     motion_detection()
