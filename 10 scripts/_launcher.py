@@ -1,7 +1,7 @@
 import subprocess
 
 # Path to the motion detection script
-MOTION_DETECTION_SCRIPT = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 IT/20 Motion Detection/10 GIT/Owly-Fans-Motion-Detection-2/10 scripts/motion_detection.py"
+MOTION_DETECTION_SCRIPT = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 IT/20 Motion Detection/10 GIT/Owly-Fans-Motion-Detection/10 scripts/motion_detection.py"
 
 def launch_motion_detection():
     try:

@@ -1,20 +1,20 @@
 {
     "Upper Patio Camera": {
-        "roi": [361, 358, 934, 734],  // Bounding rectangle for the irregular region
+        "roi": [361, 358, 934, 734],
         "threshold_percentage": 0.005,
         "luminance_threshold": 30,
         "alert_type": "Owl In Area",
         "interval_seconds": 3
     },
     "Bindy Patio Camera": {
-        "roi": [1426, 354, 1610, 454],  // Simple rectangle based on provided points
+        "roi": [1426, 354, 1610, 454],
         "threshold_percentage": 0.05,
         "luminance_threshold": 1,
         "alert_type": "Owl On Box",
         "interval_seconds": 3
     },
     "Wyze Internal Camera": {
-        "roi": [-1913, 724, -1284, 1053],  // Simple rectangle based on provided points
+        "roi": [-1913, 724, -1284, 329], 
         "threshold_percentage": 0.15,
         "luminance_threshold": 10,
         "alert_type": "Owl In Box",

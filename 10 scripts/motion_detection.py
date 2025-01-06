@@ -16,20 +16,53 @@ END_TIME = time(5, 0)     # 5:00 AM Pacific (next day)
 
 # Load camera configurations from the JSON file
 def load_config():
-    config_path = '/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 Motion Detection/20 configs/config.json'
+    config_path = "./20 configs/config.json"  # Correct path since "20 configs" is in the same folder
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
     with open(config_path, 'r') as f:
         return json.load(f)
 
 # Paths
-SNAPSHOT_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 Motion Detection/40 snapshots/"
-LOG_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 Motion Detection/30 logs/"
-DIFF_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 Motion Detection/30 logs/differences/"
+SNAPSHOT_PATH = "./40 snapshots/"
+LOG_PATH = "./30 logs/"
+DIFF_PATH = "./30 logs/differences/"
 
 # Load configuration settings
 CAMERA_CONFIGS = load_config()
 
 # Alert tracking to enforce 30-minute cooldown
 last_alert_time = {"Owl In Box": None, "Owl On Box": None, "Owl In Area": None}
+
+# Check if the current time is within the allowed range
+def is_within_allowed_hours():
+    now = datetime.now(PACIFIC_TIME).time()  # Use Pacific Time for comparison
+    if START_TIME <= now or now <= END_TIME:  # Handles overnight range
+        return True
+    return False
+
+# Capture an image from the screen based on the ROI
+def capture_real_image(roi):
+    """
+    Captures a screenshot of the specified region of interest (ROI).
+    Handles multiple monitors with negative x and y values.
+    ROI is defined as [x, y, width, height].
+    """
+    x, y, width, height = roi
+
+    # Compute effective width and height
+    width = abs(width - x)
+    height = abs(height - y)
+
+    # Log the computed dimensions for debugging
+    print(f"Capturing screenshot: x={x}, y={y}, width={width}, height={height}")
+
+    # Validate width and height
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Invalid ROI dimensions: {roi}")
+
+    # Capture the screenshot
+    screenshot = pyautogui.screenshot(region=(x, y, width, height))
+    return screenshot
 
 # Function to save snapshot images
 def save_snapshot(image, camera_name, snapshot_name):
@@ -78,23 +111,6 @@ def detect_motion(image1, image2, threshold_percentage, luminance_threshold):
 
     return diff, (significant_pixels > threshold_pixels) and (significant_brightness_changes > threshold_pixels)
 
-# Save the composite image with 3 side-by-side images
-def save_composite_image(image1, image2, diff_image, camera_name):
-    width = image1.width + image2.width + diff_image.width
-    height = max(image1.height, image2.height, diff_image.height)
-
-    composite = Image.new("RGB", (width, height), (255, 255, 255))
-
-    composite.paste(image1, (0, 0))
-    composite.paste(image2, (image1.width, 0))
-    composite.paste(diff_image, (image1.width + image2.width, 0))
-
-    diff_folder = os.path.join(DIFF_PATH, camera_name)
-    os.makedirs(diff_folder, exist_ok=True)
-    composite_image_path = os.path.join(diff_folder, f"composite_diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg")
-    composite.save(composite_image_path)
-    return composite_image_path
-
 # Highlight the differences in the third image
 def create_diff_image(image1, image2, luminance_threshold):
     diff = ImageChops.difference(image1, image2)
@@ -123,43 +139,11 @@ def log_event(camera_name, event_type, composite_image_path=None):
             log.write(f" | Difference Image: {composite_image_path}")
         log.write("\n")
 
-# Enforce hierarchical alerts
-def should_send_alert(alert_type):
-    now = datetime.now()
-    if alert_type == "Owl In Box":
-        return True
-    elif alert_type == "Owl On Box" and last_alert_time["Owl In Box"] is None:
-        return True
-    elif alert_type == "Owl In Area" and last_alert_time["Owl In Box"] is None and last_alert_time["Owl On Box"] is None:
-        return True
-    return False
-
-# Enforce 30-minute rate limit
-def can_send_email(alert_type):
-    now = datetime.now()
-    if last_alert_time[alert_type] is None or (now - last_alert_time[alert_type]) > timedelta(minutes=30):
-        return True
-    return False
-
-# Capture real images using pyautogui
-def capture_real_image(roi):
-    x, y, width, height = roi
-    screenshot = pyautogui.screenshot(region=(x, y, width, height))
-    return screenshot
-
-# Check if the current time is within the allowed range
-def is_within_allowed_hours():
-    now = datetime.now(PACIFIC_TIME).time()  # Use Pacific Time for comparison
-    if START_TIME <= now or now <= END_TIME:  # Handles overnight range
-        return True
-    return False
-
 # Main motion detection function
 def motion_detection():
     print("Starting motion detection...")
 
     while True:
-        # Check if we are within the allowed hours
         if not is_within_allowed_hours():
             print("Outside of allowed hours. Skipping motion detection...")
             sleep_time.sleep(60)  # Sleep for 1 minute before checking again
@@ -185,7 +169,7 @@ def motion_detection():
 
             diff, motion_detected = detect_motion(image1, image2, threshold_percentage, luminance_threshold)
 
-            if motion_detected and should_send_alert(alert_type) and can_send_email(alert_type):
+            if motion_detected:
                 diff_image = create_diff_image(image1, image2, luminance_threshold)
                 composite_image_path = save_composite_image(image1, image2, diff_image, camera_name)
                 log_event(camera_name, alert_type, composite_image_path)
