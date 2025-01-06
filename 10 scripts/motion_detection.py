@@ -175,7 +175,8 @@ def motion_detection():
             except Exception as e:
                 print(f"Error processing {camera_name}: {e}", flush=True)
 
-        sleep_time.sleep(1)
+        # Sleep for 5 seconds between snapshots
+        sleep_time.sleep(5)
 
 if __name__ == "__main__":
     motion_detection()
