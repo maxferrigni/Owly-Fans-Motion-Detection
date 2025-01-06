@@ -6,6 +6,7 @@ import pyautogui
 import time as sleep_time
 import pytz
 from alert_email import send_email_alert  # Import the email alert function
+import sys  # For real-time stdout flushing
 
 # Define Pacific Time Zone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
@@ -23,9 +24,9 @@ DIFF_PATH = os.path.join(OUTPUT_PATH, "differences")
 
 # Mapping of camera names to base image filenames
 BASE_IMAGES = {
-    "Upper Patio": os.path.join(INPUT_BASE_PATH, "10 Upper Patio Base.jpg"),
-    "Bindy Patio": os.path.join(INPUT_BASE_PATH, "20 Bindy Patio Base.jpg"),
-    "Wyze Camera": os.path.join(INPUT_BASE_PATH, "30 Wyze Camera Base.jpg"),
+    "Upper Patio Camera": os.path.join(INPUT_BASE_PATH, "Upper_Patio_Camera_Base.jpg"),
+    "Bindy Patio Camera": os.path.join(INPUT_BASE_PATH, "Bindy_Patio_Camera_Base.jpg"),
+    "Wyze Internal Camera": os.path.join(INPUT_BASE_PATH, "Wyze_Internal_Camera_Base.jpg"),
 }
 
 # Load camera configurations from the JSON file
@@ -40,31 +41,33 @@ def load_config():
 CAMERA_CONFIGS = load_config()
 
 # Alert tracking to enforce 30-minute cooldown
-last_alert_time = {"Owl In Box": None, "Owl On Box": None, "Owl In Area": None}
+last_alert_time = {camera: None for camera in CAMERA_CONFIGS.keys()}
 
 # Check if the current time is within the allowed range
 def is_within_allowed_hours():
     now = datetime.now(PACIFIC_TIME).time()
-    if START_TIME <= now or now <= END_TIME:
-        return True
-    return False
+    return START_TIME <= now or now <= END_TIME
 
-# Load base image
+# Load base image and ensure it's in RGB mode
 def load_base_image(camera_name):
     base_image_path = BASE_IMAGES.get(camera_name)
     if not base_image_path or not os.path.exists(base_image_path):
         raise FileNotFoundError(f"Base image for {camera_name} not found: {base_image_path}")
-    return Image.open(base_image_path)
+    image = Image.open(base_image_path)
+    return image.convert("RGB")  # Ensure base image is in RGB mode
 
 # Capture an image from the screen based on the ROI
 def capture_real_image(roi):
     x, y, width, height = roi
     width = abs(width - x)
     height = abs(height - y)
-    print(f"Capturing screenshot: x={x}, y={y}, width={width}, height={height}")
+    print(f"Capturing screenshot: x={x}, y={y}, width={width}, height={height}", flush=True)
     if width <= 0 or height <= 0:
         raise ValueError(f"Invalid ROI dimensions: {roi}")
-    return pyautogui.screenshot(region=(x, y, width, height))
+    
+    # Capture and convert to RGB
+    screenshot = pyautogui.screenshot(region=(x, y, width, height))
+    return screenshot.convert("RGB")
 
 # Save snapshot images
 def save_snapshot(image, camera_name, snapshot_name):
@@ -83,6 +86,10 @@ def calculate_luminance(pixel):
 
 # Detect motion
 def detect_motion(image1, image2, threshold_percentage, luminance_threshold):
+    # Ensure images match dimensions and mode
+    if image1.size != image2.size or image1.mode != image2.mode:
+        raise ValueError("Base and captured images do not match in size or mode.")
+    
     diff = ImageChops.difference(image1, image2)
     diff_data = diff.getdata()
     total_pixels = len(diff_data)
@@ -113,66 +120,62 @@ def create_diff_image(image1, image2, luminance_threshold):
 
 # Log motion event or status
 def log_event(camera_name, status):
-    # Ensure daily log folder exists
     daily_log_folder = os.path.join(LOG_PATH, "motion_logs")
     os.makedirs(daily_log_folder, exist_ok=True)
     
-    # Create or append to the daily log file
     date_str = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d")
     log_file = os.path.join(daily_log_folder, f"motion_log_{date_str}.txt")
     
-    # Append the status with timestamp
     timestamp = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d %H:%M:%S")
     with open(log_file, "a") as log:
         log.write(f"{timestamp} | Camera: {camera_name} | Status: {status}\n")
 
 # Main motion detection function
 def motion_detection():
-    print("Starting motion detection...")
+    print("Starting motion detection...", flush=True)
     while True:
         if not is_within_allowed_hours():
-            print("Outside of allowed hours. Skipping motion detection...")
+            print("Outside of allowed hours. Skipping motion detection...", flush=True)
             sleep_time.sleep(60)
             continue
         
-        # Iterate through each camera and log its status
         for camera_name, config in CAMERA_CONFIGS.items():
-            if config["roi"] is None:
-                print(f"Skipping {camera_name}...")
-                log_event(camera_name, "No ROI Defined")
-                continue
-            
-            print(f"Checking {camera_name}...")
-            roi = config["roi"]
-            threshold_percentage = config["threshold_percentage"]
-            luminance_threshold = config["luminance_threshold"]
-            alert_type = config["alert_type"]
-            
-            # Capture and save new image
-            new_image = capture_real_image(roi)
-            save_snapshot(new_image, camera_name, "new_snapshot.jpg")
-            
-            # Load base image
-            base_image = load_base_image(camera_name)
-            
-            # Detect motion
-            diff, motion_detected = detect_motion(base_image, new_image, threshold_percentage, luminance_threshold)
-            
-            if motion_detected:
-                # Handle alert and logging
-                diff_image = create_diff_image(base_image, new_image, luminance_threshold)
-                composite_image_path = save_snapshot(diff_image, camera_name, "difference_image.jpg")
-                log_event(camera_name, alert_type)
-                send_email_alert(camera_name, alert_type)
-                last_alert_time[alert_type] = datetime.now()
-                print(f"{alert_type} ALERT! Email sent and difference image saved.")
-            else:
-                # Log "No Owl" if no motion detected
-                log_event(camera_name, "No Owl")
-                print(f"No significant motion detected for {camera_name}.")
-        
-        # Sleep for 1 minute before next check
-        sleep_time.sleep(60)
+            try:
+                if config["roi"] is None:
+                    print(f"Skipping {camera_name}: No ROI Defined", flush=True)
+                    log_event(camera_name, "No ROI Defined")
+                    continue
+
+                print(f"Checking {camera_name}...", flush=True)
+                roi = config["roi"]
+                threshold_percentage = config["threshold_percentage"]
+                luminance_threshold = config["luminance_threshold"]
+                alert_type = config["alert_type"]
+
+                # Capture new snapshot
+                new_image = capture_real_image(roi)
+                save_snapshot(new_image, camera_name, "new_snapshot.jpg")
+
+                # Load base image
+                base_image = load_base_image(camera_name)
+
+                # Detect motion
+                diff, motion_detected = detect_motion(base_image, new_image, threshold_percentage, luminance_threshold)
+
+                if motion_detected:
+                    diff_image = create_diff_image(base_image, new_image, luminance_threshold)
+                    save_snapshot(diff_image, camera_name, "difference_image.jpg")
+                    log_event(camera_name, alert_type)
+                    send_email_alert(camera_name, alert_type)
+                    last_alert_time[camera_name] = datetime.now()
+                    print(f"{alert_type} ALERT for {camera_name}! Email sent.", flush=True)
+                else:
+                    log_event(camera_name, "No Owl")
+                    print(f"No significant motion detected for {camera_name}.", flush=True)
+            except Exception as e:
+                print(f"Error processing {camera_name}: {e}", flush=True)
+
+        sleep_time.sleep(1)
 
 if __name__ == "__main__":
     motion_detection()
