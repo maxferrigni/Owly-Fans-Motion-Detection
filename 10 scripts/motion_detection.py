@@ -77,62 +77,53 @@ def save_snapshot(image, camera_name, snapshot_name):
     image.save(image_path)
     return image_path
 
-# Create heatmap and combine images
-def create_combined_output(base_image, snapshot_image, diff_image, metrics_text, camera_name):
-    # Ensure the differences directory exists
-    os.makedirs(DIFF_PATH, exist_ok=True)
-
-    # Convert diff_image to grayscale for valid pixel comparison
-    diff_luminance = diff_image.convert("L")
-
-    # Create heatmap
-    heatmap = snapshot_image.copy()
-    draw = ImageDraw.Draw(heatmap)
-    for x in range(diff_luminance.width):
-        for y in range(diff_luminance.height):
-            if diff_luminance.getpixel((x, y)) > 50:  # Arbitrary threshold
-                draw.point((x, y), fill="red")
-
-    # Combine the base, snapshot, and heatmap into one image
-    width, height = base_image.size
-    combined_width = width * 3
-    combined_image = Image.new("RGB", (combined_width, height))
-
-    # Paste images side by side
-    combined_image.paste(base_image, (0, 0))
-    combined_image.paste(snapshot_image, (width, 0))
-    combined_image.paste(heatmap, (width * 2, 0))
-
-    # Add metrics to the combined image
-    draw = ImageDraw.Draw(combined_image)
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    font = ImageFont.truetype(font_path, size=14) if os.path.exists(font_path) else None
-    draw.multiline_text((width * 2 + 10, 10), metrics_text, fill="yellow", font=font)
-
-    # Save the combined image
-    combined_path = os.path.join(DIFF_PATH, f"{camera_name}_combined.jpg")
-    combined_image.save(combined_path)
-    return combined_path
-
 # Detect motion and calculate metrics
 def detect_motion(base_image, new_image, threshold_percentage, luminance_threshold):
-    diff = ImageChops.difference(base_image, new_image)
+    diff = ImageChops.difference(base_image, new_image).convert("L")  # Convert to grayscale
     total_pixels = diff.size[0] * diff.size[1]
     significant_pixels = 0
     total_luminance_change = 0
 
-    for pixel1, pixel2 in zip(base_image.getdata(), new_image.getdata()):
-        luminance1 = 0.2989 * pixel1[0] + 0.5870 * pixel1[1] + 0.1140 * pixel1[2]
-        luminance2 = 0.2989 * pixel2[0] + 0.5870 * pixel2[1] + 0.1140 * pixel2[2]
-        total_luminance_change += abs(luminance1 - luminance2)
-        pixel_diff = sum(abs(a - b) for a, b in zip(pixel1, pixel2))
-        if pixel_diff > 50:  # Arbitrary threshold
+    for pixel in diff.getdata():
+        total_luminance_change += pixel
+        if pixel > luminance_threshold:
             significant_pixels += 1
 
     avg_luminance_change = total_luminance_change / total_pixels
     threshold_pixels = total_pixels * threshold_percentage
     motion_detected = significant_pixels > threshold_pixels
     return diff, motion_detected, significant_pixels, avg_luminance_change, total_pixels
+
+# Create heatmap and combine images
+def create_combined_output(base_image, snapshot_image, diff_image, metrics_text, camera_name):
+    os.makedirs(DIFF_PATH, exist_ok=True)
+
+    # Create heatmap
+    heatmap = snapshot_image.copy()
+    draw = ImageDraw.Draw(heatmap)
+    for x in range(diff_image.width):
+        for y in range(diff_image.height):
+            if diff_image.getpixel((x, y)) > 50:  # Threshold for differences
+                draw.point((x, y), fill="red")
+
+    # Combine base, snapshot, and heatmap
+    width, height = base_image.size
+    combined_width = width * 3
+    combined_image = Image.new("RGB", (combined_width, height))
+    combined_image.paste(base_image, (0, 0))
+    combined_image.paste(snapshot_image, (width, 0))
+    combined_image.paste(heatmap, (width * 2, 0))
+
+    # Add metrics
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font = ImageFont.truetype(font_path, size=14) if os.path.exists(font_path) else None
+    draw = ImageDraw.Draw(combined_image)
+    draw.multiline_text((width * 2 + 10, 10), metrics_text, fill="yellow", font=font)
+
+    # Save combined image
+    combined_path = os.path.join(DIFF_PATH, f"{camera_name}_combined.jpg")
+    combined_image.save(combined_path)
+    return combined_path
 
 # Main motion detection function
 def motion_detection():
@@ -149,32 +140,20 @@ def motion_detection():
                     print(f"Skipping {camera_name}: No ROI Defined", flush=True)
                     continue
 
-                # Load base image and capture new snapshot
                 base_image = load_base_image(camera_name)
                 new_image = capture_real_image(config["roi"])
                 save_snapshot(new_image, camera_name, "new_snapshot.jpg")
 
-                # Detect motion
                 diff, motion_detected, significant_pixels, avg_luminance_change, total_pixels = detect_motion(
                     base_image, new_image, config["threshold_percentage"], config["luminance_threshold"]
                 )
 
-                # Create heatmap
-                diff_image = new_image.copy()
-                draw = ImageDraw.Draw(diff_image)
-                for x in range(diff.size[0]):
-                    for y in range(diff.size[1]):
-                        if diff.getpixel((x, y)) > 50:
-                            draw.point((x, y), fill="red")
-
-                # Combine images and overlay metrics
                 metrics_text = (
                     f"Pixel Changes: {significant_pixels / total_pixels:.2%}\n"
                     f"Avg Luminance Change: {avg_luminance_change:.2f}"
                 )
-                create_combined_output(base_image, new_image, diff_image, metrics_text, camera_name)
+                create_combined_output(base_image, new_image, diff, metrics_text, camera_name)
 
-                # Log motion detection
                 if motion_detected:
                     print(f"Motion detected for {camera_name}!", flush=True)
                 else:
