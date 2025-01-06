@@ -21,6 +21,7 @@ OUTPUT_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 -
 SNAPSHOT_PATH = OUTPUT_PATH  # Redirect snapshots to the new output folder
 LOG_PATH = os.path.join(OUTPUT_PATH, "logs")
 DIFF_PATH = os.path.join(OUTPUT_PATH, "differences")
+ALERTS_PATH = os.path.join(OUTPUT_PATH, "alerts")  # New folder for saving alerts
 
 # Mapping of camera names to base image filenames
 BASE_IMAGES = {
@@ -123,7 +124,16 @@ def create_combined_output(base_image, snapshot_image, diff_image, metrics_text,
     # Save combined image
     combined_path = os.path.join(DIFF_PATH, f"{camera_name}_combined.jpg")
     combined_image.save(combined_path)
-    return combined_path
+    return combined_image, combined_path
+
+# Save triggered alerts with timestamp
+def save_alert_image(combined_image, camera_name):
+    os.makedirs(ALERTS_PATH, exist_ok=True)
+    timestamp = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d_%H-%M-%S")
+    alert_path = os.path.join(ALERTS_PATH, f"{camera_name}_{timestamp}.jpg")
+    combined_image.save(alert_path)
+    print(f"Alert saved for {camera_name} at {alert_path}")
+    return alert_path
 
 # Main motion detection function
 def motion_detection():
@@ -152,10 +162,11 @@ def motion_detection():
                     f"Pixel Changes: {significant_pixels / total_pixels:.2%}\n"
                     f"Avg Luminance Change: {avg_luminance_change:.2f}"
                 )
-                create_combined_output(base_image, new_image, diff, metrics_text, camera_name)
+                combined_image, _ = create_combined_output(base_image, new_image, diff, metrics_text, camera_name)
 
                 if motion_detected:
                     print(f"Motion detected for {camera_name}!", flush=True)
+                    save_alert_image(combined_image, camera_name)  # Save alert image
                 else:
                     print(f"No significant motion detected for {camera_name}.", flush=True)
 
