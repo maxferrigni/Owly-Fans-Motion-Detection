@@ -15,7 +15,7 @@ PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
 # Paths
 INPUT_BASE_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 IT/20 Motion Detection/20 Input Files/60 Camera Base Images"
 OUTPUT_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 IT/20 Motion Detection/30 Output Files"
-SNAPSHOT_PATH = OUTPUT_PATH  # Redirect snapshots to the new output folder
+SNAPSHOT_PATH = OUTPUT_PATH
 LOG_PATH = os.path.join(OUTPUT_PATH, "logs")
 DIFF_PATH = os.path.join(OUTPUT_PATH, "differences")
 ALERTS_PATH = os.path.join(OUTPUT_PATH, "alerts")
