@@ -1,19 +1,16 @@
 import os
 import json
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 import pyautogui
 import time as sleep_time
 import pytz
+import pandas as pd
 from alert_email import send_email_alert  # Import the email alert function
 import sys  # For real-time stdout flushing
 
 # Define Pacific Time Zone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
-
-# Define the allowed time range in Pacific Time
-START_TIME = time(17, 0)  # 5:00 PM Pacific
-END_TIME = time(5, 0)     # 5:00 AM Pacific (next day)
 
 # Paths
 INPUT_BASE_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 IT/20 Motion Detection/20 Input Files/60 Camera Base Images"
@@ -51,10 +48,33 @@ CAMERA_CONFIGS = load_config()
 # Alert tracking to enforce 30-minute cooldown
 last_alert_time = {camera: None for camera in CAMERA_CONFIGS.keys()}
 
-# Check if the current time is within the allowed range
+# Load the sunrise/sunset data
+SUNRISE_SUNSET_FILE = os.path.join("./20 configs", "LA_Sunrise_Sunset.csv")
+sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE)
+sunrise_sunset_data['Date'] = pd.to_datetime(sunrise_sunset_data['Date'], format='%m/%d')
+
+# Get adjusted sunrise and sunset times
+def get_adjusted_times():
+    today = datetime.now(PACIFIC_TIME).strftime('%m/%d')
+    row = sunrise_sunset_data[sunrise_sunset_data['Date'] == today]
+    if row.empty:
+        raise ValueError(f"No sunrise/sunset data available for {today}")
+    
+    # Parse sunrise and sunset times
+    sunrise = datetime.strptime(row['Sunrise'].values[0], '%H:%M').time()
+    sunset = datetime.strptime(row['Sunset'].values[0], '%H:%M').time()
+    
+    # Adjust times
+    adjusted_sunrise = (datetime.combine(datetime.today(), sunrise) - timedelta(minutes=40)).time()
+    adjusted_sunset = (datetime.combine(datetime.today(), sunset) + timedelta(minutes=40)).time()
+    
+    return adjusted_sunrise, adjusted_sunset
+
+# Check if the current time is within the allowed "dark" hours
 def is_within_allowed_hours():
     now = datetime.now(PACIFIC_TIME).time()
-    return START_TIME <= now or now <= END_TIME
+    adjusted_sunrise, adjusted_sunset = get_adjusted_times()
+    return adjusted_sunset <= now or now <= adjusted_sunrise
 
 # Load base image and ensure it's in RGB mode
 def load_base_image(camera_name):
