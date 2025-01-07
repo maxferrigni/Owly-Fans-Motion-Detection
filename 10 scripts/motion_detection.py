@@ -49,31 +49,37 @@ CAMERA_CONFIGS = load_config()
 last_alert_time = {camera: None for camera in CAMERA_CONFIGS.keys()}
 
 # Load the sunrise/sunset data
-SUNRISE_SUNSET_FILE = os.path.join("./20 configs", "LA_Sunrise_Sunset.csv")
-sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE)
+SUNRISE_SUNSET_FILE = os.path.join("./20 configs", "LA Sunrise Sunset.txt")
+sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE, delimiter="\t")
+
+# Ensure Date is in MM/DD format
 sunrise_sunset_data['Date'] = pd.to_datetime(sunrise_sunset_data['Date'], format='%m/%d')
 
-# Get adjusted sunrise and sunset times
 def get_adjusted_times():
     today = datetime.now(PACIFIC_TIME).strftime('%m/%d')
-    row = sunrise_sunset_data[sunrise_sunset_data['Date'] == today]
+    today_date = pd.to_datetime(today, format='%m/%d')
+
+    # Find the matching row for today's date
+    row = sunrise_sunset_data[sunrise_sunset_data['Date'] == today_date]
+
     if row.empty:
         raise ValueError(f"No sunrise/sunset data available for {today}")
-    
+
     # Parse sunrise and sunset times
-    sunrise = datetime.strptime(row['Sunrise'].values[0], '%H:%M').time()
-    sunset = datetime.strptime(row['Sunset'].values[0], '%H:%M').time()
-    
-    # Adjust times
-    adjusted_sunrise = (datetime.combine(datetime.today(), sunrise) - timedelta(minutes=40)).time()
-    adjusted_sunset = (datetime.combine(datetime.today(), sunset) + timedelta(minutes=40)).time()
-    
+    sunrise_time = datetime.strptime(row['Sunrise'].values[0], '%H:%M').time()
+    sunset_time = datetime.strptime(row['Sunset'].values[0], '%H:%M').time()
+
+    # Adjust times for 40-minute offsets
+    adjusted_sunrise = (datetime.combine(datetime.today(), sunrise_time) - timedelta(minutes=40)).time()
+    adjusted_sunset = (datetime.combine(datetime.today(), sunset_time) + timedelta(minutes=40)).time()
+
     return adjusted_sunrise, adjusted_sunset
 
-# Check if the current time is within the allowed "dark" hours
 def is_within_allowed_hours():
     now = datetime.now(PACIFIC_TIME).time()
     adjusted_sunrise, adjusted_sunset = get_adjusted_times()
+
+    # Check if the current time falls within the adjusted dark hours
     return adjusted_sunset <= now or now <= adjusted_sunrise
 
 # Load base image and ensure it's in RGB mode
