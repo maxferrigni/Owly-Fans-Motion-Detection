@@ -49,23 +49,38 @@ CAMERA_CONFIGS = load_config()
 last_alert_time = {camera: None for camera in CAMERA_CONFIGS.keys()}
 
 # Load the sunrise/sunset data
-SUNRISE_SUNSET_FILE = os.path.join("./20 configs", "LA Sunrise Sunset.txt")
-sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE, delimiter="\t", skiprows=1, names=["Date", "Sunrise", "Sunset"])
+SUNRISE_SUNSET_FILE = os.path.join("./20 configs", "LA_Sunrise_Sunset.csv")
+sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE)
 
-# Ensure Date is in MM/DD format
-sunrise_sunset_data['Date'] = pd.to_datetime(sunrise_sunset_data['Date'], format='%m/%d', errors='coerce')
+# Combine Day, Month, and Year columns to create a unified Date column
+sunrise_sunset_data['Date'] = pd.to_datetime(
+    sunrise_sunset_data[['Month', 'Day', 'Year']].astype(str).agg('/'.join, axis=1),
+    format='%m/%d/%Y'
+)
 
-# Drop any rows with invalid dates
-sunrise_sunset_data = sunrise_sunset_data.dropna(subset=['Date'])
+# Keep only necessary columns
+sunrise_sunset_data = sunrise_sunset_data[['Date', 'Sunrise', 'Sunset']]
+
+# Validate and clean Sunrise and Sunset columns
+sunrise_sunset_data['Sunrise'] = sunrise_sunset_data['Sunrise'].astype(str).str.strip()
+sunrise_sunset_data['Sunset'] = sunrise_sunset_data['Sunset'].astype(str).str.strip()
+
+# Drop rows with invalid Sunrise or Sunset times
+valid_time_format = sunrise_sunset_data['Sunrise'].str.match(r'^\d{2}:\d{2}$') & sunrise_sunset_data['Sunset'].str.match(r'^\d{2}:\d{2}$')
+sunrise_sunset_data = sunrise_sunset_data[valid_time_format]
 
 def get_adjusted_times():
-    today = datetime.now(PACIFIC_TIME).strftime('%m/%d')
-    today_date = pd.to_datetime(today, format='%m/%d')
+    today = datetime.now().strftime('%m/%d/%Y')  # Include the current year
+    today_date = pd.to_datetime(today, format='%m/%d/%Y')
+
+    print("Debug: Today's Date:", today_date)
+    print("Debug: Processed Dates in DataFrame:", sunrise_sunset_data['Date'])
 
     # Find the matching row for today's date
     row = sunrise_sunset_data[sunrise_sunset_data['Date'] == today_date]
 
     if row.empty:
+        print("Debug: No matching row found. Full dataset:", sunrise_sunset_data)
         raise ValueError(f"No sunrise/sunset data available for {today}")
 
     # Parse sunrise and sunset times
