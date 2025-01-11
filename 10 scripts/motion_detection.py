@@ -50,10 +50,13 @@ last_alert_time = {camera: None for camera in CAMERA_CONFIGS.keys()}
 
 # Load the sunrise/sunset data
 SUNRISE_SUNSET_FILE = os.path.join("./20 configs", "LA Sunrise Sunset.txt")
-sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE, delimiter="\t")
+sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE, delimiter="\t", skiprows=1, names=["Date", "Sunrise", "Sunset"])
 
 # Ensure Date is in MM/DD format
-sunrise_sunset_data['Date'] = pd.to_datetime(sunrise_sunset_data['Date'], format='%m/%d')
+sunrise_sunset_data['Date'] = pd.to_datetime(sunrise_sunset_data['Date'], format='%m/%d', errors='coerce')
+
+# Drop any rows with invalid dates
+sunrise_sunset_data = sunrise_sunset_data.dropna(subset=['Date'])
 
 def get_adjusted_times():
     today = datetime.now(PACIFIC_TIME).strftime('%m/%d')
