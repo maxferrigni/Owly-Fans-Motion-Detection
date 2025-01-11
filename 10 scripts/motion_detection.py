@@ -13,8 +13,8 @@ import sys  # For real-time stdout flushing
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
 
 # Paths
-INPUT_BASE_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 IT/20 Motion Detection/20 Input Files/60 Camera Base Images"
-OUTPUT_PATH = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 IT/20 Motion Detection/30 Output Files"
+INPUT_BASE_PATH = "/path/to/base/images"
+OUTPUT_PATH = "/path/to/output/files"
 SNAPSHOT_PATH = OUTPUT_PATH
 LOG_PATH = os.path.join(OUTPUT_PATH, "logs")
 DIFF_PATH = os.path.join(OUTPUT_PATH, "differences")
@@ -49,66 +49,61 @@ CAMERA_CONFIGS = load_config()
 last_alert_time = {camera: None for camera in CAMERA_CONFIGS.keys()}
 
 # Load the sunrise/sunset data
-SUNRISE_SUNSET_FILE = os.path.join("./20 configs", "LA_Sunrise_Sunset.csv")
-sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE)
+SUNRISE_SUNSET_FILE = os.path.join("./20 configs", "LA_Sunrise_Sunset.txt")
+sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE, delimiter='\t')
 
-# Combine Day, Month, and Year columns to create a unified Date column
-sunrise_sunset_data['Date'] = pd.to_datetime(
-    sunrise_sunset_data[['Month', 'Day', 'Year']].astype(str).agg('/'.join, axis=1),
-    format='%m/%d/%Y'
-)
+# Convert Date column to datetime and normalize to date
+sunrise_sunset_data['Date'] = pd.to_datetime(sunrise_sunset_data['Date']).dt.date
 
-# Keep only necessary columns
-sunrise_sunset_data = sunrise_sunset_data[['Date', 'Sunrise', 'Sunset']]
-
-# Validate and clean Sunrise and Sunset columns
-sunrise_sunset_data['Sunrise'] = sunrise_sunset_data['Sunrise'].astype(str).str.strip()
-sunrise_sunset_data['Sunset'] = sunrise_sunset_data['Sunset'].astype(str).str.strip()
-
-# Drop rows with invalid Sunrise or Sunset times
-valid_time_format = sunrise_sunset_data['Sunrise'].str.match(r'^\d{2}:\d{2}$') & sunrise_sunset_data['Sunset'].str.match(r'^\d{2}:\d{2}$')
-sunrise_sunset_data = sunrise_sunset_data[valid_time_format]
+# Debugging: Ensure the Date column is processed correctly
+print("Debug: Processed Date Column:\n", sunrise_sunset_data['Date'].head())
 
 def get_adjusted_times():
-    today = datetime.now().strftime('%m/%d/%Y')  # Include the current year
-    today_date = pd.to_datetime(today, format='%m/%d/%Y')
+    today = datetime.now(PACIFIC_TIME).date()
+    print("Debug: Today's Date:", today)
 
-    print("Debug: Today's Date:", today_date)
-    print("Debug: Processed Dates in DataFrame:", sunrise_sunset_data['Date'])
-
-    # Find the matching row for today's date
-    row = sunrise_sunset_data[sunrise_sunset_data['Date'] == today_date]
+    row = sunrise_sunset_data[sunrise_sunset_data['Date'] == today]
 
     if row.empty:
-        print("Debug: No matching row found. Full dataset:", sunrise_sunset_data)
+        print("Debug: No matching row found. Full dataset:\n", sunrise_sunset_data)
         raise ValueError(f"No sunrise/sunset data available for {today}")
 
-    # Parse sunrise and sunset times
-    sunrise_time = datetime.strptime(row['Sunrise'].values[0], '%H:%M').time()
-    sunset_time = datetime.strptime(row['Sunset'].values[0], '%H:%M').time()
+    sunrise_time = datetime.strptime(row.iloc[0]['Sunrise'], '%H:%M').time()
+    sunset_time = datetime.strptime(row.iloc[0]['Sunset'], '%H:%M').time()
 
-    # Adjust times for 40-minute offsets
     adjusted_sunrise = (datetime.combine(datetime.today(), sunrise_time) - timedelta(minutes=40)).time()
     adjusted_sunset = (datetime.combine(datetime.today(), sunset_time) + timedelta(minutes=40)).time()
 
+    print(f"Debug: Adjusted Sunrise: {adjusted_sunrise}, Adjusted Sunset: {adjusted_sunset}")
     return adjusted_sunrise, adjusted_sunset
 
 def is_within_allowed_hours():
     now = datetime.now(PACIFIC_TIME).time()
     adjusted_sunrise, adjusted_sunset = get_adjusted_times()
-
-    # Check if the current time falls within the adjusted dark hours
     return adjusted_sunset <= now or now <= adjusted_sunrise
 
-# Load base image and ensure it's in RGB mode
+def update_base_images():
+    print("Updating base images for all cameras...", flush=True)
+    for camera_name, config in CAMERA_CONFIGS.items():
+        try:
+            if config["roi"] is None:
+                print(f"Skipping {camera_name}: No ROI defined", flush=True)
+                continue
+            new_base_image = capture_real_image(config["roi"])
+            base_image_path = BASE_IMAGES[camera_name]
+            os.makedirs(os.path.dirname(base_image_path), exist_ok=True)
+            new_base_image.save(base_image_path)
+            print(f"Updated base image for {camera_name} at {base_image_path}", flush=True)
+        except Exception as e:
+            print(f"Error updating base image for {camera_name}: {e}", flush=True)
+
 def load_base_image(camera_name):
     base_image_path = BASE_IMAGES.get(camera_name)
     if not base_image_path or not os.path.exists(base_image_path):
         raise FileNotFoundError(f"Base image for {camera_name} not found: {base_image_path}")
     image = Image.open(base_image_path)
-    return image.convert("RGB")  # Ensure base image is in RGB mode
+    return image.convert("RGB")
 
-# Capture an image from the screen based on the ROI
 def capture_real_image(roi):
     x, y, width, height = roi
     width = abs(width - x)
@@ -119,7 +114,6 @@ def capture_real_image(roi):
     screenshot = pyautogui.screenshot(region=(x, y, width, height))
     return screenshot.convert("RGB")
 
-# Save snapshot images
 def save_snapshot(image, camera_name, snapshot_name):
     camera_folder = os.path.join(SNAPSHOT_PATH, camera_name)
     os.makedirs(camera_folder, exist_ok=True)
@@ -129,16 +123,6 @@ def save_snapshot(image, camera_name, snapshot_name):
     image.save(image_path)
     return image_path
 
-# Save triggered alerts with timestamp into camera-specific folders
-def save_alert_image(combined_image, camera_name):
-    os.makedirs(ALERT_SUBFOLDERS[camera_name], exist_ok=True)
-    timestamp = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d_%H-%M-%S")
-    alert_path = os.path.join(ALERT_SUBFOLDERS[camera_name], f"{camera_name}_{timestamp}.jpg")
-    combined_image.save(alert_path)
-    print(f"Alert saved for {camera_name} at {alert_path}")
-    return alert_path
-
-# Log motion events to a delimited text file
 def log_event(camera_name, status, pixel_change=None, luminance_change=None):
     daily_log_folder = os.path.join(LOG_PATH, "motion_logs")
     os.makedirs(daily_log_folder, exist_ok=True)
@@ -152,36 +136,25 @@ def log_event(camera_name, status, pixel_change=None, luminance_change=None):
     with open(log_file, "a") as log:
         log.write(entry)
 
-# Detect motion and calculate metrics
 def detect_motion(base_image, new_image, threshold_percentage, luminance_threshold):
-    diff = ImageChops.difference(base_image, new_image).convert("L")  # Convert to grayscale
+    diff = ImageChops.difference(base_image, new_image).convert("L")
     total_pixels = diff.size[0] * diff.size[1]
-    significant_pixels = 0
-    total_luminance_change = 0
-
-    for pixel in diff.getdata():
-        total_luminance_change += pixel
-        if pixel > luminance_threshold:
-            significant_pixels += 1
-
-    avg_luminance_change = total_luminance_change / total_pixels
+    significant_pixels = sum(1 for pixel in diff.getdata() if pixel > luminance_threshold)
+    avg_luminance_change = sum(diff.getdata()) / total_pixels
     threshold_pixels = total_pixels * threshold_percentage
     motion_detected = significant_pixels > threshold_pixels
     return diff, motion_detected, significant_pixels, avg_luminance_change, total_pixels
 
-# Create heatmap and combine images
 def create_combined_output(base_image, snapshot_image, diff_image, metrics_text, camera_name):
     os.makedirs(DIFF_PATH, exist_ok=True)
 
-    # Create heatmap
     heatmap = snapshot_image.copy()
     draw = ImageDraw.Draw(heatmap)
     for x in range(diff_image.width):
         for y in range(diff_image.height):
-            if diff_image.getpixel((x, y)) > 50:  # Threshold for differences
+            if diff_image.getpixel((x, y)) > 50:
                 draw.point((x, y), fill="red")
 
-    # Combine base, snapshot, and heatmap
     width, height = base_image.size
     combined_width = width * 3
     combined_image = Image.new("RGB", (combined_width, height))
@@ -189,25 +162,29 @@ def create_combined_output(base_image, snapshot_image, diff_image, metrics_text,
     combined_image.paste(snapshot_image, (width, 0))
     combined_image.paste(heatmap, (width * 2, 0))
 
-    # Add metrics and thresholds
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     font = ImageFont.truetype(font_path, size=14) if os.path.exists(font_path) else None
     draw = ImageDraw.Draw(combined_image)
     draw.multiline_text((width * 2 + 10, 10), metrics_text, fill="yellow", font=font)
 
-    # Save combined image
     combined_path = os.path.join(DIFF_PATH, f"{camera_name}_combined.jpg")
     combined_image.save(combined_path)
     return combined_image, combined_path
 
-# Main motion detection function
 def motion_detection():
     print("Starting motion detection...", flush=True)
+    base_images_updated = False
+
     while True:
         if not is_within_allowed_hours():
-            print("Outside of allowed hours. Skipping motion detection...", flush=True)
+            print("Outside of allowed hours. Waiting...", flush=True)
             sleep_time.sleep(60)
+            base_images_updated = False  # Reset for the next night
             continue
+
+        if not base_images_updated:
+            update_base_images()
+            base_images_updated = True
 
         for camera_name, config in CAMERA_CONFIGS.items():
             try:
