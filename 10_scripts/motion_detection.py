@@ -238,7 +238,7 @@ def motion_detection():
             except Exception as e:
                 print(f"Error processing {camera_name}: {e}", flush=True)
 
-        sleep_time.sleep(20)
+        sleep_time.sleep(20) 
 
 if __name__ == "__main__":
     motion_detection()
