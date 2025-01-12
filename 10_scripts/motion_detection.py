@@ -1,3 +1,5 @@
+# motion_detection.py
+
 import os
 import json
 from datetime import datetime, time, timedelta
@@ -6,19 +8,25 @@ import pyautogui
 import time as sleep_time
 import pytz
 import pandas as pd
-from alert_email import send_email_alert  # Import the email alert function
-import sys  # For real-time stdout flushing
+from alert_email import send_email_alert
+import sys
+import argparse  # To handle arguments passed from _front_end.py
 
 # Define Pacific Time Zone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
 
 # Paths
-INPUT_BASE_PATH = "/path/to/base/images"
-OUTPUT_PATH = "/path/to/output/files"
+OUTPUT_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection"
+INPUT_BASE_PATH = os.path.join(OUTPUT_DIR, "base_images")
+OUTPUT_PATH = os.path.join(OUTPUT_DIR, "output_files")
 SNAPSHOT_PATH = OUTPUT_PATH
 LOG_PATH = os.path.join(OUTPUT_PATH, "logs")
 DIFF_PATH = os.path.join(OUTPUT_PATH, "differences")
 ALERTS_PATH = os.path.join(OUTPUT_PATH, "alerts")
+
+# Config and Scripts Paths
+CONFIGS_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/10_GIT/Owly-Fans-Motion-Detection"
+SCRIPTS_DIR = CONFIGS_DIR
 
 # Alert subfolders for each camera
 ALERT_SUBFOLDERS = {
@@ -34,9 +42,22 @@ BASE_IMAGES = {
     "Wyze Internal Camera": os.path.join(INPUT_BASE_PATH, "Wyze_Internal_Camera_Base.jpg"),
 }
 
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description="Motion Detection Script")
+parser.add_argument(
+    "--darkness", action="store_true", help="Run the script during darkness only"
+)
+parser.add_argument(
+    "--all", action="store_true", help="Run the script at all times"
+)
+args = parser.parse_args()
+
+# Determine mode
+RUN_IN_DARKNESS_ONLY = args.darkness
+
 # Load camera configurations from the JSON file
 def load_config():
-    config_path = "./20 configs/config.json"
+    config_path = os.path.join(CONFIGS_DIR, "config.json")
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
     with open(config_path, 'r') as f:
@@ -49,7 +70,7 @@ CAMERA_CONFIGS = load_config()
 last_alert_time = {camera: None for camera in CAMERA_CONFIGS.keys()}
 
 # Load the sunrise/sunset data
-SUNRISE_SUNSET_FILE = os.path.join("./20 configs", "LA_Sunrise_Sunset.txt")
+SUNRISE_SUNSET_FILE = os.path.join(CONFIGS_DIR, "LA_Sunrise_Sunset.txt")
 sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE, delimiter='\t')
 
 # Convert Date column to datetime and normalize to date
@@ -176,7 +197,7 @@ def motion_detection():
     base_images_updated = False
 
     while True:
-        if not is_within_allowed_hours():
+        if RUN_IN_DARKNESS_ONLY and not is_within_allowed_hours():
             print("Outside of allowed hours. Waiting...", flush=True)
             sleep_time.sleep(60)
             base_images_updated = False  # Reset for the next night
@@ -210,7 +231,6 @@ def motion_detection():
 
                 if motion_detected:
                     print(f"Motion detected for {camera_name}!", flush=True)
-                    save_alert_image(combined_image, camera_name)
                     log_event(camera_name, "Motion Detected", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
                 else:
                     log_event(camera_name, "No Motion", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
