@@ -58,7 +58,7 @@ sunrise_sunset_data['Date'] = pd.to_datetime(sunrise_sunset_data['Date']).dt.dat
 # Debugging: Ensure the Date column is processed correctly
 print("Debug: Processed Date Column:\n", sunrise_sunset_data['Date'].head())
 
-def get_adjusted_times():
+def get_darkness_times():
     today = datetime.now(PACIFIC_TIME).date()
     print("Debug: Today's Date:", today)
 
@@ -71,16 +71,16 @@ def get_adjusted_times():
     sunrise_time = datetime.strptime(row.iloc[0]['Sunrise'], '%H:%M').time()
     sunset_time = datetime.strptime(row.iloc[0]['Sunset'], '%H:%M').time()
 
-    adjusted_sunrise = (datetime.combine(datetime.today(), sunrise_time) - timedelta(minutes=40)).time()
-    adjusted_sunset = (datetime.combine(datetime.today(), sunset_time) + timedelta(minutes=40)).time()
+    darkness_start = (datetime.combine(datetime.today(), sunrise_time) - timedelta(minutes=40)).time()
+    darkness_end = (datetime.combine(datetime.today(), sunset_time) + timedelta(minutes=40)).time()
 
-    print(f"Debug: Adjusted Sunrise: {adjusted_sunrise}, Adjusted Sunset: {adjusted_sunset}")
-    return adjusted_sunrise, adjusted_sunset
+    print(f"Debug: Darkness Start: {darkness_start}, Darkness End: {darkness_end}")
+    return darkness_start, darkness_end
 
 def is_within_allowed_hours():
     now = datetime.now(PACIFIC_TIME).time()
-    adjusted_sunrise, adjusted_sunset = get_adjusted_times()
-    return adjusted_sunset <= now or now <= adjusted_sunrise
+    darkness_start, darkness_end = get_darkness_times()
+    return darkness_end <= now or now <= darkness_start
 
 def update_base_images():
     print("Updating base images for all cameras...", flush=True)
