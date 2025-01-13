@@ -52,7 +52,7 @@ class OwlApp:
                 self.script_process = subprocess.Popen(
                     [
                         "python3",
-                        "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/10_GIT/Owly-Fans-Motion-Detection/10_scripts/motion_detection.py",
+                        "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/10_GIT/Owly-Fans-Motion-Detection/10_scripts/main.py",
                         "--darkness" if self.in_darkness_only.get() else "--all",
                     ],
                     stdout=subprocess.PIPE,

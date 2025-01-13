@@ -1,4 +1,4 @@
-# motion_detection.py
+# main.py
 
 import os
 import json
