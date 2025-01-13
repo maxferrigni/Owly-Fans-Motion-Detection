@@ -15,18 +15,18 @@ import argparse  # To handle arguments passed from _front_end.py
 # Define Pacific Time Zone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
 
+# Base Directory
+BASE_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/30_OutPut_Files"
+
 # Paths
-OUTPUT_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection"
-INPUT_BASE_PATH = os.path.join(OUTPUT_DIR, "base_images")
-OUTPUT_PATH = os.path.join(OUTPUT_DIR, "output_files")
-SNAPSHOT_PATH = OUTPUT_PATH
-LOG_PATH = os.path.join(OUTPUT_PATH, "logs")
-DIFF_PATH = os.path.join(OUTPUT_PATH, "differences")
-ALERTS_PATH = os.path.join(OUTPUT_PATH, "alerts")
+INPUT_BASE_PATH = os.path.join(BASE_DIR, "base_images")
+SNAPSHOT_PATH = os.path.join(BASE_DIR, "snapshots")
+LOG_PATH = os.path.join(BASE_DIR, "logs")
+DIFF_PATH = os.path.join(BASE_DIR, "differences")
+ALERTS_PATH = os.path.join(BASE_DIR, "alerts")
 
 # Config and Scripts Paths
-CONFIGS_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/10_GIT/Owly-Fans-Motion-Detection"
-SCRIPTS_DIR = CONFIGS_DIR
+CONFIGS_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/10_GIT/Owly-Fans-Motion-Detection/20_configs"
 
 # Alert subfolders for each camera
 ALERT_SUBFOLDERS = {
@@ -41,6 +41,12 @@ BASE_IMAGES = {
     "Bindy Patio Camera": os.path.join(INPUT_BASE_PATH, "Bindy_Patio_Camera_Base.jpg"),
     "Wyze Internal Camera": os.path.join(INPUT_BASE_PATH, "Wyze_Internal_Camera_Base.jpg"),
 }
+
+# Ensure directories exist
+for folder in [INPUT_BASE_PATH, SNAPSHOT_PATH, LOG_PATH, DIFF_PATH, ALERTS_PATH]:
+    os.makedirs(folder, exist_ok=True)
+for subfolder in ALERT_SUBFOLDERS.values():
+    os.makedirs(subfolder, exist_ok=True)
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Motion Detection Script")
@@ -230,7 +236,7 @@ def motion_detection():
                 combined_image, _ = create_combined_output(base_image, new_image, diff, metrics_text, camera_name)
 
                 if motion_detected:
-                    print(f"Motion detected for {camera_name}!", flush=True)
+                    print(f"Motion detected for {camera_name}!")
                     log_event(camera_name, "Motion Detected", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
                 else:
                     log_event(camera_name, "No Motion", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
@@ -238,7 +244,7 @@ def motion_detection():
             except Exception as e:
                 print(f"Error processing {camera_name}: {e}", flush=True)
 
-        sleep_time.sleep(20) 
+        sleep_time.sleep(20)
 
 if __name__ == "__main__":
     motion_detection()
