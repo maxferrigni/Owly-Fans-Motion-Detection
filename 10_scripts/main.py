@@ -1,5 +1,3 @@
-# main.py
-
 import os
 import json
 from datetime import datetime, time, timedelta
@@ -8,9 +6,11 @@ import pyautogui
 import time as sleep_time
 import pytz
 import pandas as pd
+import csv
+from git import Repo
 from alert_email import send_email_alert
 import sys
-import argparse  # To handle arguments passed from _front_end.py
+import argparse
 
 # Define Pacific Time Zone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
@@ -24,44 +24,27 @@ SNAPSHOT_PATH = os.path.join(BASE_DIR, "snapshots")
 LOG_PATH = os.path.join(BASE_DIR, "logs")
 DIFF_PATH = os.path.join(BASE_DIR, "differences")
 ALERTS_PATH = os.path.join(BASE_DIR, "alerts")
-
-# Config and Scripts Paths
 CONFIGS_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/10_GIT/Owly-Fans-Motion-Detection/20_configs"
 
-# Alert subfolders for each camera
-ALERT_SUBFOLDERS = {
-    "Upper Patio Camera": os.path.join(ALERTS_PATH, "Upper_Patio"),
-    "Bindy Patio Camera": os.path.join(ALERTS_PATH, "Bindy_Patio"),
-    "Wyze Internal Camera": os.path.join(ALERTS_PATH, "Wyze_Internal"),
-}
-
-# Mapping of camera names to base image filenames
-BASE_IMAGES = {
-    "Upper Patio Camera": os.path.join(INPUT_BASE_PATH, "Upper_Patio_Camera_Base.jpg"),
-    "Bindy Patio Camera": os.path.join(INPUT_BASE_PATH, "Bindy_Patio_Camera_Base.jpg"),
-    "Wyze Internal Camera": os.path.join(INPUT_BASE_PATH, "Wyze_Internal_Camera_Base.jpg"),
-}
+# Local and Repository Log Paths
+LOCAL_LOG_PATH = os.path.join(LOG_PATH, "local_owl_log.csv")
+REPO_PATH = "/path/to/git/repo"  # Replace with your Git repo path
+REPO_LOG_PATH = os.path.join(REPO_PATH, "30_Logs/repository_owl_log.csv")
 
 # Ensure directories exist
 for folder in [INPUT_BASE_PATH, SNAPSHOT_PATH, LOG_PATH, DIFF_PATH, ALERTS_PATH]:
     os.makedirs(folder, exist_ok=True)
-for subfolder in ALERT_SUBFOLDERS.values():
-    os.makedirs(subfolder, exist_ok=True)
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Motion Detection Script")
-parser.add_argument(
-    "--darkness", action="store_true", help="Run the script during darkness only"
-)
-parser.add_argument(
-    "--all", action="store_true", help="Run the script at all times"
-)
+parser.add_argument("--darkness", action="store_true", help="Run the script during darkness only")
+parser.add_argument("--all", action="store_true", help="Run the script at all times")
 args = parser.parse_args()
 
 # Determine mode
 RUN_IN_DARKNESS_ONLY = args.darkness
 
-# Load camera configurations from the JSON file
+# Load camera configurations
 def load_config():
     config_path = os.path.join(CONFIGS_DIR, "config.json")
     if not os.path.exists(config_path):
@@ -69,30 +52,18 @@ def load_config():
     with open(config_path, 'r') as f:
         return json.load(f)
 
-# Load configuration settings
 CAMERA_CONFIGS = load_config()
 
-# Alert tracking to enforce 30-minute cooldown
-last_alert_time = {camera: None for camera in CAMERA_CONFIGS.keys()}
-
-# Load the sunrise/sunset data
+# Load sunrise/sunset data
 SUNRISE_SUNSET_FILE = os.path.join(CONFIGS_DIR, "LA_Sunrise_Sunset.txt")
 sunrise_sunset_data = pd.read_csv(SUNRISE_SUNSET_FILE, delimiter='\t')
-
-# Convert Date column to datetime and normalize to date
 sunrise_sunset_data['Date'] = pd.to_datetime(sunrise_sunset_data['Date']).dt.date
-
-# Debugging: Ensure the Date column is processed correctly
-print("Debug: Processed Date Column:\n", sunrise_sunset_data['Date'].head())
 
 def get_darkness_times():
     today = datetime.now(PACIFIC_TIME).date()
-    print("Debug: Today's Date:", today)
-
     row = sunrise_sunset_data[sunrise_sunset_data['Date'] == today]
 
     if row.empty:
-        print("Debug: No matching row found. Full dataset:\n", sunrise_sunset_data)
         raise ValueError(f"No sunrise/sunset data available for {today}")
 
     sunrise_time = datetime.strptime(row.iloc[0]['Sunrise'], '%H:%M').time()
@@ -101,7 +72,6 @@ def get_darkness_times():
     darkness_start = (datetime.combine(datetime.today(), sunrise_time) - timedelta(minutes=40)).time()
     darkness_end = (datetime.combine(datetime.today(), sunset_time) + timedelta(minutes=40)).time()
 
-    print(f"Debug: Darkness Start: {darkness_start}, Darkness End: {darkness_end}")
     return darkness_start, darkness_end
 
 def is_within_allowed_hours():
@@ -109,47 +79,27 @@ def is_within_allowed_hours():
     darkness_start, darkness_end = get_darkness_times()
     return darkness_end <= now or now <= darkness_start
 
-def update_base_images():
-    print("Updating base images for all cameras...", flush=True)
-    for camera_name, config in CAMERA_CONFIGS.items():
-        try:
-            if config["roi"] is None:
-                print(f"Skipping {camera_name}: No ROI defined", flush=True)
-                continue
-            new_base_image = capture_real_image(config["roi"])
-            base_image_path = BASE_IMAGES[camera_name]
-            os.makedirs(os.path.dirname(base_image_path), exist_ok=True)
-            new_base_image.save(base_image_path)
-            print(f"Updated base image for {camera_name} at {base_image_path}", flush=True)
-        except Exception as e:
-            print(f"Error updating base image for {camera_name}: {e}", flush=True)
+# Append log entry to local file
+def append_to_local_log(camera_name, status, pixel_change=None, luminance_change=None):
+    now = datetime.now(PACIFIC_TIME)
+    row = [
+        now.strftime("%Y-%m-%d %H:%M:%S"),
+        camera_name,
+        status,
+        pixel_change or "",
+        luminance_change or ""
+    ]
 
-def load_base_image(camera_name):
-    base_image_path = BASE_IMAGES.get(camera_name)
-    if not base_image_path or not os.path.exists(base_image_path):
-        raise FileNotFoundError(f"Base image for {camera_name} not found: {base_image_path}")
-    image = Image.open(base_image_path)
-    return image.convert("RGB")
+    if not os.path.exists(LOCAL_LOG_PATH):
+        with open(LOCAL_LOG_PATH, "w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["Timestamp", "CameraName", "Status", "PixelChange", "LuminanceChange"])
 
-def capture_real_image(roi):
-    x, y, width, height = roi
-    width = abs(width - x)
-    height = abs(height - y)
-    print(f"Capturing screenshot: x={x}, y={y}, width={width}, height={height}", flush=True)
-    if width <= 0 or height <= 0:
-        raise ValueError(f"Invalid ROI dimensions: {roi}")
-    screenshot = pyautogui.screenshot(region=(x, y, width, height))
-    return screenshot.convert("RGB")
+    with open(LOCAL_LOG_PATH, "a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(row)
 
-def save_snapshot(image, camera_name, snapshot_name):
-    camera_folder = os.path.join(SNAPSHOT_PATH, camera_name)
-    os.makedirs(camera_folder, exist_ok=True)
-    if image.mode == "RGBA":
-        image = image.convert("RGB")
-    image_path = os.path.join(camera_folder, snapshot_name)
-    image.save(image_path)
-    return image_path
-
+# Log event to daily file
 def log_event(camera_name, status, pixel_change=None, luminance_change=None):
     daily_log_folder = os.path.join(LOG_PATH, "motion_logs")
     os.makedirs(daily_log_folder, exist_ok=True)
@@ -163,15 +113,64 @@ def log_event(camera_name, status, pixel_change=None, luminance_change=None):
     with open(log_file, "a") as log:
         log.write(entry)
 
+# Merge local log with repository log
+def merge_logs():
+    if not os.path.exists(LOCAL_LOG_PATH):
+        print(f"Local log file not found: {LOCAL_LOG_PATH}")
+        return
+
+    if not os.path.exists(REPO_LOG_PATH):
+        with open(REPO_LOG_PATH, "w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["Timestamp", "CameraName", "Status", "PixelChange", "LuminanceChange"])
+
+    with open(REPO_LOG_PATH, "a", newline="") as repo_file, open(LOCAL_LOG_PATH, "r") as local_file:
+        repo_writer = csv.writer(repo_file)
+        local_reader = csv.reader(local_file)
+        next(local_reader)  # Skip header
+        for row in local_reader:
+            repo_writer.writerow(row)
+
+# Push changes to GitHub
+def push_to_git():
+    repo = Repo(REPO_PATH)
+    repo.git.add(update=True)
+    repo.index.commit(f"Update logs on {datetime.now(PACIFIC_TIME).strftime('%Y-%m-%d %H:%M:%S')}")
+    repo.remote(name="origin").push()
+    print("Changes pushed to GitHub")
+
+# Detect motion
 def detect_motion(base_image, new_image, threshold_percentage, luminance_threshold):
     diff = ImageChops.difference(base_image, new_image).convert("L")
     total_pixels = diff.size[0] * diff.size[1]
     significant_pixels = sum(1 for pixel in diff.getdata() if pixel > luminance_threshold)
     avg_luminance_change = sum(diff.getdata()) / total_pixels
     threshold_pixels = total_pixels * threshold_percentage
-    motion_detected = significant_pixels > threshold_pixels
-    return diff, motion_detected, significant_pixels, avg_luminance_change, total_pixels
+    return diff, significant_pixels > threshold_pixels, significant_pixels, avg_luminance_change, total_pixels
 
+# Load base image
+def load_base_image(camera_name):
+    base_image_path = os.path.join(INPUT_BASE_PATH, f"{camera_name}_base.jpg")
+    if not os.path.exists(base_image_path):
+        raise FileNotFoundError(f"Base image not found for {camera_name}")
+    return Image.open(base_image_path).convert("RGB")
+
+# Capture real image
+def capture_real_image(roi):
+    x, y, width, height = roi
+    region = (x, y, width, height)
+    screenshot = pyautogui.screenshot(region=region)
+    return screenshot.convert("RGB")
+
+# Save snapshot
+def save_snapshot(image, camera_name, snapshot_name):
+    snapshot_folder = os.path.join(SNAPSHOT_PATH, camera_name)
+    os.makedirs(snapshot_folder, exist_ok=True)
+    snapshot_path = os.path.join(snapshot_folder, snapshot_name)
+    image.save(snapshot_path)
+    return snapshot_path
+
+# Generate combined output
 def create_combined_output(base_image, snapshot_image, diff_image, metrics_text, camera_name):
     os.makedirs(DIFF_PATH, exist_ok=True)
 
@@ -198,53 +197,48 @@ def create_combined_output(base_image, snapshot_image, diff_image, metrics_text,
     combined_image.save(combined_path)
     return combined_image, combined_path
 
+# Main motion detection loop
 def motion_detection():
-    print("Starting motion detection...", flush=True)
-    base_images_updated = False
+    print("Starting motion detection...")
 
     while True:
         if RUN_IN_DARKNESS_ONLY and not is_within_allowed_hours():
-            print("Outside of allowed hours. Waiting...", flush=True)
+            print("Outside of allowed hours. Waiting...")
             sleep_time.sleep(60)
-            base_images_updated = False  # Reset for the next night
             continue
-
-        if not base_images_updated:
-            update_base_images()
-            base_images_updated = True
 
         for camera_name, config in CAMERA_CONFIGS.items():
             try:
-                if config["roi"] is None:
-                    print(f"Skipping {camera_name}: No ROI Defined", flush=True)
+                if not config.get("roi"):
+                    print(f"Skipping {camera_name}: No ROI defined")
                     continue
 
                 base_image = load_base_image(camera_name)
                 new_image = capture_real_image(config["roi"])
-                save_snapshot(new_image, camera_name, "new_snapshot.jpg")
 
                 diff, motion_detected, significant_pixels, avg_luminance_change, total_pixels = detect_motion(
                     base_image, new_image, config["threshold_percentage"], config["luminance_threshold"]
                 )
 
-                metrics_text = (
-                    f"Pixel Changes: {significant_pixels / total_pixels:.2%}\n"
-                    f"Avg Luminance Change: {avg_luminance_change:.2f}\n"
-                    f"Threshold: {config['threshold_percentage'] * 100:.2f}% pixels, "
-                    f"Luminance > {config['luminance_threshold']}"
-                )
-                combined_image, _ = create_combined_output(base_image, new_image, diff, metrics_text, camera_name)
+                snapshot_name = f"{datetime.now(PACIFIC_TIME).strftime('%Y%m%d%H%M%S')}.jpg"
+                save_snapshot(new_image, camera_name, snapshot_name)
 
                 if motion_detected:
-                    print(f"Motion detected for {camera_name}!")
+                    append_to_local_log(camera_name, "Motion Detected", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
                     log_event(camera_name, "Motion Detected", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
                 else:
+                    append_to_local_log(camera_name, "No Motion", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
                     log_event(camera_name, "No Motion", f"{significant_pixels / total_pixels:.2%}", f"{avg_luminance_change:.2f}")
 
             except Exception as e:
-                print(f"Error processing {camera_name}: {e}", flush=True)
+                print(f"Error processing {camera_name}: {e}")
 
         sleep_time.sleep(20)
+
+# Scheduled daily task
+def scheduled_push():
+    merge_logs()
+    push_to_git()
 
 if __name__ == "__main__":
     motion_detection()
