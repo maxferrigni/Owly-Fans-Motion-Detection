@@ -1,4 +1,7 @@
 # File: configs_loader.py
+# Purpose:
+# Utility script to load and validate configuration files for the Owl Monitoring System.
+# Includes functions to load camera configs, email/text recipients, and sunrise/sunset data.
 
 import json
 import os

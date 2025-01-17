@@ -1,58 +1,68 @@
-# File: time_utils.py
+# File: configs_loader.py
+# Purpose:
+# Provides functions to load and validate configuration files for the Owl Monitoring System, such as:
+# - Camera configurations
+# - Email and text recipient lists
+# - Sunrise and sunset data
 
-from datetime import datetime, time, timedelta
-import pytz
-from utilities.configs_loader import load_sunrise_sunset_data
+import json
+import os
+import pandas as pd
 
-PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
+# Paths to config files
+CONFIG_PATH = "./configs/config.json"
+EMAIL_RECIPIENTS_PATH = "./configs/email_recipients.txt"
+TEXT_RECIPIENTS_PATH = "./configs/text_recipients.txt"
+SUNRISE_SUNSET_PATH = "./configs/LA_Sunrise_Sunset.txt"
 
-def get_darkness_times():
+def load_camera_config():
     """
-    Calculate the start and end times for darkness based on sunrise and sunset.
+    Load and validate the camera configuration from config.json.
     Returns:
-        tuple: (darkness_start, darkness_end) as datetime.time objects.
+        dict: Parsed configuration data.
     Raises:
-        ValueError: If today's sunrise/sunset data is not found.
+        FileNotFoundError: If the config file is missing.
+        json.JSONDecodeError: If the config file is invalid.
     """
-    today = datetime.now(PACIFIC_TIME).date()
-    sunrise_sunset_data = load_sunrise_sunset_data()
-    row = sunrise_sunset_data[sunrise_sunset_data['Date'] == today]
+    if not os.path.exists(CONFIG_PATH):
+        raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
+    with open(CONFIG_PATH, "r") as file:
+        return json.load(file)
 
-    if row.empty:
-        raise ValueError(f"No sunrise/sunset data available for {today}")
-
-    sunrise_time = datetime.strptime(row.iloc[0]['Sunrise'], '%H:%M').time()
-    sunset_time = datetime.strptime(row.iloc[0]['Sunset'], '%H:%M').time()
-
-    darkness_start = (datetime.combine(datetime.today(), sunset_time) + timedelta(minutes=40)).time()
-    darkness_end = (datetime.combine(datetime.today(), sunrise_time) - timedelta(minutes=40)).time()
-
-    return darkness_start, darkness_end
-
-def is_within_allowed_hours():
+def load_email_recipients():
     """
-    Check if the current time is within the allowed darkness hours.
+    Load the list of email recipients from email_recipients.txt.
     Returns:
-        bool: True if the current time is within darkness hours, otherwise False.
+        list: A list of email addresses.
+    Raises:
+        FileNotFoundError: If the email recipients file is missing.
     """
-    now = datetime.now(PACIFIC_TIME).time()
-    darkness_start, darkness_end = get_darkness_times()
-    return darkness_start <= now or now <= darkness_end
+    if not os.path.exists(EMAIL_RECIPIENTS_PATH):
+        raise FileNotFoundError(f"Email recipients file not found: {EMAIL_RECIPIENTS_PATH}")
+    with open(EMAIL_RECIPIENTS_PATH, "r") as file:
+        return [line.strip() for line in file if line.strip()]
 
-def convert_to_pacific_time(utc_time):
+def load_text_recipients():
     """
-    Convert a UTC datetime to Pacific Time.
-    Args:
-        utc_time (datetime): A UTC datetime object.
+    Load the list of text recipients from text_recipients.txt.
     Returns:
-        datetime: The equivalent Pacific Time datetime object.
+        list: A list of text recipient numbers or addresses.
+    Raises:
+        FileNotFoundError: If the text recipients file is missing.
     """
-    return utc_time.astimezone(PACIFIC_TIME)
+    if not os.path.exists(TEXT_RECIPIENTS_PATH):
+        raise FileNotFoundError(f"Text recipients file not found: {TEXT_RECIPIENTS_PATH}")
+    with open(TEXT_RECIPIENTS_PATH, "r") as file:
+        return [line.strip() for line in file if line.strip()]
 
-def current_pacific_time():
+def load_sunrise_sunset_data():
     """
-    Get the current time in Pacific Time.
+    Load and parse the sunrise/sunset data from LA_Sunrise_Sunset.txt.
     Returns:
-        datetime: The current Pacific Time datetime object.
+        pandas.DataFrame: DataFrame containing date, sunrise, and sunset times.
+    Raises:
+        FileNotFoundError: If the sunrise/sunset file is missing.
     """
-    return datetime.now(PACIFIC_TIME)
+    if not os.path.exists(SUNRISE_SUNSET_PATH):
+        raise FileNotFoundError(f"Sunrise/Sunset data file not found: {SUNRISE_SUNSET_PATH}")
+    return pd.read_csv(SUNRISE_SUNSET_PATH, delimiter="\t", parse_dates=["Date"])

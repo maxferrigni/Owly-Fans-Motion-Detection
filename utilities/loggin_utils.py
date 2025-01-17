@@ -1,84 +1,68 @@
-# File: logging_utils.py
+# File: configs_loader.py
+# Purpose:
+# Load and validate configuration files for the Owl Monitoring System, including:
+# - Camera configurations
+# - Email and text recipient lists
+# - Sunrise and sunset data
 
+import json
 import os
-import csv
-from datetime import datetime
-import pytz
+import pandas as pd
 
-# Set timezone for logs
-PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
+# Paths to config files
+CONFIG_PATH = "./configs/config.json"
+EMAIL_RECIPIENTS_PATH = "./configs/email_recipients.txt"
+TEXT_RECIPIENTS_PATH = "./configs/text_recipients.txt"
+SUNRISE_SUNSET_PATH = "./configs/LA_Sunrise_Sunset.txt"
 
-def append_to_local_log(log_file, camera_name, status, pixel_change=None, luminance_change=None):
+def load_camera_config():
     """
-    Append a log entry to the local log file.
-    Args:
-        log_file (str): Path to the log file.
-        camera_name (str): Name of the camera.
-        status (str): Status message.
-        pixel_change (str, optional): Percentage of pixel change.
-        luminance_change (str, optional): Average luminance change.
+    Load and validate the camera configuration from config.json.
+    Returns:
+        dict: Parsed configuration data.
+    Raises:
+        FileNotFoundError: If the config file is missing.
+        json.JSONDecodeError: If the config file is invalid.
     """
-    now = datetime.now(PACIFIC_TIME)
-    row = [
-        now.strftime("%Y-%m-%d %H:%M:%S"),
-        camera_name,
-        status,
-        pixel_change or "",
-        luminance_change or "",
-    ]
+    if not os.path.exists(CONFIG_PATH):
+        raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
+    with open(CONFIG_PATH, "r") as file:
+        return json.load(file)
 
-    # Create the log file with headers if it doesn't exist
-    if not os.path.exists(log_file):
-        with open(log_file, "w", newline="") as file:
-            writer = csv.writer(file)
-            writer.writerow(["Timestamp", "CameraName", "Status", "PixelChange", "LuminanceChange"])
-
-    # Append the new row
-    with open(log_file, "a", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(row)
-
-def log_event(log_folder, camera_name, status, pixel_change=None, luminance_change=None):
+def load_email_recipients():
     """
-    Log an event to a daily log file.
-    Args:
-        log_folder (str): Path to the folder where daily logs are stored.
-        camera_name (str): Name of the camera.
-        status (str): Status message.
-        pixel_change (str, optional): Percentage of pixel change.
-        luminance_change (str, optional): Average luminance change.
+    Load the list of email recipients from email_recipients.txt.
+    Returns:
+        list: A list of email addresses.
+    Raises:
+        FileNotFoundError: If the email recipients file is missing.
     """
-    os.makedirs(log_folder, exist_ok=True)
-    date_str = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d")
-    log_file = os.path.join(log_folder, f"motion_log_{date_str}.txt")
+    if not os.path.exists(EMAIL_RECIPIENTS_PATH):
+        raise FileNotFoundError(f"Email recipients file not found: {EMAIL_RECIPIENTS_PATH}")
+    with open(EMAIL_RECIPIENTS_PATH, "r") as file:
+        return [line.strip() for line in file if line.strip()]
 
-    timestamp = datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d %H:%M:%S")
-    entry = f"{timestamp}|{camera_name}|{status}|{pixel_change or ''}|{luminance_change or ''}\n"
-
-    with open(log_file, "a") as log:
-        log.write(entry)
-
-def merge_logs(local_log, repo_log):
+def load_text_recipients():
     """
-    Merge the local log into the repository log file.
-    Args:
-        local_log (str): Path to the local log file.
-        repo_log (str): Path to the repository log file.
+    Load the list of text recipients from text_recipients.txt.
+    Returns:
+        list: A list of text recipient numbers or addresses.
+    Raises:
+        FileNotFoundError: If the text recipients file is missing.
     """
-    if not os.path.exists(local_log):
-        print(f"Local log file not found: {local_log}")
-        return
+    if not os.path.exists(TEXT_RECIPIENTS_PATH):
+        raise FileNotFoundError(f"Text recipients file not found: {TEXT_RECIPIENTS_PATH}")
+    with open(TEXT_RECIPIENTS_PATH, "r") as file:
+        return [line.strip() for line in file if line.strip()]
 
-    # Create repo log if it doesn't exist
-    if not os.path.exists(repo_log):
-        with open(repo_log, "w", newline="") as file:
-            writer = csv.writer(file)
-            writer.writerow(["Timestamp", "CameraName", "Status", "PixelChange", "LuminanceChange"])
-
-    # Append local log entries to the repo log
-    with open(repo_log, "a", newline="") as repo_file, open(local_log, "r") as local_file:
-        repo_writer = csv.writer(repo_file)
-        local_reader = csv.reader(local_file)
-        next(local_reader, None)  # Skip header in local log
-        for row in local_reader:
-            repo_writer.writerow(row)
+def load_sunrise_sunset_data():
+    """
+    Load and parse the sunrise/sunset data from LA_Sunrise_Sunset.txt.
+    Returns:
+        pandas.DataFrame: DataFrame containing date, sunrise, and sunset times.
+    Raises:
+        FileNotFoundError: If the sunrise/sunset file is missing.
+    """
+    if not os.path.exists(SUNRISE_SUNSET_PATH):
+        raise FileNotFoundError(f"Sunrise/Sunset data file not found: {SUNRISE_SUNSET_PATH}")
+    return pd.read_csv(SUNRISE_SUNSET_PATH, delimiter="\t", parse_dates=["Date"])
