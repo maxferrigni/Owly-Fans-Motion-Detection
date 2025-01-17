@@ -1,4 +1,13 @@
-#log_to_local.py
+# File: log_to_local.py
+# Purpose:
+# This script logs owl detection data to a local CSV file (`local_owl_log.csv`).
+# It simulates owl detection (or integrates with detection logic) and appends the results to the log.
+# Features:
+# - Automatically creates the CSV log file if it doesn't exist.
+# - Records timestamped owl activity data, including counts of detected owls.
+# Typical Usage:
+# Run this script to append a new entry to the local log:
+# `python log_to_local.py`
 
 import csv
 from datetime import datetime

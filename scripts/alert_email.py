@@ -1,3 +1,15 @@
+# File: email_alerts.py
+# Purpose:
+# This script handles sending email alerts for the motion detection system.
+# It reads recipient email addresses from a file and sends alerts based on the camera name and alert type.
+# Features:
+# - Reads recipients from a configured file (`email_recipients.txt`).
+# - Sends HTML email alerts with motion detection information.
+# - Supports alerts for specific cameras or generic motion events.
+# Typical Usage:
+# Call the `send_email_alert` function with a camera name and alert type to notify recipients.
+# Example: `send_email_alert("Upper Patio Camera", "Owl In Area")`
+
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart

@@ -1,4 +1,9 @@
 # push_to_repository.py
+# This script merges a local owl log file into a repository log file and pushes the changes to GitHub.
+# It automates log merging, committing, and pushing, making it ideal for keeping centralized logs updated.
+# Example: If you add more data to `local_owl_log.csv`, this script will append it to `repository_owl_log.csv`
+# and commit the changes with a timestamp.
+
 import os
 from git import Repo
 import csv

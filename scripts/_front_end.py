@@ -1,11 +1,18 @@
-# _front_end.py
+# File: front_end.py
+# Purpose:
+# This script provides a graphical user interface (GUI) for the Owl Monitoring System.
+# It allows users to control motion detection settings and monitor logs in real time.
+# Features:
+# - Start and stop motion detection scripts with a button.
+# - Toggle between "In Darkness Only" and "All the Time" operational modes.
+# - Display real-time logs of motion detection activity in a scrollable text box.
+# Typical Usage:
+# Run this script to launch the GUI: `python front_end.py`
 
 import tkinter as tk
 from tkinter import scrolledtext
 import subprocess
 import threading
-import datetime
-import time as sleep_time
 
 
 class OwlApp:
@@ -15,7 +22,7 @@ class OwlApp:
         print("Initializing Owl Monitoring App...")  # Debug: App initialization
 
         # Set the window geometry
-        self.root.geometry("704x355+-1915+30")
+        self.root.geometry("704x355+100+100")
 
         self.script_process = None
         self.in_darkness_only = tk.BooleanVar(value=True)  # Default: In Darkness Only
@@ -52,7 +59,7 @@ class OwlApp:
                 self.script_process = subprocess.Popen(
                     [
                         "python3",
-                        "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/10_GIT/Owly-Fans-Motion-Detection/10_scripts/main.py",
+                        "./scripts/main.py",
                         "--darkness" if self.in_darkness_only.get() else "--all",
                     ],
                     stdout=subprocess.PIPE,
