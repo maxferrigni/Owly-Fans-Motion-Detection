@@ -1,3 +1,19 @@
+
+# File: capture_base_images.py
+# Purpose:
+# This script captures and saves base images for each configured camera in the owl monitoring system.
+# These base images are used as reference points for motion detection and comparison.
+# Features:
+# - Loads camera configurations from config.json
+# - Captures screenshots based on defined ROIs
+# - Clears existing base images before capture
+# - Saves images with consistent naming convention
+# Typical Usage:
+# Run this script to update base images for all cameras:
+# `python capture_base_images.py`
+# Base images will be saved to the configured input base path
+
+
 import os
 import pyautogui
 from PIL import Image
