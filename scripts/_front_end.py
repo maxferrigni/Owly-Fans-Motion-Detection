@@ -24,33 +24,42 @@ from datetime import datetime
 
 class OwlApp:
     def __init__(self, root):
+        # Initialize window first
         self.root = root
         self.root.title("Owl Monitoring App")
-        print("Initializing Owl Monitoring App...")
-
-        # Store the path of this script for preservation during updates
-        self.frontend_path = os.path.abspath(__file__)
-        self.frontend_backup = self._create_backup_path()
-
-        # Set the window geometry
-        self.root.geometry("704x455+100+100")  # Increased height for new button
-
+        self.root.geometry("704x455+100+100")
+        
+        # Initialize variables first
         self.script_process = None
         self.in_darkness_only = tk.BooleanVar(value=True)
+        
+        # Store the path of this script
+        self.frontend_path = os.path.abspath(__file__)
+        
+        # Create GUI elements
+        self._create_gui()
+        
+        # Log initialization
+        self.log_message("Log initialized.")
+        
+        # Update UI
+        self.root.update()
 
+    def _create_gui(self):
+        """Create all GUI elements"""
         # Add Update System button at the top
         self.update_button = tk.Button(
-            root, 
+            self.root, 
             text="Update System", 
             command=self.update_system,
             width=20,
-            bg='lightblue'  # Make it stand out
+            bg='lightblue'
         )
         self.update_button.pack(pady=10)
 
         # Add Start and Stop buttons
         self.start_button = tk.Button(
-            root, 
+            self.root, 
             text="Start Motion Detection", 
             command=self.start_script, 
             width=20
@@ -58,7 +67,7 @@ class OwlApp:
         self.start_button.pack(pady=10)
 
         self.stop_button = tk.Button(
-            root, 
+            self.root, 
             text="Stop Motion Detection", 
             command=self.stop_script, 
             state=tk.DISABLED, 
@@ -68,30 +77,22 @@ class OwlApp:
 
         # Add the toggle for "In Darkness Only" or "All the Time"
         self.darkness_toggle = tk.Checkbutton(
-            root,
+            self.root,
             text="Work in Darkness Only",
             variable=self.in_darkness_only,
             onvalue=True,
-            offvalue=False,
+            offvalue=False
         )
         self.darkness_toggle.pack(pady=10)
 
         # Add a log display
         self.log_display = scrolledtext.ScrolledText(
-            root, 
+            self.root, 
             width=80, 
             height=15, 
             wrap=tk.WORD
         )
         self.log_display.pack(pady=10)
-
-        # Log initialization
-        self.log_message("Log initialized.")
-
-    def _create_backup_path(self):
-        """Create a backup path for this script using timestamp"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        return f"{self.frontend_path}.{timestamp}.bak"
 
     def update_system(self):
         """Update all system files from git except this frontend script"""
@@ -103,9 +104,12 @@ class OwlApp:
             return
 
         try:
+            # Store backup path
+            backup_path = f"{self.frontend_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
+            
             # Backup this script
-            shutil.copy2(self.frontend_path, self.frontend_backup)
-            self.log_message(f"Created backup at {self.frontend_backup}")
+            shutil.copy2(self.frontend_path, backup_path)
+            self.log_message(f"Created backup at {backup_path}")
 
             # Perform git pull
             self.log_message("Performing git pull...")
@@ -119,7 +123,7 @@ class OwlApp:
                 self.log_message("Git pull successful.")
                 
                 # Restore our frontend script from backup
-                shutil.copy2(self.frontend_backup, self.frontend_path)
+                shutil.copy2(backup_path, self.frontend_path)
                 self.log_message("Restored frontend script from backup.")
 
                 # Ask user if they want to restart
@@ -134,8 +138,8 @@ class OwlApp:
         except Exception as e:
             self.log_message(f"Error during update: {e}")
             # Restore from backup if we have one
-            if os.path.exists(self.frontend_backup):
-                shutil.copy2(self.frontend_backup, self.frontend_path)
+            if 'backup_path' in locals() and os.path.exists(backup_path):
+                shutil.copy2(backup_path, self.frontend_path)
                 self.log_message("Restored frontend script from backup after error.")
 
     def restart_application(self):
@@ -149,10 +153,11 @@ class OwlApp:
             mode = "In Darkness Only" if self.in_darkness_only.get() else "All the Time"
             self.log_message(f"Starting motion detection script in mode: {mode}")
             try:
+                script_path = os.path.join(os.path.dirname(self.frontend_path), "main.py")
                 self.script_process = subprocess.Popen(
                     [
                         sys.executable,
-                        os.path.join(os.path.dirname(self.frontend_path), "main.py"),
+                        script_path,
                         "--darkness" if self.in_darkness_only.get() else "--all",
                     ],
                     stdout=subprocess.PIPE,
@@ -162,7 +167,7 @@ class OwlApp:
                 )
                 self.start_button.config(state=tk.DISABLED)
                 self.stop_button.config(state=tk.NORMAL)
-                self.update_button.config(state=tk.DISABLED)  # Disable updates while running
+                self.update_button.config(state=tk.DISABLED)
                 threading.Thread(target=self.refresh_logs, daemon=True).start()
             except Exception as e:
                 self.log_message(f"Error starting script: {e}")
@@ -173,11 +178,11 @@ class OwlApp:
             self.log_message("Stopping motion detection script...")
             try:
                 self.script_process.terminate()
-                self.script_process.wait()
+                self.script_process.wait(timeout=5)
                 self.script_process = None
                 self.start_button.config(state=tk.NORMAL)
                 self.stop_button.config(state=tk.DISABLED)
-                self.update_button.config(state=tk.NORMAL)  # Re-enable updates
+                self.update_button.config(state=tk.NORMAL)
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}")
 
