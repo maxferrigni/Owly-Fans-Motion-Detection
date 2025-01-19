@@ -151,8 +151,8 @@ class OwlApp:
             try:
                 self.script_process = subprocess.Popen(
                     [
-                        "python3",
-                        "./scripts/main.py",
+                        sys.executable,
+                        os.path.join(os.path.dirname(self.frontend_path), "main.py"),
                         "--darkness" if self.in_darkness_only.get() else "--all",
                     ],
                     stdout=subprocess.PIPE,
