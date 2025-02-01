@@ -12,6 +12,10 @@
 # Run this script to initiate motion detection:
 # `python main.py --darkness` (to run during darkness only) or `python main.py` (to run always).
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import argparse
 import time as sleep_time
 
