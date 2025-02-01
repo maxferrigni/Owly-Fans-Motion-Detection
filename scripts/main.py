@@ -14,8 +14,6 @@
 
 import argparse
 import time as sleep_time
-import sys
-import os
 from motion_workflow import process_camera
 from utilities.configs_loader import load_camera_config
 from utilities.time_utils import is_within_allowed_hours
@@ -24,8 +22,7 @@ from scripts.push_to_supabase import push_log_to_supabase, format_log_entry
 # Load configurations
 CAMERA_CONFIGS = load_camera_config()
 
-# Ensure Python can find both 'scripts/' and 'utilities/'
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ..utilities.logging_utils import append_to_local_log, log_event
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Motion Detection Script")
