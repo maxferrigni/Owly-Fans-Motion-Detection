@@ -25,8 +25,7 @@ from scripts.push_to_supabase import push_log_to_supabase, format_log_entry
 CAMERA_CONFIGS = load_camera_config()
 
 # Ensure Python can find both 'scripts/' and 'utilities/'
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "utilities")))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Motion Detection Script")
