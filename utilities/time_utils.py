@@ -1,68 +1,46 @@
-# File: configs_loader.py
+# File: time_utils.py
 # Purpose:
-# Provides functions to load and validate configuration files for the Owl Monitoring System, such as:
-# - Camera configurations
-# - Email and text recipient lists
-# - Sunrise and sunset data
+# Utility functions for handling time-based operations, particularly
+# for determining if the current time is within allowed monitoring hours.
 
-import json
-import os
+from datetime import datetime
+import pytz
 import pandas as pd
+from utilities.configs_loader import load_sunrise_sunset_data
 
-# Paths to config files
-CONFIG_PATH = "./configs/config.json"
-EMAIL_RECIPIENTS_PATH = "./configs/email_recipients.txt"
-TEXT_RECIPIENTS_PATH = "./configs/text_recipients.txt"
-SUNRISE_SUNSET_PATH = "./configs/LA_Sunrise_Sunset.txt"
-
-def load_camera_config():
+def is_within_allowed_hours():
     """
-    Load and validate the camera configuration from config.json.
+    Check if current time is within allowed monitoring hours.
     Returns:
-        dict: Parsed configuration data.
-    Raises:
-        FileNotFoundError: If the config file is missing.
-        json.JSONDecodeError: If the config file is invalid.
+        bool: True if current time is within monitoring period, False otherwise.
     """
-    if not os.path.exists(CONFIG_PATH):
-        raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
-    with open(CONFIG_PATH, "r") as file:
-        return json.load(file)
-
-def load_email_recipients():
-    """
-    Load the list of email recipients from email_recipients.txt.
-    Returns:
-        list: A list of email addresses.
-    Raises:
-        FileNotFoundError: If the email recipients file is missing.
-    """
-    if not os.path.exists(EMAIL_RECIPIENTS_PATH):
-        raise FileNotFoundError(f"Email recipients file not found: {EMAIL_RECIPIENTS_PATH}")
-    with open(EMAIL_RECIPIENTS_PATH, "r") as file:
-        return [line.strip() for line in file if line.strip()]
-
-def load_text_recipients():
-    """
-    Load the list of text recipients from text_recipients.txt.
-    Returns:
-        list: A list of text recipient numbers or addresses.
-    Raises:
-        FileNotFoundError: If the text recipients file is missing.
-    """
-    if not os.path.exists(TEXT_RECIPIENTS_PATH):
-        raise FileNotFoundError(f"Text recipients file not found: {TEXT_RECIPIENTS_PATH}")
-    with open(TEXT_RECIPIENTS_PATH, "r") as file:
-        return [line.strip() for line in file if line.strip()]
-
-def load_sunrise_sunset_data():
-    """
-    Load and parse the sunrise/sunset data from LA_Sunrise_Sunset.txt.
-    Returns:
-        pandas.DataFrame: DataFrame containing date, sunrise, and sunset times.
-    Raises:
-        FileNotFoundError: If the sunrise/sunset file is missing.
-    """
-    if not os.path.exists(SUNRISE_SUNSET_PATH):
-        raise FileNotFoundError(f"Sunrise/Sunset data file not found: {SUNRISE_SUNSET_PATH}")
-    return pd.read_csv(SUNRISE_SUNSET_PATH, delimiter="\t", parse_dates=["Date"])
+    try:
+        # Get current time in LA timezone
+        pacific = pytz.timezone('America/Los_Angeles')
+        current_time = datetime.now(pacific)
+        
+        # Load sunrise/sunset data
+        sun_data = load_sunrise_sunset_data()
+        
+        # Get today's data
+        today_data = sun_data[sun_data['Date'].dt.date == current_time.date()]
+        
+        if today_data.empty:
+            print("No sunrise/sunset data found for today")
+            return False
+            
+        # Get sunrise and sunset times
+        sunrise = today_data.iloc[0]['Sunrise']
+        sunset = today_data.iloc[0]['Sunset']
+        
+        # Add buffer times (40 minutes before sunrise, 40 minutes after sunset)
+        buffer_minutes = 40
+        monitoring_start = sunrise - pd.Timedelta(minutes=buffer_minutes)
+        monitoring_end = sunset + pd.Timedelta(minutes=buffer_minutes)
+        
+        # Check if current time is within monitoring period
+        return monitoring_start <= current_time.time() <= monitoring_end
+        
+    except Exception as e:
+        print(f"Error checking allowed hours: {e}")
+        return False
