@@ -27,7 +27,7 @@ class OwlApp:
         # Initialize window first
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("704x455+100+100")
+        self.root.geometry("704x455+1917+24")
         
         # Initialize variables first
         self.script_process = None
