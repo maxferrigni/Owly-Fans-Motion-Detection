@@ -95,57 +95,51 @@ class OwlApp:
         self.log_display.pack(pady=10)
 
     def update_system(self):
-        """Update all system files from git except this frontend script"""
+        """Fully reset the local repository, pull latest updates, and restart the application."""
         if self.script_process:
-            messagebox.showwarning(
-                "Warning", 
-                "Please stop motion detection before updating."
-            )
+            messagebox.showwarning("Warning", "Please stop motion detection before updating.")
             return
 
         try:
-            # Store backup path
-            backup_path = f"{self.frontend_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
-            
-            # Backup this script
-            shutil.copy2(self.frontend_path, backup_path)
-            self.log_message(f"Created backup at {backup_path}")
+            # Notify user
+            self.log_message("Resetting local repository and pulling latest updates...")
 
-            # Perform git pull
-            self.log_message("Performing git pull...")
-            result = subprocess.run(
-                ['git', 'pull'], 
-                capture_output=True, 
+            # Perform a hard reset and clean
+            result_reset = subprocess.run(
+                ["git", "reset", "--hard"],
+                capture_output=True,
+                text=True
+            )
+            result_clean = subprocess.run(
+                ["git", "clean", "-fd"],
+                capture_output=True,
                 text=True
             )
 
-            if result.returncode == 0:
-                self.log_message("Git pull successful.")
-                
-                # Restore our frontend script from backup
-                shutil.copy2(backup_path, self.frontend_path)
-                self.log_message("Restored frontend script from backup.")
+            # Perform git pull
+            result_pull = subprocess.run(
+                ["git", "pull"],
+                capture_output=True,
+                text=True
+            )
 
-                # Ask user if they want to restart
-                if messagebox.askyesno(
-                    "Update Complete", 
-                    "System updated successfully. Restart application?"
-                ):
-                    self.restart_application()
+            if result_pull.returncode == 0:
+                self.log_message("Git pull successful. Restarting application...")
+                self.restart_application()
             else:
-                self.log_message(f"Git pull failed: {result.stderr}")
+                self.log_message(f"Git pull failed: {result_pull.stderr}")
+                messagebox.showerror("Update Failed", "Git pull failed. Check logs for details.")
 
         except Exception as e:
             self.log_message(f"Error during update: {e}")
-            # Restore from backup if we have one
-            if 'backup_path' in locals() and os.path.exists(backup_path):
-                shutil.copy2(backup_path, self.frontend_path)
-                self.log_message("Restored frontend script from backup after error.")
+            messagebox.showerror("Update Error", f"An error occurred: {e}")
 
     def restart_application(self):
-        """Restart the application using the same interpreter"""
-        self.root.destroy()
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        """Restart the entire application, ensuring the frontend reloads."""
+        self.root.destroy()  # Close the current Tkinter window
+        python_executable = sys.executable
+        script_path = os.path.abspath(__file__)
+        os.execv(python_executable, [python_executable, script_path])
 
     def start_script(self):
         """Start the motion detection script"""
