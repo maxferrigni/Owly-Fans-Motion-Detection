@@ -16,36 +16,42 @@ import os
 import datetime
 import mimetypes
 import supabase
+import logging
 from dotenv import load_dotenv
 
-# Load environment variables (for security, API keys should be stored in .env file)
+# Load environment variables from .env file
 load_dotenv()
+
+# Retrieve Supabase credentials from .env
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET")
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Supabase credentials are missing. Ensure SUPABASE_URL and SUPABASE_KEY are set.")
+if not SUPABASE_URL or not SUPABASE_KEY or not SUPABASE_BUCKET:
+    raise ValueError("Supabase credentials are missing. Check the .env file.")
 
 # Initialize Supabase client
-supabase_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Define the main storage bucket
-SUPABASE_BUCKET = "owl_detections"
+try:
+    supabase_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    logging.error(f"Failed to initialize Supabase client: {e}")
+    raise
 
 def upload_image_to_supabase(local_image_path, detection_type):
     """
     Uploads a motion detection image to Supabase Storage.
     :param local_image_path: Path to the image stored locally.
     :param detection_type: Type of detection ("owl_in_box", "owl_on_box", "owl_in_area").
-    :return: Public URL of the uploaded image.
+    :return: Public URL of the uploaded image or None if failed.
     """
     if not os.path.exists(local_image_path):
-        raise FileNotFoundError(f"Image file not found: {local_image_path}")
+        logging.error(f"Image file not found: {local_image_path}")
+        return None
 
     # Generate a unique filename using timestamp
     timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
     filename = f"{detection_type}_{timestamp}.jpg"
-    
+
     # Define the storage path in Supabase
     storage_path = f"{detection_type}/{filename}"
 
@@ -69,7 +75,7 @@ def upload_image_to_supabase(local_image_path, detection_type):
         return public_url
 
     except Exception as e:
-        print(f"Error uploading image to Supabase: {e}")
+        logging.error(f"Error uploading image to Supabase: {e}")
         return None
 
 # Example usage for testing
