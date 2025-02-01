@@ -8,22 +8,18 @@
 # - Capture screenshots from predefined ROIs.
 # - Detect motion using luminance and pixel thresholds.
 # - Save snapshots and log motion events.
-# Typical Usage:
-# - Define camera configurations (e.g., ROI, thresholds) and pass them to the `process_camera` function.
-# - Integrate this script into a larger motion detection workflow or monitoring system.
 
 import os
 from datetime import datetime
 from PIL import Image, ImageChops
 import pyautogui
-from utilities.logging_utils import append_to_local_log, log_event
+import pytz
 
 # Constants for paths
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
 BASE_PATHS = {
     "input": "./base_images",
     "snapshots": "./snapshots",
-    "logs": "./logs",
 }
 
 def load_base_image(camera_name):
@@ -70,6 +66,7 @@ def save_snapshot(image, camera_name):
 def process_camera(camera_name, config):
     """
     Process motion detection for a specific camera.
+    Returns a dictionary with detection results for Supabase logging.
     """
     try:
         base_image = load_base_image(camera_name)
@@ -82,31 +79,31 @@ def process_camera(camera_name, config):
             config["luminance_threshold"],
         )
         
-        snapshot_path = save_snapshot(new_image, camera_name)
-        pixel_change = f"{significant_pixels / total_pixels:.2%}"
-        luminance_change = f"{avg_luminance_change:.2f}"
+        snapshot_path = save_snapshot(new_image, camera_name) if motion_detected else ""
+        pixel_change = significant_pixels / total_pixels
         status = config["alert_type"] if motion_detected else "No Motion"
 
-        # Log the result
-        append_to_local_log(
-            os.path.join(BASE_PATHS["logs"], "local_log.csv"),
-            camera_name,
-            status,
-            pixel_change,
-            luminance_change,
-        )
-        log_event(
-            os.path.join(BASE_PATHS["logs"], "daily"),
-            camera_name,
-            status,
-            pixel_change,
-            luminance_change,
-        )
+        # Return detection results for Supabase logging
+        result = {
+            "status": status,
+            "pixel_change": pixel_change,
+            "luminance_change": avg_luminance_change,
+            "snapshot_path": snapshot_path
+        }
 
         if motion_detected:
             print(f"Motion detected for {camera_name}: {status}. Snapshot saved at {snapshot_path}")
         else:
             print(f"No motion detected for {camera_name}")
 
+        return result
+
     except Exception as e:
         print(f"Error processing {camera_name}: {e}")
+        return {
+            "status": "Error",
+            "error_message": str(e),
+            "pixel_change": 0.0,
+            "luminance_change": 0.0,
+            "snapshot_path": ""
+        }

@@ -2,25 +2,16 @@
 # Purpose:
 # This script serves as the main controller for the motion detection system.
 # It coordinates motion detection across configured cameras and ensures all detection logs are sent to Supabase.
-# Features:
-# - Loads camera configurations.
-# - Handles command-line arguments for operational modes (e.g., darkness only).
-# - Runs the motion detection workflow and pushes logs to Supabase.
-# - Ensures real-time logging without local storage.
-# - Implements error handling to prevent system crashes.
-# Typical Usage:
-# Run this script to initiate motion detection:
-# `python main.py --darkness` (to run during darkness only) or `python main.py` (to run always).
-
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 import time as sleep_time
+import sys
+import os
+
+# Add parent directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Local imports
-from utilities.logging_utils import append_to_local_log, log_event
 from utilities.configs_loader import load_camera_config
 from utilities.time_utils import is_within_allowed_hours
 from scripts.motion_workflow import process_camera
@@ -54,23 +45,23 @@ def motion_detection():
 
                 # Format detection log for Supabase
                 log_entry = format_log_entry(
-                    owl_in_box=detection_result.get("owl_in_box", False),
-                    pixel_change_owl_in_box=detection_result.get("pixel_change_owl_in_box", 0.0),
-                    luminance_change_owl_in_box=detection_result.get("luminance_change_owl_in_box", 0.0),
-                    owl_in_box_url=detection_result.get("owl_in_box_url", ""),
-                    owl_in_box_image_comparison_url=detection_result.get("owl_in_box_image_comparison_url", ""),
+                    owl_in_box=detection_result.get("status") == "Owl In Box",
+                    pixel_change_owl_in_box=detection_result.get("pixel_change", 0.0),
+                    luminance_change_owl_in_box=detection_result.get("luminance_change", 0.0),
+                    owl_in_box_url=detection_result.get("snapshot_path", ""),
+                    owl_in_box_image_comparison_url="",
                     
-                    owl_on_box=detection_result.get("owl_on_box", False),
-                    pixel_change_owl_on_box=detection_result.get("pixel_change_owl_on_box", 0.0),
-                    luminance_change_owl_on_box=detection_result.get("luminance_change_owl_on_box", 0.0),
-                    owl_on_box_image_url=detection_result.get("owl_on_box_image_url", ""),
-                    owl_on_box_image_comparison_url=detection_result.get("owl_on_box_image_comparison_url", ""),
+                    owl_on_box=detection_result.get("status") == "Owl On Box",
+                    pixel_change_owl_on_box=detection_result.get("pixel_change", 0.0),
+                    luminance_change_owl_on_box=detection_result.get("luminance_change", 0.0),
+                    owl_on_box_image_url=detection_result.get("snapshot_path", ""),
+                    owl_on_box_image_comparison_url="",
                     
-                    owl_in_area=detection_result.get("owl_in_area", False),
-                    pixel_change_owl_in_area=detection_result.get("pixel_change_owl_in_area", 0.0),
-                    luminance_change_owl_in_area=detection_result.get("luminance_change_owl_in_area", 0.0),
-                    owl_in_area_image_url=detection_result.get("owl_in_area_image_url", ""),
-                    owl_in_area_image_comparison_url=detection_result.get("owl_in_area_image_comparison_url", ""),
+                    owl_in_area=detection_result.get("status") == "Owl In Area",
+                    pixel_change_owl_in_area=detection_result.get("pixel_change", 0.0),
+                    luminance_change_owl_in_area=detection_result.get("luminance_change", 0.0),
+                    owl_in_area_image_url=detection_result.get("snapshot_path", ""),
+                    owl_in_area_image_comparison_url=""
                 )
 
                 # Push log entry to Supabase
