@@ -203,6 +203,10 @@ class OwlApp:
         print(message)
 
 if __name__ == "__main__":
+    print("Starting Tkinter application...")
     root = tk.Tk()
+    print("Creating root window...")
     app = OwlApp(root)
+    print("Created OwlApp, starting mainloop...")
     root.mainloop()
+    print("Mainloop ended.")  # This will only print if the window is closed
