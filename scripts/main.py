@@ -26,6 +26,7 @@ CAMERA_CONFIGS = load_camera_config()
 
 # Ensure Python can find both 'scripts/' and 'utilities/'
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "utilities")))
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Motion Detection Script")
