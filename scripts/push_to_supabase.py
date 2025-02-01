@@ -4,10 +4,8 @@
 # It replaces local CSV logging and Git repository logging, ensuring all detection logs are stored in a centralized cloud database.
 # Features:
 # - Connects to Supabase using environment variables for security.
-# - Formats motion detection data to match the `owl_activity_log` table schema.
-# - Inserts log data into Supabase in real-time.
+# - Inserts log data into the `owl_activity_log` table in real-time.
 # - Implements error handling and retry mechanisms for failed uploads.
-# - Logs errors to help with debugging failures.
 # Typical Usage:
 # This script should be called whenever a detection event occurs in `main.py`.
 # Example:
@@ -19,21 +17,15 @@ import supabase
 import logging
 from dotenv import load_dotenv
 
-# Configure logging for debugging
-logging.basicConfig(
-    filename="supabase_log_errors.log",
-    level=logging.ERROR,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-# Load environment variables (for security, API keys should be stored in .env file)
+# Load environment variables from .env file
 load_dotenv()
+
+# Retrieve Supabase credentials from .env
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    logging.error("Supabase credentials are missing. Check environment variables.")
-    raise ValueError("Supabase credentials are missing. Ensure SUPABASE_URL and SUPABASE_KEY are set.")
+    raise ValueError("Supabase credentials are missing. Check the .env file.")
 
 # Initialize Supabase client
 try:
