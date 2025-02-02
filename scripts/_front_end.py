@@ -152,7 +152,7 @@ class OwlApp:
                     [
                         sys.executable,
                         script_path,
-                        "--darkness" if self.in_darkness_only.get() else "--all",
+                        "--darkness" if self.in_darkness_only.get() else "",
                     ],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
