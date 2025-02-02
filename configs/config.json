@@ -4,20 +4,23 @@
         "threshold_percentage": 0.005,
         "luminance_threshold": 30,
         "alert_type": "Owl In Area",
-        "interval_seconds": 3
+        "interval_seconds": 3,
+        "description": "Base luminance threshold will be adjusted by multiplier based on lighting conditions"
     },
     "Bindy Patio Camera": {
         "roi": [1441, 350, 1636, 526],  
         "threshold_percentage": 0.05,
-        "luminance_threshold": 1,
+        "luminance_threshold": 25,
         "alert_type": "Owl On Box",
-        "interval_seconds": 3
+        "interval_seconds": 3,
+        "description": "Slightly lower base threshold due to camera position"
     },
     "Wyze Internal Camera": {
         "roi": [-1899, 698, -1255, 1039], 
         "threshold_percentage": 0.15,
-        "luminance_threshold": 10,
+        "luminance_threshold": 20,
         "alert_type": "Owl In Box",
-        "interval_seconds": 3
+        "interval_seconds": 3,
+        "description": "Lower base threshold for internal camera with more controlled lighting"
     }
 }
