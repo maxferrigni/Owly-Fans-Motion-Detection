@@ -6,6 +6,7 @@
 # - Connects to Supabase using environment variables for security.
 # - Inserts log data into the `owl_activity_log` table in real-time.
 # - Implements error handling and retry mechanisms for failed uploads.
+# - Properly checks API responses to prevent indexing errors.
 # Typical Usage:
 # This script should be called whenever a detection event occurs in `main.py`.
 # Example:
@@ -45,13 +46,17 @@ def push_log_to_supabase(log_data):
             return
         
         response = supabase_client.table("owl_activity_log").insert(log_data).execute()
-        
-        if response[1]:  # Check if insertion was successful
+
+        # Fix: Check if the response contains 'data' and 'error' attributes
+        if hasattr(response, 'data') and response.data:
             print("Successfully uploaded log to Supabase.")
+        elif hasattr(response, 'error') and response.error:
+            logging.error(f"Failed to upload log. Error: {response.error}")
+            print(f"Failed to upload log. Error: {response.error}")
         else:
-            logging.error(f"Failed to upload log. Response: {response[0]}")
-            print("Failed to upload log. Check supabase_log_errors.log for details.")
-    
+            logging.error(f"Unexpected API response: {response}")
+            print(f"Unexpected API response: {response}")
+
     except Exception as e:
         logging.error(f"Error uploading log to Supabase: {e}")
         print(f"Error uploading log to Supabase. See supabase_log_errors.log for details.")
@@ -62,6 +67,9 @@ def format_log_entry(
     owl_on_box, pixel_change_owl_on_box, luminance_change_owl_on_box, owl_on_box_image_url, owl_on_box_image_comparison_url,
     owl_in_area, pixel_change_owl_in_area, luminance_change_owl_in_area, owl_in_area_image_url, owl_in_area_image_comparison_url
 ):
+    """
+    Formats the log entry for Supabase before inserting.
+    """
     return {
         "created_at": datetime.datetime.utcnow().isoformat(),
         "owl_in_box": owl_in_box,
