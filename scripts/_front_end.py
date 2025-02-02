@@ -1,5 +1,5 @@
 # File: _front_end.py
-# Purpose:
+# Purpose: 
 # This script provides a graphical user interface (GUI) for the Owl Monitoring System.
 # It allows users to control motion detection settings, monitor logs in real time,
 # and update the system files from git.
