@@ -147,11 +147,13 @@ class OwlApp:
             mode = "In Darkness Only" if self.in_darkness_only.get() else "All the Time"
             self.log_message(f"Starting motion detection script in mode: {mode}")
             try:
-                script_path = os.path.join(os.path.dirname(self.frontend_path), "main.py")
+                script_path = os.path.join(os.path.dirname(self.frontend_path), "scripts", "main.py")
+                cmd = [sys.executable, script_path]
+                if self.in_darkness_only.get():
+                    cmd.append("--darkness")
+                
                 self.script_process = subprocess.Popen(
-                    [
-                       [sys.executable, script_path] + (["--darkness"] if self.in_darkness_only.get() else [])
-                    ],
+                    cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,

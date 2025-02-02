@@ -63,4 +63,15 @@ def load_sunrise_sunset_data():
     """
     if not os.path.exists(SUNRISE_SUNSET_PATH):
         raise FileNotFoundError(f"Sunrise/Sunset data file not found: {SUNRISE_SUNSET_PATH}")
-    return pd.read_csv(SUNRISE_SUNSET_PATH, delimiter="\t", parse_dates=["Date"])
+    
+    # Read the file with tabs as delimiter and parse Date column
+    df = pd.read_csv(SUNRISE_SUNSET_PATH, delimiter="\t")
+    
+    # Convert Date column to datetime
+    df['Date'] = pd.to_datetime(df['Date'])
+    
+    # Ensure Sunrise and Sunset are strings in HH:MM format
+    df['Sunrise'] = df['Sunrise'].astype(str).str.pad(4, fillchar='0')
+    df['Sunset'] = df['Sunset'].astype(str).str.pad(4, fillchar='0')
+    
+    return df
