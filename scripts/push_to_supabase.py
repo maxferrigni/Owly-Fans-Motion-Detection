@@ -1,5 +1,5 @@
 # File: push_to_supabase.py
-# Purpose: Log owl detection data to Supabase database
+# Purpose: Log owl detection data to Supabase database and manage subscribers
 
 import os
 import datetime
@@ -21,7 +21,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET")
 
 # Validate credentials
-if not SUPABASE_URL or not SUPABASE_KEY or not SUPABASE_BUCKET:
+if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET]):
     error_msg = "Supabase credentials are missing. Check the .env file."
     logger.error(error_msg)
     raise ValueError(error_msg)
@@ -33,6 +33,51 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     raise
+
+def get_subscribers(notification_type=None, owl_location=None):
+    """
+    Get subscribers from Supabase database with optional filtering.
+    
+    Args:
+        notification_type (str, optional): Filter by "email" or "sms"
+        owl_location (str, optional): Filter by owl location preference
+            ("owl_in_box", "owl_on_box", "owl_in_area")
+    
+    Returns:
+        list: List of subscriber records
+    """
+    try:
+        query = supabase_client.table("subscribers").select("*")
+        response = query.execute()
+        
+        if not hasattr(response, 'data'):
+            logger.error("Failed to retrieve subscribers")
+            return []
+            
+        subscribers = response.data
+        
+        # Filter based on notification type
+        if notification_type == "email":
+            subscribers = [sub for sub in subscribers 
+                         if sub.get('email') and 
+                         sub.get('preferences', {}).get('email_notifications', True)]
+        elif notification_type == "sms":
+            subscribers = [sub for sub in subscribers 
+                         if sub.get('phone') and 
+                         sub.get('preferences', {}).get('sms_notifications', True)]
+        
+        # Filter based on owl location preference
+        if owl_location:
+            subscribers = [sub for sub in subscribers 
+                         if owl_location in sub.get('preferences', {}).get('notification_types', [])]
+        
+        logger.info(f"Retrieved {len(subscribers)} subscribers for {notification_type or 'all'} "
+                   f"notifications and {owl_location or 'all'} locations")
+        return subscribers
+        
+    except Exception as e:
+        logger.error(f"Error retrieving subscribers: {e}")
+        return []
 
 def push_log_to_supabase(log_data):
     """
@@ -71,14 +116,6 @@ def format_log_entry(
     """
     Format the log entry for Supabase database.
     
-    Args:
-        owl_in_box (bool): Detection status for owl in box
-        pixel_change_owl_in_box (float): Pixel change for box camera
-        luminance_change_owl_in_box (float): Luminance change for box camera
-        owl_in_box_url (str): URL of box camera image
-        owl_in_box_image_comparison_url (str): URL of box camera comparison
-        [... similar for other cameras ...]
-    
     Returns:
         dict: Formatted log entry
     """
@@ -116,7 +153,14 @@ if __name__ == "__main__":
     try:
         logger.info("Testing Supabase connection...")
         
-        # Create sample log entry
+        # Test subscriber retrieval
+        email_subscribers = get_subscribers(notification_type="email")
+        logger.info(f"Found {len(email_subscribers)} email subscribers")
+        
+        sms_subscribers = get_subscribers(notification_type="sms")
+        logger.info(f"Found {len(sms_subscribers)} SMS subscribers")
+        
+        # Test log upload
         sample_log = format_log_entry(
             owl_in_box=True, pixel_change_owl_in_box=5.2, 
             luminance_change_owl_in_box=12.3, 

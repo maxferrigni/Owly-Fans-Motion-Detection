@@ -2,6 +2,10 @@
 # Purpose: Centralized path management for the Owl Monitoring System
 
 import os
+from utilities.logging_utils import get_logger
+
+# Initialize logger
+logger = get_logger()
 
 def get_base_dir():
     """Get the base directory (20_Motion_Detection) by traversing up from the script location"""
@@ -25,14 +29,19 @@ UTILITIES_DIR = os.path.join(GIT_DIR, "utilities")
 BASE_IMAGES_DIR = os.path.join(INPUT_DIR, "base_images")
 INPUT_CONFIG_FILES = {
     "config": os.path.join(CONFIGS_DIR, "config.json"),
-    "email_recipients": os.path.join(CONFIGS_DIR, "email_recipients.txt"),
-    "text_recipients": os.path.join(CONFIGS_DIR, "text_recipients.txt"),
     "sunrise_sunset": os.path.join(CONFIGS_DIR, "LA_Sunrise_Sunset.txt")
 }
 
 # Output paths
 SNAPSHOTS_DIR = os.path.join(OUTPUT_DIR, "snapshots")
 LOGS_DIR = os.path.join(OUTPUT_DIR, "logs")
+
+# Camera name to type mapping
+CAMERA_MAPPINGS = {
+    "Bindy Patio Camera": "Owl On Box",
+    "Upper Patio Camera": "Owl In Area",
+    "Wyze Internal Camera": "Owl In Box"
+}
 
 # Camera-specific snapshot directories
 CAMERA_SNAPSHOT_DIRS = {
@@ -52,20 +61,24 @@ def ensure_directories_exist():
     ] + list(CAMERA_SNAPSHOT_DIRS.values())
 
     for directory in directories:
-        os.makedirs(directory, exist_ok=True)
-        print(f"Verified directory exists: {directory}")
+        try:
+            os.makedirs(directory, exist_ok=True)
+            logger.debug(f"Verified directory exists: {directory}")
+        except Exception as e:
+            logger.error(f"Failed to create directory {directory}: {e}")
+            raise
 
 def validate_paths():
     """Validate that all required paths exist"""
     # Check config files
     for name, path in INPUT_CONFIG_FILES.items():
         if not os.path.exists(path):
-            print(f"Warning: Configuration file missing: {path}")
+            logger.warning(f"Configuration file missing: {path}")
 
     # Check directories
     ensure_directories_exist()
 
 if __name__ == "__main__":
-    print("Validating directory structure...")
+    logger.info("Validating directory structure...")
     validate_paths()
-    print("Directory validation complete.")
+    logger.info("Directory validation complete.")

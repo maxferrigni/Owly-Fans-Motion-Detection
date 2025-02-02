@@ -1,89 +1,130 @@
-# File: email_alerts.py
-# Purpose:
-# This script handles sending email alerts for the motion detection system.
-# It reads recipient email addresses from a file and sends alerts based on the camera name and alert type.
-# Features:
-# - Reads recipients from a configured file (`email_recipients.txt`).
-# - Sends HTML email alerts with motion detection information.
-# - Supports alerts for specific cameras or generic motion events.
-# Typical Usage:
-# Call the `send_email_alert` function with a camera name and alert type to notify recipients.
-# Example: `send_email_alert("Upper Patio Camera", "Owl In Area")`
+# File: alert_email.py
+# Purpose: Handle email alerts for the motion detection system
 
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import os
+from dotenv import load_dotenv
 
-# Email credentials
-EMAIL_ADDRESS = "owlyfans01@gmail.com"
-EMAIL_PASSWORD = "ctktpkxhwzesjzgr"  # Your Google App Password
+# Import utilities
+from utilities.logging_utils import get_logger
+from push_to_supabase import get_subscribers
 
-# Absolute path to recipients file
-RECIPIENTS_FILE = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60 Motion Detection/20 configs/email_recipients.txt"
+# Initialize logger
+logger = get_logger()
 
-# Function to read email recipients from a file
-def get_recipients(file_path):
-    try:
-        with open(file_path, "r") as file:
-            recipients = [line.strip() for line in file if line.strip()]
-        return recipients
-    except Exception as e:
-        print(f"Error reading recipients file: {e}")
-        return []
+# Load environment variables
+load_dotenv()
 
-# Function to send email alert based on camera name and alert type
+# Email credentials from environment variables
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "owlyfans01@gmail.com")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")  # Google App Password
+
+if not EMAIL_PASSWORD:
+    error_msg = "Email password not found in environment variables"
+    logger.error(error_msg)
+    raise ValueError(error_msg)
+
 def send_email_alert(camera_name, alert_type):
-    # Determine the subject and body based on camera name and alert type
-    if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
-        subject = "ALERT: Owl In The Area"
-        body = f"Motion has been detected in the Upper Patio area. Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>."
-    else:
-        subject = "ALERT: Unknown Event"
-        body = f"Motion has been detected at {camera_name}. Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>."
+    """
+    Send email alerts based on camera name and alert type.
+    
+    Args:
+        camera_name (str): Name of the camera that detected motion
+        alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
+    """
+    try:
+        # Determine the subject and body based on camera name and alert type
+        if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
+            subject = "ALERT: Owl In The Area"
+            body = ("Motion has been detected in the Upper Patio area. "
+                   "Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
+        else:
+            subject = f"ALERT: {alert_type}"
+            body = (f"Motion has been detected at {camera_name}. "
+                   f"Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
 
-    recipients = get_recipients(RECIPIENTS_FILE)
+        # Get subscribers who want email notifications for this alert type
+        subscribers = get_subscribers(
+            notification_type="email",
+            owl_location=alert_type.lower().replace(" ", "_")
+        )
 
-    if recipients:
-        for email in recipients:
-            send_single_email(subject, body, email)
-    else:
-        print("No recipients found. Please update the email_recipients.txt file.")
+        if subscribers:
+            logger.info(f"Sending email alerts to {len(subscribers)} subscribers")
+            for subscriber in subscribers:
+                send_single_email(subject, body, subscriber['email'], subscriber['name'])
+        else:
+            logger.warning("No email subscribers found for this alert type")
 
-# Function to send a single email to a recipient
-def send_single_email(subject, body, to_email):
+    except Exception as e:
+        logger.error(f"Error sending email alerts: {e}")
+
+def send_single_email(subject, body, to_email, recipient_name=None):
+    """
+    Send a single email to a recipient.
+    
+    Args:
+        subject (str): Email subject
+        body (str): Email body (HTML)
+        to_email (str): Recipient's email address
+        recipient_name (str, optional): Recipient's name for personalization
+    """
     try:
         # Set up the email server
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
-        server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        
+        try:
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        except smtplib.SMTPAuthenticationError as auth_error:
+            logger.error(f"Email authentication failed: {auth_error}")
+            return
+            
+        try:
+            # Create the email
+            msg = MIMEMultipart()
+            msg["From"] = EMAIL_ADDRESS
+            msg["To"] = to_email
+            msg["Subject"] = subject
 
-        # Create the email
-        msg = MIMEMultipart()
-        msg["From"] = EMAIL_ADDRESS
-        msg["To"] = to_email
-        msg["Subject"] = subject
+            # Personalize greeting if name is available
+            greeting = f"Hello {recipient_name}," if recipient_name else "Hello,"
 
-        # HTML email body with clickable link
-        html_body = f"""
-        <html>
-            <body>
-                <p>{body}</p>
-                <p>Check the camera feed at <a href="http://www.owly-fans.com">Owly-Fans.com</a>.</p>
-            </body>
-        </html>
-        """
-        msg.attach(MIMEText(html_body, "html"))
+            # HTML email body with personalized greeting
+            html_body = f"""
+            <html>
+                <body>
+                    <p>{greeting}</p>
+                    <p>{body}</p>
+                    <p>Best regards,<br>Owly Fans Monitoring System</p>
+                </body>
+            </html>
+            """
+            msg.attach(MIMEText(html_body, "html"))
 
-        # Send the email
-        server.send_message(msg)
-        print(f"Email alert sent successfully to {to_email}!")
+            # Send the email
+            server.send_message(msg)
+            logger.info(f"Email alert sent successfully to {to_email}")
 
-        # Close the connection
-        server.quit()
+        except Exception as e:
+            logger.error(f"Failed to send email to {to_email}: {e}")
+            
+        finally:
+            # Always close the connection
+            server.quit()
 
-    except smtplib.SMTPAuthenticationError as e:
-        print(f"Authentication error: {e}")
     except smtplib.SMTPConnectError as e:
-        print(f"Connection error: {e}")
+        logger.error(f"Connection error: {e}")
     except Exception as e:
-        print(f"Failed to send email alert to {to_email}: {e}")
+        logger.error(f"Unexpected error sending email to {to_email}: {e}")
+
+if __name__ == "__main__":
+    # Test email functionality
+    try:
+        logger.info("Testing email alert system...")
+        send_email_alert("Upper Patio Camera", "Owl In Area")
+        logger.info("Email test complete")
+    except Exception as e:
+        logger.error(f"Email test failed: {e}")
