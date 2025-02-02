@@ -1,15 +1,12 @@
 # File: main.py
 # Purpose: Main controller for the motion detection system
 
-import argparse
 import time as sleep_time
 import sys
-import os
 
 # Import utilities
 from utilities.constants import ensure_directories_exist
 from utilities.configs_loader import load_camera_config
-from utilities.time_utils import is_within_allowed_hours
 from utilities.logging_utils import get_logger
 
 # Local imports
@@ -31,7 +28,7 @@ def initialize_system():
         logger.error(f"Error during system initialization: {e}")
         sys.exit(1)
 
-def motion_detection(args):
+def motion_detection():
     """
     Perform motion detection for all configured cameras and push logs to Supabase.
     """
@@ -39,16 +36,8 @@ def motion_detection(args):
         # Load configurations
         CAMERA_CONFIGS = initialize_system()
         logger.info("Starting motion detection...")
-        logger.info(f"Mode: {'Darkness Only' if args.darkness else 'All the Time'}")
 
         while True:
-            if args.darkness:
-                is_dark = is_within_allowed_hours()
-                if not is_dark:
-                    logger.info("Outside of allowed hours. Waiting...")
-                    sleep_time.sleep(60)
-                    continue
-
             for camera_name, config in CAMERA_CONFIGS.items():
                 try:
                     # Process camera detection
@@ -89,9 +78,4 @@ def motion_detection(args):
         sys.exit(1)
 
 if __name__ == "__main__":
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Motion Detection Script")
-    parser.add_argument("--darkness", action="store_true", help="Run the script during darkness only")
-    args = parser.parse_args()
-
-    motion_detection(args)
+    motion_detection()

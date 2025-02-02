@@ -25,7 +25,6 @@ class OwlApp:
         
         # Initialize variables
         self.script_process = None
-        self.in_darkness_only = tk.BooleanVar(value=True)
         
         # Store the path of main.py
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
@@ -72,16 +71,6 @@ class OwlApp:
         )
         self.stop_button.pack(pady=10)
 
-        # Add the toggle for "In Darkness Only"
-        self.darkness_toggle = tk.Checkbutton(
-            self.root,
-            text="Work in Darkness Only",
-            variable=self.in_darkness_only,
-            onvalue=True,
-            offvalue=False
-        )
-        self.darkness_toggle.pack(pady=10)
-
         # Add a log display
         self.log_display = scrolledtext.ScrolledText(
             self.root, 
@@ -100,31 +89,40 @@ class OwlApp:
         try:
             self.log_message("Resetting local repository and pulling latest updates...")
 
-            # Perform a hard reset and clean
-            result_reset = subprocess.run(
-                ["git", "reset", "--hard"],
-                capture_output=True,
-                text=True
-            )
-            result_clean = subprocess.run(
-                ["git", "clean", "-fd"],
-                capture_output=True,
-                text=True
-            )
+            # Change to Git repository directory
+            original_dir = os.getcwd()
+            os.chdir(os.path.dirname(SCRIPTS_DIR))
 
-            # Perform git pull
-            result_pull = subprocess.run(
-                ["git", "pull"],
-                capture_output=True,
-                text=True
-            )
+            try:
+                # Perform a hard reset and clean
+                result_reset = subprocess.run(
+                    ["git", "reset", "--hard"],
+                    capture_output=True,
+                    text=True
+                )
+                result_clean = subprocess.run(
+                    ["git", "clean", "-fd"],
+                    capture_output=True,
+                    text=True
+                )
 
-            if result_pull.returncode == 0:
-                self.log_message("Git pull successful. Restarting application...")
-                self.restart_application()
-            else:
-                self.log_message(f"Git pull failed: {result_pull.stderr}")
-                messagebox.showerror("Update Failed", "Git pull failed. Check logs for details.")
+                # Perform git pull
+                result_pull = subprocess.run(
+                    ["git", "pull"],
+                    capture_output=True,
+                    text=True
+                )
+
+                if result_pull.returncode == 0:
+                    self.log_message("Git pull successful. Restarting application...")
+                    self.restart_application()
+                else:
+                    self.log_message(f"Git pull failed: {result_pull.stderr}")
+                    messagebox.showerror("Update Failed", "Git pull failed. Check logs for details.")
+
+            finally:
+                # Restore original directory
+                os.chdir(original_dir)
 
         except Exception as e:
             self.log_message(f"Error during update: {e}")
@@ -140,13 +138,11 @@ class OwlApp:
     def start_script(self):
         """Start the motion detection script"""
         if not self.script_process:
-            mode = "In Darkness Only" if self.in_darkness_only.get() else "All the Time"
-            self.log_message(f"Starting motion detection script in mode: {mode}")
+            self.log_message("Starting motion detection script")
             try:
                 cmd = [sys.executable, self.main_script_path]
-                if self.in_darkness_only.get():
-                    cmd.append("--darkness")
                 
+                # Redirect stderr to stdout to capture all output
                 self.script_process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
