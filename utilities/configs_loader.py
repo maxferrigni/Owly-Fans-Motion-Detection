@@ -8,10 +8,10 @@ import os
 import pandas as pd
 
 # Paths to config files
-CONFIG_PATH = "./configs/config.json"
-EMAIL_RECIPIENTS_PATH = "./configs/email_recipients.txt"
-TEXT_RECIPIENTS_PATH = "./configs/text_recipients.txt"
-SUNRISE_SUNSET_PATH = "./configs/LA_Sunrise_Sunset.txt"
+CONFIG_PATH = "../configs/config.json"
+EMAIL_RECIPIENTS_PATH = "../configs/email_recipients.txt"
+TEXT_RECIPIENTS_PATH = "../configs/text_recipients.txt"
+SUNRISE_SUNSET_PATH = "../configs/LA_Sunrise_Sunset.txt"
 
 def load_camera_config():
     """
