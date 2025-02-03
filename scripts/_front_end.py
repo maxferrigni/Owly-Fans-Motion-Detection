@@ -9,15 +9,17 @@ import os
 import sys
 from datetime import datetime
 
+# Add parent directory to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 # Import utilities
 from utilities.constants import SCRIPTS_DIR, ensure_directories_exist
 from utilities.logging_utils import get_logger
 
 class OwlApp:
     def __init__(self, root):
-        # Initialize logger
-        self.logger = get_logger()
-        
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
@@ -32,14 +34,30 @@ class OwlApp:
         # Create GUI elements
         self._create_gui()
         
+        # Initialize logger after GUI creation so we can capture output
+        self.logger = get_logger()
+        sys.stdout = self.LogRedirector(self)
+        sys.stderr = self.LogRedirector(self)
+        
         # Ensure directories exist
-        ensure_directories_exist()
+        self.verify_directories()
         
         # Log initialization
-        self.log_message("GUI initialized")
+        self.log_message("GUI initialized and ready")
         
         # Update UI
         self.root.update()
+
+    class LogRedirector:
+        def __init__(self, app):
+            self.app = app
+
+        def write(self, message):
+            if message.strip():  # Only log non-empty messages
+                self.app.log_message(message.strip())
+
+        def flush(self):
+            pass
 
     def _create_gui(self):
         """Create all GUI elements"""
@@ -80,6 +98,16 @@ class OwlApp:
         )
         self.log_display.pack(pady=10)
 
+    def verify_directories(self):
+        """Verify all required directories exist"""
+        try:
+            self.log_message("Verifying directory structure...")
+            ensure_directories_exist()
+            self.log_message("Directory verification complete")
+        except Exception as e:
+            self.log_message(f"Error verifying directories: {e}")
+            messagebox.showerror("Error", f"Failed to verify directories: {e}")
+
     def update_system(self):
         """Update the system from git repository"""
         if self.script_process:
@@ -100,11 +128,14 @@ class OwlApp:
                     capture_output=True,
                     text=True
                 )
+                self.log_message(result_reset.stdout)
+
                 result_clean = subprocess.run(
                     ["git", "clean", "-fd"],
                     capture_output=True,
                     text=True
                 )
+                self.log_message(result_clean.stdout)
 
                 # Perform git pull
                 result_pull = subprocess.run(
@@ -138,11 +169,10 @@ class OwlApp:
     def start_script(self):
         """Start the motion detection script"""
         if not self.script_process:
-            self.log_message("Starting motion detection script")
+            self.log_message("Starting motion detection script...")
             try:
                 cmd = [sys.executable, self.main_script_path]
                 
-                # Redirect stderr to stdout to capture all output
                 self.script_process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -183,11 +213,13 @@ class OwlApp:
 
     def log_message(self, message):
         """Add a message to the log display"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] {message}"
-        self.log_display.insert(tk.END, f"{formatted_message}\n")
-        self.log_display.see(tk.END)
-        self.logger.info(message)
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            formatted_message = f"[{timestamp}] {message}"
+            self.log_display.insert(tk.END, f"{formatted_message}\n")
+            self.log_display.see(tk.END)
+        except Exception as e:
+            print(f"Error logging message: {e}")
 
 if __name__ == "__main__":
     try:
@@ -195,6 +227,5 @@ if __name__ == "__main__":
         app = OwlApp(root)
         root.mainloop()
     except Exception as e:
-        logger = get_logger()
-        logger.error(f"Fatal error in GUI: {e}")
+        print(f"Fatal error in GUI: {e}")
         raise
