@@ -224,6 +224,9 @@ class OwlApp:
 if __name__ == "__main__":
     try:
         root = tk.Tk()
+        logger = get_logger()
+        logger.info("Tkinter root window created")
+        logger.info(f"Current window geometry: {root.geometry()}")
         app = OwlApp(root)
         root.mainloop()
     except Exception as e:
