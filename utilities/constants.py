@@ -2,10 +2,6 @@
 # Purpose: Centralized path management for the Owl Monitoring System
 
 import os
-from utilities.logging_utils import get_logger
-
-# Initialize logger
-logger = get_logger()
 
 def get_base_dir():
     """Get the base directory (20_Motion_Detection) by traversing up from the script location"""
@@ -63,9 +59,8 @@ def ensure_directories_exist():
     for directory in directories:
         try:
             os.makedirs(directory, exist_ok=True)
-            logger.debug(f"Verified directory exists: {directory}")
         except Exception as e:
-            logger.error(f"Failed to create directory {directory}: {e}")
+            print(f"Failed to create directory {directory}: {e}")
             raise
 
 def validate_paths():
@@ -73,12 +68,12 @@ def validate_paths():
     # Check config files
     for name, path in INPUT_CONFIG_FILES.items():
         if not os.path.exists(path):
-            logger.warning(f"Configuration file missing: {path}")
+            print(f"Configuration file missing: {path}")
 
     # Check directories
     ensure_directories_exist()
 
 if __name__ == "__main__":
-    logger.info("Validating directory structure...")
+    print("Validating directory structure...")
     validate_paths()
-    logger.info("Directory validation complete.")
+    print("Directory validation complete.")
