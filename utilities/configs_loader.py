@@ -85,8 +85,10 @@ def load_sunrise_sunset_data():
         df['Date'] = pd.to_datetime(df['Date'])
         
         # Ensure Sunrise and Sunset are strings in HH:MM format
-        df['Sunrise'] = df['Sunrise'].astype(str).str.pad(4, fillchar='0')
-        df['Sunset'] = df['Sunset'].astype(str).str.pad(4, fillchar='0')
+        # Convert HHMM to HH:MM format
+        df['Sunrise'] = df['Sunrise'].astype(str).str.pad(4, fillchar='0').apply(lambda x: f"{x[:2]}:{x[2:]}")
+        df['Sunset'] = df['Sunset'].astype(str).str.pad(4, fillchar='0').apply(lambda x: f"{x[:2]}:{x[2:]}")
+
         
         logger.info("Sunrise/Sunset data loaded successfully")
         logger.debug(f"Loaded {len(df)} days of sunrise/sunset data")
