@@ -23,7 +23,28 @@ class OwlApp:
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("704x455+100+100")
+        
+        # Set window size and position
+        window_width = 704
+        window_height = 455
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Calculate position for center of primary screen
+        x_position = int((screen_width - window_width) / 2)
+        y_position = int((screen_height - window_height) / 2)
+        
+        # Set geometry and force update
+        self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
+        self.root.update_idletasks()  # Force geometry update
+        
+        # Prevent window resizing
+        self.root.resizable(False, False)
+        
+        # Force window to stay on top initially
+        self.root.attributes('-topmost', True)
+        self.root.update()
+        self.root.attributes('-topmost', False)
         
         # Initialize variables
         self.script_process = None
@@ -226,8 +247,12 @@ if __name__ == "__main__":
         root = tk.Tk()
         logger = get_logger()
         logger.info("Tkinter root window created")
-        logger.info(f"Current window geometry: {root.geometry()}")
+        
+        # Force a short delay to ensure window manager is ready
+        root.after(100)
+        
         app = OwlApp(root)
+        logger.info(f"Final window geometry: {root.geometry()}")
         root.mainloop()
     except Exception as e:
         print(f"Fatal error in GUI: {e}")
