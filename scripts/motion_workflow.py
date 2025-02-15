@@ -6,9 +6,15 @@ from datetime import datetime
 from PIL import Image, ImageChops
 import pyautogui
 import pytz
+import glob
 
 # Import utilities
-from utilities.constants import BASE_IMAGES_DIR, CAMERA_SNAPSHOT_DIRS
+from utilities.constants import (
+    BASE_IMAGES_DIR,
+    CAMERA_SNAPSHOT_DIRS,
+    IMAGE_COMPARISONS_DIR,
+    get_base_image_filename
+)
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
     get_current_lighting_condition,
@@ -22,6 +28,49 @@ logger = get_logger()
 # Set timezone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
 
+def get_latest_base_image(camera_name, lighting_condition):
+    """
+    Get the most recent base image for the given camera and lighting condition.
+    
+    Args:
+        camera_name (str): Name of the camera
+        lighting_condition (str): Current lighting condition
+        
+    Returns:
+        str: Path to the most recent base image
+    """
+    try:
+        # Generate the pattern for base images
+        pattern = os.path.join(
+            BASE_IMAGES_DIR,
+            f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_*.jpg"
+        )
+        
+        # Get list of matching files
+        matching_files = glob.glob(pattern)
+        
+        if not matching_files:
+            # Fall back to basic base image if no lighting-specific one exists
+            basic_pattern = os.path.join(
+                BASE_IMAGES_DIR,
+                f"{camera_name.lower().replace(' ', '_')}_base.jpg"
+            )
+            matching_files = glob.glob(basic_pattern)
+            
+            if not matching_files:
+                error_msg = f"No base image found for {camera_name} in {lighting_condition} condition"
+                logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+        
+        # Get most recent file
+        latest_file = max(matching_files, key=os.path.getctime)
+        logger.info(f"Using base image: {latest_file}")
+        return latest_file
+        
+    except Exception as e:
+        logger.error(f"Error finding base image: {e}")
+        raise
+
 def load_base_image(camera_name, lighting_condition):
     """
     Load the appropriate base image for the current lighting condition.
@@ -33,25 +82,13 @@ def load_base_image(camera_name, lighting_condition):
     Returns:
         PIL.Image: Base image for comparison
     """
-    base_image_path = os.path.join(
-        BASE_IMAGES_DIR, 
-        f"{camera_name.replace(' ', '_')}_{lighting_condition}_base.jpg"
-    )
-    
-    # If specific lighting condition base image doesn't exist, fall back to default
-    if not os.path.exists(base_image_path):
-        base_image_path = os.path.join(
-            BASE_IMAGES_DIR, 
-            f"{camera_name.replace(' ', '_')}_base.jpg"
-        )
-    
-    if not os.path.exists(base_image_path):
-        error_msg = f"Base image not found for {camera_name}: {base_image_path}"
-        logger.error(error_msg)
-        raise FileNotFoundError(error_msg)
-    
-    logger.info(f"Loading base image for {camera_name} ({lighting_condition})")
-    return Image.open(base_image_path).convert("RGB")
+    try:
+        base_image_path = get_latest_base_image(camera_name, lighting_condition)
+        logger.info(f"Loading base image for {camera_name} ({lighting_condition})")
+        return Image.open(base_image_path).convert("RGB")
+    except Exception as e:
+        logger.error(f"Error loading base image: {e}")
+        raise
 
 def capture_real_image(roi):
     """Capture a screenshot of the specified region"""
@@ -107,29 +144,34 @@ def detect_motion(base_image, new_image, config):
 def save_snapshot(image, camera_name):
     """Save the captured image as a snapshot"""
     try:
-        snapshot_folder = CAMERA_SNAPSHOT_DIRS[camera_name]
-        os.makedirs(snapshot_folder, exist_ok=True)
+        # Get the snapshot directory for this camera
+        snapshot_dir = CAMERA_SNAPSHOT_DIRS.get(camera_name)
+        if not snapshot_dir:
+            error_msg = f"No snapshot directory configured for camera: {camera_name}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        # Create dated subfolder
+        date_folder = datetime.now(PACIFIC_TIME).strftime('%Y%m%d')
+        dated_snapshot_dir = os.path.join(snapshot_dir, date_folder)
+        os.makedirs(dated_snapshot_dir, exist_ok=True)
         
-        timestamp = datetime.now(PACIFIC_TIME).strftime('%Y%m%d%H%M%S')
+        # Generate filename with timestamp
+        timestamp = datetime.now(PACIFIC_TIME).strftime('%H%M%S')
         lighting_condition = get_current_lighting_condition()
-        snapshot_name = (
-            f"{camera_name.replace(' ', '_')}"
-            f"_{lighting_condition}"
-            f"_{timestamp}.jpg"
-        )
-        snapshot_path = os.path.join(snapshot_folder, snapshot_name)
+        snapshot_name = f"{timestamp}_{lighting_condition}.jpg"
         
+        # Full path for snapshot
+        snapshot_path = os.path.join(dated_snapshot_dir, snapshot_name)
+        
+        # Save the image
         image.save(snapshot_path)
         logger.info(f"Saved snapshot: {snapshot_path}")
         
-        # Check if we should update base image
+        # Check if we should capture a new base image
         if should_capture_base_image():
-            base_image_path = os.path.join(
-                BASE_IMAGES_DIR,
-                f"{camera_name.replace(' ', '_')}_{lighting_condition}_base.jpg"
-            )
-            image.save(base_image_path)
-            logger.info(f"Updated base image for {lighting_condition}: {base_image_path}")
+            from capture_base_images import capture_base_images
+            capture_base_images(lighting_condition)
         
         return snapshot_path
         

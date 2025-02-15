@@ -3,9 +3,16 @@
 
 import time as sleep_time
 import sys
+import os
 
 # Import utilities
-from utilities.constants import ensure_directories_exist
+from utilities.constants import (
+    ensure_directories_exist,
+    LOCAL_FILES_DIR,
+    BASE_IMAGES_DIR,
+    IMAGE_COMPARISONS_DIR,
+    LOGS_DIR
+)
 from utilities.configs_loader import load_camera_config
 from utilities.logging_utils import get_logger
 
@@ -20,8 +27,19 @@ def initialize_system():
     """Initialize the system by ensuring directories exist and loading configs"""
     try:
         logger.info("Initializing system...")
+        
+        # Create base directory structure
+        for directory in [LOCAL_FILES_DIR, BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, LOGS_DIR]:
+            if not os.path.exists(directory):
+                logger.info(f"Creating directory: {directory}")
+                os.makedirs(directory, exist_ok=True)
+        
+        # Create remaining directory structure
         ensure_directories_exist()
+        
+        # Load camera configurations
         CAMERA_CONFIGS = load_camera_config()
+        
         logger.info("System initialization complete")
         return CAMERA_CONFIGS
     except Exception as e:
@@ -71,6 +89,7 @@ def motion_detection():
                 except Exception as e:
                     logger.error(f"Error processing {camera_name}: {e}")
 
+            # Wait before next iteration
             sleep_time.sleep(60)  # Capture images every minute
 
     except Exception as e:
