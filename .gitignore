@@ -33,8 +33,14 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 
 # Local directories - using absolute paths to be explicit
+/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/20_Local_Files/
 /Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/20_Input_Files/
 /Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/30_Output_Files/
 
@@ -43,7 +49,26 @@ Thumbs.db
 *.csv
 *.xlsx
 *.xls
+*.json
+*.txt
 
-# Don't ignore config files in the Git repository
+# Media files
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.avi
+
+# Exception: Config files in Git repository
 !/configs/*.json
 !/configs/*.txt
+
+# Runtime files
+*.pid
+*.sock
+
+# Backup files
+*~
+*.bak
+*.backup
