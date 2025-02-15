@@ -27,12 +27,10 @@ class OwlApp:
         # Set window size and position
         window_width = 704
         window_height = 455
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
         
-        # Calculate position for center of primary screen
-        x_position = int((screen_width - window_width) / 2)
-        y_position = int((screen_height - window_height) / 2)
+        # Position window at top-left (with slight offset from edge)
+        x_position = 20  # Small offset from left edge
+        y_position = 20  # Small offset from top edge
         
         # Set geometry and force update
         self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
