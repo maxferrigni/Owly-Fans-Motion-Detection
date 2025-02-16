@@ -51,7 +51,14 @@ SUPABASE_STORAGE = {
 def get_comparison_image_path(camera_name):
     """Get the comparison image path for a given camera"""
     alert_type = CAMERA_MAPPINGS.get(camera_name)
-    return COMPARISON_IMAGE_PATHS.get(alert_type)
+    if not alert_type:
+        raise ValueError(f"No camera mapping found for: {camera_name}")
+    
+    path = COMPARISON_IMAGE_PATHS.get(alert_type)
+    if not path:
+        raise ValueError(f"No comparison image path found for alert type: {alert_type}")
+    
+    return path
 
 def ensure_directories_exist():
     """Create all necessary directories if they don't exist"""
