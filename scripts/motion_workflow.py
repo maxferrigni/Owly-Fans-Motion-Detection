@@ -3,10 +3,9 @@
 
 import os
 from datetime import datetime
-from PIL import Image, ImageChops
+from PIL import Image
 import pyautogui
 import pytz
-import glob
 
 # Import utilities
 from utilities.constants import (
@@ -20,6 +19,8 @@ from utilities.time_utils import (
     should_capture_base_image,
     get_luminance_threshold_multiplier
 )
+from utilities.image_comparison_utils import create_comparison_image
+from capture_base_images import capture_base_images
 
 # Initialize logger
 logger = get_logger()
@@ -36,61 +37,40 @@ def get_latest_base_image(camera_name, lighting_condition):
         lighting_condition (str): Current lighting condition
         
     Returns:
-        str: Path to the most recent base image
-    """
-    try:
-        # Generate the pattern for base images
-        pattern = os.path.join(
-            BASE_IMAGES_DIR,
-            f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_*.jpg"
-        )
-        
-        logger.debug(f"Looking for base images matching pattern: {pattern}")
-        
-        # Get list of matching files
-        matching_files = glob.glob(pattern)
-        logger.debug(f"Found matching base images: {matching_files}")
-        
-        if not matching_files:
-            # Fall back to basic base image if no lighting-specific one exists
-            basic_pattern = os.path.join(
-                BASE_IMAGES_DIR,
-                f"{camera_name.lower().replace(' ', '_')}_base.jpg"
-            )
-            logger.debug(f"No lighting-specific base images found, trying basic pattern: {basic_pattern}")
-            matching_files = glob.glob(basic_pattern)
-            
-            if not matching_files:
-                error_msg = f"No base image found for {camera_name} in {lighting_condition} condition"
-                logger.error(error_msg)
-                raise FileNotFoundError(error_msg)
-        
-        # Get most recent file
-        latest_file = max(matching_files, key=os.path.getctime)
-        logger.info(f"Using base image: {latest_file}")
-        return latest_file
-        
-    except Exception as e:
-        logger.error(f"Error finding base image: {e}")
-        raise
-
-def load_base_image(camera_name, lighting_condition):
-    """
-    Load the appropriate base image for the current lighting condition.
-    
-    Args:
-        camera_name (str): Name of the camera
-        lighting_condition (str): Current lighting condition
-        
-    Returns:
         PIL.Image: Base image for comparison
     """
     try:
-        base_image_path = get_latest_base_image(camera_name, lighting_condition)
-        logger.info(f"Loading base image for {camera_name} ({lighting_condition})")
+        # Generate the pattern for base images
+        base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
+        
+        # Find matching base image
+        matching_files = [f for f in os.listdir(BASE_IMAGES_DIR) 
+                         if f.startswith(base_pattern)]
+        
+        if not matching_files:
+            # If no base image exists, capture new ones
+            logger.info(f"No base image found for {camera_name}. Capturing new base images...")
+            capture_base_images(lighting_condition, force_capture=True)
+            
+            # Try to find the base image again
+            matching_files = [f for f in os.listdir(BASE_IMAGES_DIR) 
+                            if f.startswith(base_pattern)]
+            
+            if not matching_files:
+                raise FileNotFoundError(f"No base image found for {camera_name}")
+        
+        # Get most recent file
+        latest_file = max(matching_files, key=lambda f: os.path.getctime(
+            os.path.join(BASE_IMAGES_DIR, f)
+        ))
+        
+        base_image_path = os.path.join(BASE_IMAGES_DIR, latest_file)
+        logger.info(f"Using base image: {base_image_path}")
+        
         return Image.open(base_image_path).convert("RGB")
+        
     except Exception as e:
-        logger.error(f"Error loading base image: {e}")
+        logger.error(f"Error finding base image: {e}")
         raise
 
 def capture_real_image(roi):
@@ -118,14 +98,31 @@ def detect_motion(base_image, new_image, config):
         # Get lighting-adjusted threshold
         threshold_multiplier = get_luminance_threshold_multiplier()
         adjusted_luminance_threshold = config["luminance_threshold"] * threshold_multiplier
+        threshold_pixels = base_image.size[0] * base_image.size[1] * config["threshold_percentage"]
         
-        diff = ImageChops.difference(base_image, new_image).convert("L")
-        total_pixels = diff.size[0] * diff.size[1]
-        significant_pixels = sum(1 for pixel in diff.getdata() 
-                               if pixel > adjusted_luminance_threshold)
-        avg_luminance_change = sum(diff.getdata()) / total_pixels
-        threshold_pixels = total_pixels * config["threshold_percentage"]
-        motion_detected = significant_pixels > threshold_pixels
+        # Create comparison image and get metrics
+        comparison_path = create_comparison_image(
+            base_image, 
+            new_image, 
+            camera_name=config["alert_type"],
+            threshold=adjusted_luminance_threshold
+        )
+        
+        # Get metrics from comparison image
+        diff_image = Image.open(comparison_path)
+        width = diff_image.size[0] // 3  # Get the size of one panel
+        diff_panel = diff_image.crop((width * 2, 0, width * 3, diff_image.height))
+        
+        # Count red pixels in difference panel
+        red_pixels = sum(1 for pixel in diff_panel.getdata() 
+                        if isinstance(pixel, tuple) and pixel[0] > 200 and pixel[1] < 100 and pixel[2] < 100)
+        
+        total_pixels = diff_panel.size[0] * diff_panel.size[1]
+        motion_detected = red_pixels > threshold_pixels
+        
+        # Calculate average luminance
+        luminance_values = [sum(pixel[:3])/3 for pixel in diff_panel.getdata()]
+        avg_luminance_change = sum(luminance_values) / len(luminance_values)
         
         # Log detection details
         lighting_condition = get_current_lighting_condition()
@@ -133,40 +130,15 @@ def detect_motion(base_image, new_image, config):
             f"Motion detection - Condition: {lighting_condition}, "
             f"Threshold Multiplier: {threshold_multiplier}, "
             f"Adjusted Threshold: {adjusted_luminance_threshold}, "
-            f"Significant Pixels: {significant_pixels}, "
+            f"Changed Pixels: {red_pixels}, "
             f"Threshold Pixels: {threshold_pixels}, "
             f"Average Luminance Change: {avg_luminance_change}"
         )
         
-        return motion_detected, significant_pixels, avg_luminance_change, total_pixels
+        return motion_detected, red_pixels/total_pixels, avg_luminance_change
         
     except Exception as e:
         logger.error(f"Error in motion detection: {e}")
-        raise
-
-def save_comparison_image(image, camera_name):
-    """Save the captured image as a comparison image"""
-    try:
-        # Get the comparison image path for this camera
-        comparison_path = get_comparison_image_path(camera_name)
-        if not comparison_path:
-            error_msg = f"No comparison image path configured for camera: {camera_name}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        # Save the image
-        image.save(comparison_path)
-        logger.info(f"Saved comparison image: {comparison_path}")
-        
-        # Check if we should capture a new base image
-        if should_capture_base_image():
-            from capture_base_images import capture_base_images
-            capture_base_images(get_current_lighting_condition())
-        
-        return comparison_path
-        
-    except Exception as e:
-        logger.error(f"Error saving comparison image: {e}")
         raise
 
 def process_camera(camera_name, config):
@@ -178,18 +150,21 @@ def process_camera(camera_name, config):
         lighting_condition = get_current_lighting_condition()
         logger.info(f"Current lighting condition: {lighting_condition}")
         
+        # Check if we need to capture new base images
+        if should_capture_base_image():
+            logger.info("Time to capture new base images")
+            capture_base_images(lighting_condition)
+        
         # Load appropriate base image
-        base_image = load_base_image(camera_name, lighting_condition)
+        base_image = get_latest_base_image(camera_name, lighting_condition)
         new_image = capture_real_image(config["roi"])
         
-        motion_detected, significant_pixels, avg_luminance_change, total_pixels = detect_motion(
+        # Detect motion and get metrics
+        motion_detected, pixel_change, avg_luminance_change = detect_motion(
             base_image,
             new_image,
             config
         )
-        
-        # Always save the comparison image
-        comparison_path = save_comparison_image(new_image, camera_name)
         
         if motion_detected:
             logger.info(
@@ -199,12 +174,12 @@ def process_camera(camera_name, config):
         else:
             logger.debug(f"No motion detected for {camera_name}")
         
-        pixel_change = significant_pixels / total_pixels
-        status = config["alert_type"] if motion_detected else "No Motion"
-
+        # Get the comparison image path
+        comparison_path = get_comparison_image_path(camera_name)
+        
         return {
-            "status": status,
-            "pixel_change": pixel_change,
+            "status": config["alert_type"] if motion_detected else "No Motion",
+            "pixel_change": pixel_change * 100,  # Convert to percentage
             "luminance_change": avg_luminance_change,
             "snapshot_path": comparison_path if motion_detected else "",
             "lighting_condition": lighting_condition
