@@ -15,7 +15,7 @@ from utilities.constants import (
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
-    get_current_lighting_condition,
+    get_lighting_info,
     should_capture_base_image,
     get_luminance_threshold_multiplier
 )
@@ -85,7 +85,7 @@ def capture_real_image(roi):
         logger.error(f"Error capturing screenshot: {e}")
         raise
 
-def detect_motion(base_image, new_image, config):
+def detect_motion(base_image, new_image, config, threshold_multiplier):
     """
     Compare images with lighting-adjusted thresholds.
     
@@ -93,10 +93,10 @@ def detect_motion(base_image, new_image, config):
         base_image (PIL.Image): Reference image
         new_image (PIL.Image): Current captured image
         config (dict): Camera configuration with thresholds
+        threshold_multiplier (float): Current lighting threshold multiplier
     """
     try:
-        # Get lighting-adjusted threshold
-        threshold_multiplier = get_luminance_threshold_multiplier()
+        # Calculate adjusted threshold
         adjusted_luminance_threshold = config["luminance_threshold"] * threshold_multiplier
         threshold_pixels = base_image.size[0] * base_image.size[1] * config["threshold_percentage"]
         
@@ -125,10 +125,8 @@ def detect_motion(base_image, new_image, config):
         avg_luminance_change = sum(luminance_values) / len(luminance_values)
         
         # Log detection details
-        lighting_condition = get_current_lighting_condition()
         logger.debug(
-            f"Motion detection - Condition: {lighting_condition}, "
-            f"Threshold Multiplier: {threshold_multiplier}, "
+            f"Motion detection metrics - "
             f"Adjusted Threshold: {adjusted_luminance_threshold}, "
             f"Changed Pixels: {red_pixels}, "
             f"Threshold Pixels: {threshold_pixels}, "
@@ -141,57 +139,95 @@ def detect_motion(base_image, new_image, config):
         logger.error(f"Error in motion detection: {e}")
         raise
 
-def process_camera(camera_name, config):
-    """Process motion detection for a specific camera"""
+def process_cameras(camera_configs):
+    """
+    Process all cameras in a single cycle, sharing lighting information.
+    
+    Args:
+        camera_configs (dict): Dictionary of camera configurations
+    
+    Returns:
+        list: List of detection results for each camera
+    """
     try:
-        logger.info(f"Processing camera: {camera_name}")
-        
-        # Get current lighting condition
-        lighting_condition = get_current_lighting_condition()
-        logger.info(f"Current lighting condition: {lighting_condition}")
+        # Get lighting information once for all cameras
+        lighting_info = get_lighting_info()
+        if not lighting_info:
+            raise ValueError("Could not get lighting information")
+            
+        current_condition = lighting_info['condition']
+        logger.info(f"Processing cameras under {current_condition} condition")
         
         # Check if we need to capture new base images
         if should_capture_base_image():
             logger.info("Time to capture new base images")
-            capture_base_images(lighting_condition)
+            capture_base_images(current_condition)
         
-        # Load appropriate base image
-        base_image = get_latest_base_image(camera_name, lighting_condition)
-        new_image = capture_real_image(config["roi"])
+        # Get threshold multiplier once
+        threshold_multiplier = get_luminance_threshold_multiplier()
         
-        # Detect motion and get metrics
-        motion_detected, pixel_change, avg_luminance_change = detect_motion(
-            base_image,
-            new_image,
-            config
-        )
+        results = []
+        for camera_name, config in camera_configs.items():
+            try:
+                logger.info(f"Processing camera: {camera_name}")
+                
+                # Load base image and capture new image
+                base_image = get_latest_base_image(camera_name, current_condition)
+                new_image = capture_real_image(config["roi"])
+                
+                # Detect motion
+                motion_detected, pixel_change, avg_luminance_change = detect_motion(
+                    base_image,
+                    new_image,
+                    config,
+                    threshold_multiplier
+                )
+                
+                if motion_detected:
+                    logger.info(
+                        f"Motion detected for {camera_name} "
+                        f"during {current_condition} condition"
+                    )
+                
+                # Get the comparison image path
+                comparison_path = get_comparison_image_path(camera_name)
+                
+                results.append({
+                    "camera": camera_name,
+                    "status": config["alert_type"] if motion_detected else "No Motion",
+                    "pixel_change": pixel_change * 100,  # Convert to percentage
+                    "luminance_change": avg_luminance_change,
+                    "snapshot_path": comparison_path if motion_detected else "",
+                    "lighting_condition": current_condition
+                })
+                
+            except Exception as e:
+                logger.error(f"Error processing {camera_name}: {e}")
+                results.append({
+                    "camera": camera_name,
+                    "status": "Error",
+                    "error_message": str(e),
+                    "pixel_change": 0.0,
+                    "luminance_change": 0.0,
+                    "snapshot_path": "",
+                    "lighting_condition": "unknown"
+                })
         
-        if motion_detected:
-            logger.info(
-                f"Motion detected for {camera_name} "
-                f"during {lighting_condition} condition"
-            )
-        else:
-            logger.debug(f"No motion detected for {camera_name}")
-        
-        # Get the comparison image path
-        comparison_path = get_comparison_image_path(camera_name)
-        
-        return {
-            "status": config["alert_type"] if motion_detected else "No Motion",
-            "pixel_change": pixel_change * 100,  # Convert to percentage
-            "luminance_change": avg_luminance_change,
-            "snapshot_path": comparison_path if motion_detected else "",
-            "lighting_condition": lighting_condition
-        }
+        return results
 
     except Exception as e:
-        logger.error(f"Error processing {camera_name}: {e}")
-        return {
-            "status": "Error",
-            "error_message": str(e),
-            "pixel_change": 0.0,
-            "luminance_change": 0.0,
-            "snapshot_path": "",
-            "lighting_condition": "unknown"
-        }
+        logger.error(f"Error in camera processing cycle: {e}")
+        raise
+
+# For backward compatibility
+def process_camera(camera_name, config):
+    """Process a single camera (legacy support)"""
+    results = process_cameras({camera_name: config})
+    return next((r for r in results if r["camera"] == camera_name), {
+        "status": "Error",
+        "error_message": "Camera not processed",
+        "pixel_change": 0.0,
+        "luminance_change": 0.0,
+        "snapshot_path": "",
+        "lighting_condition": "unknown"
+    })

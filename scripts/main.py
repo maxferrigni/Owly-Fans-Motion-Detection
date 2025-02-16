@@ -17,7 +17,7 @@ from utilities.configs_loader import load_camera_config
 from utilities.logging_utils import get_logger
 
 # Local imports
-from motion_workflow import process_camera
+from motion_workflow import process_cameras
 from push_to_supabase import push_log_to_supabase, format_log_entry
 
 # Set up logging
@@ -46,6 +46,45 @@ def initialize_system():
         logger.error(f"Error during system initialization: {e}")
         sys.exit(1)
 
+def format_detection_results(camera_results):
+    """
+    Format camera detection results for Supabase logging.
+    
+    Args:
+        camera_results (dict): Results from a single camera's detection
+        
+    Returns:
+        dict: Formatted log entry for Supabase
+    """
+    return format_log_entry(
+        owl_in_box=(camera_results.get("status") == "Owl In Box"),
+        pixel_change_owl_in_box=(camera_results.get("pixel_change", 0.0) 
+                                if camera_results.get("status") == "Owl In Box" else 0.0),
+        luminance_change_owl_in_box=(camera_results.get("luminance_change", 0.0) 
+                                    if camera_results.get("status") == "Owl In Box" else 0.0),
+        owl_in_box_url=(camera_results.get("snapshot_path", "") 
+                       if camera_results.get("status") == "Owl In Box" else ""),
+        owl_in_box_image_comparison_url="",
+        
+        owl_on_box=(camera_results.get("status") == "Owl On Box"),
+        pixel_change_owl_on_box=(camera_results.get("pixel_change", 0.0) 
+                                if camera_results.get("status") == "Owl On Box" else 0.0),
+        luminance_change_owl_on_box=(camera_results.get("luminance_change", 0.0) 
+                                    if camera_results.get("status") == "Owl On Box" else 0.0),
+        owl_on_box_image_url=(camera_results.get("snapshot_path", "") 
+                             if camera_results.get("status") == "Owl On Box" else ""),
+        owl_on_box_image_comparison_url="",
+        
+        owl_in_area=(camera_results.get("status") == "Owl In Area"),
+        pixel_change_owl_in_area=(camera_results.get("pixel_change", 0.0) 
+                                 if camera_results.get("status") == "Owl In Area" else 0.0),
+        luminance_change_owl_in_area=(camera_results.get("luminance_change", 0.0) 
+                                     if camera_results.get("status") == "Owl In Area" else 0.0),
+        owl_in_area_image_url=(camera_results.get("snapshot_path", "") 
+                              if camera_results.get("status") == "Owl In Area" else ""),
+        owl_in_area_image_comparison_url=""
+    )
+
 def motion_detection():
     """
     Perform motion detection for all configured cameras and push logs to Supabase.
@@ -56,41 +95,28 @@ def motion_detection():
         logger.info("Starting motion detection...")
 
         while True:
-            for camera_name, config in CAMERA_CONFIGS.items():
-                try:
-                    # Process camera detection
-                    logger.info(f"Processing camera: {camera_name}")
-                    detection_result = process_camera(camera_name, config)
-
-                    # Format detection log for Supabase
-                    log_entry = format_log_entry(
-                        owl_in_box=detection_result.get("status") == "Owl In Box",
-                        pixel_change_owl_in_box=detection_result.get("pixel_change", 0.0),
-                        luminance_change_owl_in_box=detection_result.get("luminance_change", 0.0),
-                        owl_in_box_url=detection_result.get("snapshot_path", ""),
-                        owl_in_box_image_comparison_url="",
+            try:
+                # Process all cameras in one batch
+                camera_results = process_cameras(CAMERA_CONFIGS)
+                
+                # Format and upload results for each camera
+                for result in camera_results:
+                    try:
+                        # Format detection log for Supabase
+                        log_entry = format_detection_results(result)
                         
-                        owl_on_box=detection_result.get("status") == "Owl On Box",
-                        pixel_change_owl_on_box=detection_result.get("pixel_change", 0.0),
-                        luminance_change_owl_on_box=detection_result.get("luminance_change", 0.0),
-                        owl_on_box_image_url=detection_result.get("snapshot_path", ""),
-                        owl_on_box_image_comparison_url="",
+                        # Push log entry to Supabase
+                        push_log_to_supabase(log_entry)
                         
-                        owl_in_area=detection_result.get("status") == "Owl In Area",
-                        pixel_change_owl_in_area=detection_result.get("pixel_change", 0.0),
-                        luminance_change_owl_in_area=detection_result.get("luminance_change", 0.0),
-                        owl_in_area_image_url=detection_result.get("snapshot_path", ""),
-                        owl_in_area_image_comparison_url=""
-                    )
+                    except Exception as e:
+                        logger.error(f"Error processing results for camera {result.get('camera', 'unknown')}: {e}")
 
-                    # Push log entry to Supabase
-                    push_log_to_supabase(log_entry)
+                # Wait before next iteration
+                sleep_time.sleep(60)  # Capture images every minute
 
-                except Exception as e:
-                    logger.error(f"Error processing {camera_name}: {e}")
-
-            # Wait before next iteration
-            sleep_time.sleep(60)  # Capture images every minute
+            except Exception as e:
+                logger.error(f"Error in detection cycle: {e}")
+                sleep_time.sleep(60)  # Still wait before retry
 
     except Exception as e:
         logger.error(f"Fatal error in motion detection: {e}")

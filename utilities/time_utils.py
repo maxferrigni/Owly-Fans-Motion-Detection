@@ -1,11 +1,7 @@
 # File: time_utils.py
 # Purpose: Determine optimal lighting conditions for base image capture and motion detection
-# These times are critical for:
-# 1. Capturing accurate base images with proper lighting conditions
-# 2. Adjusting luminance thresholds based on time of day
-# 3. Understanding natural light changes that could affect motion detection
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pytz
 import pandas as pd
 from utilities.configs_loader import load_sunrise_sunset_data
@@ -14,9 +10,41 @@ from utilities.logging_utils import get_logger
 # Initialize logger
 logger = get_logger()
 
+# Cache for sunrise/sunset data and lighting conditions
+_sun_data_cache = {
+    'date': None,
+    'data': None
+}
+
+_lighting_condition_cache = {
+    'timestamp': None,
+    'condition': None,
+    'cache_duration': timedelta(minutes=5)  # Cache lighting condition for 5 minutes
+}
+
+def _get_cached_sun_data():
+    """
+    Get cached sunrise/sunset data, reloading if needed.
+    
+    Returns:
+        pandas.DataFrame: Sunrise/sunset data for current date
+    """
+    current_date = date.today()
+    
+    # If cache is empty or from a different date, reload
+    if (_sun_data_cache['date'] != current_date or 
+        _sun_data_cache['data'] is None):
+        
+        logger.debug("Loading sunrise/sunset data from file")
+        _sun_data_cache['data'] = load_sunrise_sunset_data()
+        _sun_data_cache['date'] = current_date
+    
+    return _sun_data_cache['data']
+
 def get_current_lighting_condition():
     """
     Determine current lighting condition based on time of day.
+    Uses caching to prevent frequent recalculations.
     
     Returns:
         str: Current lighting condition
@@ -26,11 +54,18 @@ def get_current_lighting_condition():
             'day' - Full daylight
     """
     try:
-        pacific = pytz.timezone('America/Los_Angeles')
-        current_time = datetime.now(pacific)
+        current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
         
-        # Load sunrise/sunset data
-        sun_data = load_sunrise_sunset_data()
+        # Check if cached condition is still valid
+        if (_lighting_condition_cache['timestamp'] and 
+            _lighting_condition_cache['condition'] and
+            current_time - _lighting_condition_cache['timestamp'] < _lighting_condition_cache['cache_duration']):
+            
+            logger.debug("Using cached lighting condition")
+            return _lighting_condition_cache['condition']
+            
+        # Get sun data for today
+        sun_data = _get_cached_sun_data()
         today_data = sun_data[sun_data['Date'].dt.date == current_time.date()]
         
         if today_data.empty:
@@ -63,35 +98,51 @@ def get_current_lighting_condition():
         else:
             condition = 'night'
             
-        logger.debug(f"Current lighting condition: {condition}")
+        # Update cache
+        _lighting_condition_cache['timestamp'] = current_time
+        _lighting_condition_cache['condition'] = condition
+        
+        logger.debug(f"New lighting condition calculated: {condition}")
         return condition
         
     except Exception as e:
         logger.error(f"Error determining lighting condition: {e}")
         return 'unknown'
 
+def get_lighting_info():
+    """
+    Get all lighting-related information in a single call.
+    
+    Returns:
+        dict: Dictionary containing current lighting information
+    """
+    try:
+        condition = get_current_lighting_condition()
+        sun_data = _get_cached_sun_data()
+        
+        return {
+            'condition': condition,
+            'sun_data': sun_data,
+            'cache_time': _lighting_condition_cache['timestamp']
+        }
+    except Exception as e:
+        logger.error(f"Error getting lighting info: {e}")
+        return None
+
 def should_capture_base_image():
     """
     Determine if it's an optimal time to capture new base images.
-    Base images should be captured during stable lighting conditions:
-    - Middle of the night (most stable darkness)
-    - Middle of the day (most stable daylight)
     
     Returns:
         bool: True if optimal time for base image capture
     """
     try:
-        condition = get_current_lighting_condition()
-        
-        if condition == 'unknown':
+        lighting_info = get_lighting_info()
+        if not lighting_info:
             return False
             
-        pacific = pytz.timezone('America/Los_Angeles')
-        current_time = datetime.now(pacific)
-        
-        # Load sunrise/sunset data
-        sun_data = load_sunrise_sunset_data()
-        today_data = sun_data[sun_data['Date'].dt.date == current_time.date()]
+        current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
+        today_data = lighting_info['sun_data'][lighting_info['sun_data']['Date'].dt.date == current_time.date()]
         
         if today_data.empty:
             return False
@@ -99,7 +150,6 @@ def should_capture_base_image():
         sunrise = datetime.strptime(today_data.iloc[0]['Sunrise'], '%H:%M').time()
         sunset = datetime.strptime(today_data.iloc[0]['Sunset'], '%H:%M').time()
         
-        # Calculate optimal times
         sunrise_dt = datetime.combine(current_time.date(), sunrise)
         sunset_dt = datetime.combine(current_time.date(), sunset)
         
@@ -126,7 +176,7 @@ def should_capture_base_image():
         )
         
         if is_optimal:
-            logger.info(f"Optimal time for base image capture during {condition}")
+            logger.info(f"Optimal time for base image capture during {lighting_info['condition']}")
         
         return is_optimal
         
@@ -137,7 +187,6 @@ def should_capture_base_image():
 def get_luminance_threshold_multiplier():
     """
     Get multiplier for luminance threshold based on current lighting condition.
-    Different lighting conditions require different sensitivity levels.
     
     Returns:
         float: Multiplier for base luminance threshold
@@ -145,11 +194,11 @@ def get_luminance_threshold_multiplier():
     condition = get_current_lighting_condition()
     
     multipliers = {
-        'day': 1.0,           # Normal sensitivity
-        'civil_twilight': 1.2, # Slightly higher sensitivity
-        'astronomical_twilight': 1.5, # Higher sensitivity
-        'night': 2.0,         # Highest sensitivity
-        'unknown': 1.0        # Default to normal sensitivity
+        'day': 1.0,
+        'civil_twilight': 1.2,
+        'astronomical_twilight': 1.5,
+        'night': 2.0,
+        'unknown': 1.0
     }
     
     multiplier = multipliers.get(condition, 1.0)
@@ -159,6 +208,7 @@ def get_luminance_threshold_multiplier():
 if __name__ == "__main__":
     # Test the timing functions
     logger.info("Testing lighting condition detection...")
-    print(f"Current lighting condition: {get_current_lighting_condition()}")
+    lighting_info = get_lighting_info()
+    print(f"Current lighting info: {lighting_info}")
     print(f"Should capture base image: {should_capture_base_image()}")
     print(f"Luminance threshold multiplier: {get_luminance_threshold_multiplier()}")
