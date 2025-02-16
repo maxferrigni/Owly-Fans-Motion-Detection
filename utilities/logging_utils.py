@@ -5,7 +5,11 @@ import logging
 import os
 from datetime import datetime
 import pytz
-from utilities.constants import LOGS_DIR
+
+def get_logs_dir():
+    """Get the logs directory path"""
+    base_dir = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection"
+    return os.path.join(base_dir, "20_Local_Files", "logs")
 
 def setup_logging(name="owl_monitor"):
     """
@@ -18,7 +22,8 @@ def setup_logging(name="owl_monitor"):
         logging.Logger: Configured logger instance
     """
     # Ensure logs directory exists
-    os.makedirs(LOGS_DIR, exist_ok=True)
+    logs_dir = get_logs_dir()
+    os.makedirs(logs_dir, exist_ok=True)
     
     # Create logger
     logger = logging.getLogger(name)
@@ -41,7 +46,7 @@ def setup_logging(name="owl_monitor"):
     # File handler
     log_filename = f'owl_monitor_{current_time.strftime("%Y%m%d")}.log'
     file_handler = logging.FileHandler(
-        os.path.join(LOGS_DIR, log_filename)
+        os.path.join(logs_dir, log_filename)
     )
     file_handler.setFormatter(file_formatter)
     file_handler.setLevel(logging.INFO)

@@ -2,10 +2,6 @@
 # Purpose: Centralized path management for the Owl Monitoring System
 
 import os
-from utilities.logging_utils import get_logger
-
-# Initialize logger
-logger = get_logger()
 
 def get_base_dir():
     """Get the base directory for local file storage"""
@@ -65,32 +61,31 @@ def ensure_directories_exist():
         LOGS_DIR,
     ] + list(CAMERA_SNAPSHOT_DIRS.values())
 
-    logger.info("Creating/verifying directories:")
     for directory in directories:
         try:
             os.makedirs(directory, exist_ok=True)
-            logger.info(f"Created/verified directory: {directory}")
+            print(f"Created/verified directory: {directory}")
         except Exception as e:
-            logger.error(f"Failed to create directory {directory}: {e}")
+            print(f"Failed to create directory {directory}: {e}")
             raise
 
 def validate_paths():
     """Validate that all required paths exist"""
-    logger.info("Validating paths and directories...")
+    print("Validating paths and directories...")
     
     # Check config files
     for name, path in INPUT_CONFIG_FILES.items():
         if not os.path.exists(path):
-            logger.warning(f"Configuration file missing: {path}")
+            print(f"Configuration file missing: {path}")
 
     # Log camera snapshot directories
-    logger.info("Camera snapshot directories configuration:")
+    print("Camera snapshot directories configuration:")
     for camera, directory in CAMERA_SNAPSHOT_DIRS.items():
-        logger.info(f"Camera: {camera} -> Directory: {directory}")
+        print(f"Camera: {camera} -> Directory: {directory}")
 
     # Check directories
     ensure_directories_exist()
-    logger.info("Path validation complete")
+    print("Path validation complete")
 
 if __name__ == "__main__":
     print("Validating directory structure...")
