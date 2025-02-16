@@ -5,11 +5,11 @@ import logging
 import os
 from datetime import datetime
 import pytz
+from utilities.constants import get_base_dir
 
 def get_logs_dir():
     """Get the logs directory path"""
-    base_dir = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection"
-    return os.path.join(base_dir, "20_Local_Files", "logs")
+    return os.path.join(get_base_dir(), "20_Local_Files", "logs")
 
 def setup_logging(name="owl_monitor"):
     """

@@ -1,7 +1,12 @@
 # File: utilities/constants.py
-# Purpose: Centralized path management for the Owl Monitoring System
+# Purpose: Centralized path management and validation for the Owl Monitoring System
 
 import os
+import json
+import pandas as pd
+from utilities.logging_utils import get_logger
+
+logger = get_logger()
 
 def get_base_dir():
     """Get the base directory for local file storage"""
@@ -72,30 +77,81 @@ def ensure_directories_exist():
     for directory in directories:
         try:
             os.makedirs(directory, exist_ok=True)
-            print(f"Created/verified directory: {directory}")
+            logger.info(f"Created/verified directory: {directory}")
         except Exception as e:
-            print(f"Failed to create directory {directory}: {e}")
+            logger.error(f"Failed to create directory {directory}: {e}")
             raise
 
-def validate_paths():
-    """Validate that all required paths exist"""
-    print("Validating paths and directories...")
+def validate_config_files():
+    """
+    Validate all configuration files exist and are properly formatted.
     
-    # Check config files
-    for name, path in INPUT_CONFIG_FILES.items():
-        if not os.path.exists(path):
-            print(f"Configuration file missing: {path}")
+    Returns:
+        bool: True if all validations pass
+    """
+    try:
+        # Check config.json
+        config_path = INPUT_CONFIG_FILES["config"]
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+            
+        with open(config_path, "r") as file:
+            config = json.load(file)
+            
+        # Validate required fields in camera config
+        required_fields = ["roi", "threshold_percentage", "luminance_threshold", "alert_type"]
+        for camera, settings in config.items():
+            missing_fields = [field for field in required_fields if field not in settings]
+            if missing_fields:
+                raise ValueError(f"Missing required fields {missing_fields} for camera {camera}")
+                
+        # Check sunrise/sunset data
+        sunrise_sunset_path = INPUT_CONFIG_FILES["sunrise_sunset"]
+        if not os.path.exists(sunrise_sunset_path):
+            raise FileNotFoundError(f"Sunrise/Sunset data file not found: {sunrise_sunset_path}")
+            
+        # Validate sunrise/sunset data format
+        df = pd.read_csv(sunrise_sunset_path, delimiter="\t")
+        required_columns = ['Date', 'Sunrise', 'Sunset']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns in sunrise/sunset data: {missing_columns}")
+            
+        logger.info("All configuration files validated successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Configuration validation failed: {e}")
+        return False
 
-    # Log comparison image paths
-    print("Comparison image paths configuration:")
-    for alert_type, path in COMPARISON_IMAGE_PATHS.items():
-        print(f"Alert Type: {alert_type} -> Path: {path}")
-
-    # Check directories
-    ensure_directories_exist()
-    print("Path validation complete")
+def validate_system():
+    """
+    Comprehensive system validation including paths and configs.
+    
+    Returns:
+        bool: True if all validations pass
+    """
+    try:
+        # Ensure all directories exist
+        ensure_directories_exist()
+        
+        # Validate configuration files
+        if not validate_config_files():
+            return False
+            
+        # Validate comparison image paths
+        for alert_type, path in COMPARISON_IMAGE_PATHS.items():
+            parent_dir = os.path.dirname(path)
+            if not os.path.exists(parent_dir):
+                logger.error(f"Comparison image directory missing: {parent_dir}")
+                return False
+                
+        logger.info("System validation completed successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"System validation failed: {e}")
+        return False
 
 if __name__ == "__main__":
-    print("Validating directory structure...")
-    validate_paths()
-    print("Directory validation complete.")
+    validate_system()
