@@ -37,9 +37,9 @@ CAMERA_MAPPINGS = {
 
 # Camera-specific image comparison directories
 CAMERA_SNAPSHOT_DIRS = {
-    "Owl In Box": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_box"),
-    "Owl On Box": os.path.join(IMAGE_COMPARISONS_DIR, "owl_on_box"),
-    "Owl In Area": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_area")
+    "Upper Patio Camera": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_area"),
+    "Bindy Patio Camera": os.path.join(IMAGE_COMPARISONS_DIR, "owl_on_box"),
+    "Wyze Internal Camera": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_box")
 }
 
 # Supabase storage buckets
