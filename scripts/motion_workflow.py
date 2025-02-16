@@ -13,7 +13,8 @@ from utilities.constants import (
     BASE_IMAGES_DIR,
     CAMERA_SNAPSHOT_DIRS,
     IMAGE_COMPARISONS_DIR,
-    get_base_image_filename
+    get_base_image_filename,
+    ensure_directories_exist
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -46,8 +47,11 @@ def get_latest_base_image(camera_name, lighting_condition):
             f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_*.jpg"
         )
         
+        logger.debug(f"Looking for base images matching pattern: {pattern}")
+        
         # Get list of matching files
         matching_files = glob.glob(pattern)
+        logger.debug(f"Found matching base images: {matching_files}")
         
         if not matching_files:
             # Fall back to basic base image if no lighting-specific one exists
@@ -55,6 +59,7 @@ def get_latest_base_image(camera_name, lighting_condition):
                 BASE_IMAGES_DIR,
                 f"{camera_name.lower().replace(' ', '_')}_base.jpg"
             )
+            logger.debug(f"No lighting-specific base images found, trying basic pattern: {basic_pattern}")
             matching_files = glob.glob(basic_pattern)
             
             if not matching_files:
@@ -144,17 +149,28 @@ def detect_motion(base_image, new_image, config):
 def save_snapshot(image, camera_name):
     """Save the captured image as a snapshot"""
     try:
+        # Verify directories exist
+        ensure_directories_exist()
+        
+        # Debug logging for snapshot directory lookup
+        logger.debug(f"Looking for snapshot directory for camera: {camera_name}")
+        logger.debug(f"Available snapshot directories: {CAMERA_SNAPSHOT_DIRS}")
+        
         # Get the snapshot directory for this camera
         snapshot_dir = CAMERA_SNAPSHOT_DIRS.get(camera_name)
         if not snapshot_dir:
             error_msg = f"No snapshot directory configured for camera: {camera_name}"
             logger.error(error_msg)
+            logger.error(f"Camera name '{camera_name}' not found in mappings: {list(CAMERA_SNAPSHOT_DIRS.keys())}")
             raise ValueError(error_msg)
             
+        logger.debug(f"Found snapshot directory: {snapshot_dir}")
+        
         # Create dated subfolder
         date_folder = datetime.now(PACIFIC_TIME).strftime('%Y%m%d')
         dated_snapshot_dir = os.path.join(snapshot_dir, date_folder)
         os.makedirs(dated_snapshot_dir, exist_ok=True)
+        logger.debug(f"Created/verified dated snapshot directory: {dated_snapshot_dir}")
         
         # Generate filename with timestamp
         timestamp = datetime.now(PACIFIC_TIME).strftime('%H%M%S')
@@ -163,6 +179,7 @@ def save_snapshot(image, camera_name):
         
         # Full path for snapshot
         snapshot_path = os.path.join(dated_snapshot_dir, snapshot_name)
+        logger.debug(f"Saving snapshot to: {snapshot_path}")
         
         # Save the image
         image.save(snapshot_path)

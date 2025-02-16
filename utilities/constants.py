@@ -2,6 +2,10 @@
 # Purpose: Centralized path management for the Owl Monitoring System
 
 import os
+from utilities.logging_utils import get_logger
+
+# Initialize logger
+logger = get_logger()
 
 def get_base_dir():
     """Get the base directory for local file storage"""
@@ -35,7 +39,7 @@ CAMERA_MAPPINGS = {
     "Wyze Internal Camera": "Owl In Box"
 }
 
-# Camera-specific image comparison directories
+# Camera-specific snapshot directories
 CAMERA_SNAPSHOT_DIRS = {
     "Upper Patio Camera": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_area"),
     "Bindy Patio Camera": os.path.join(IMAGE_COMPARISONS_DIR, "owl_on_box"),
@@ -48,7 +52,6 @@ SUPABASE_STORAGE = {
     "base_images": "base_images"
 }
 
-# Base image filename format
 def get_base_image_filename(camera_name, lighting_condition, timestamp):
     """Generate consistent filename for base images"""
     return f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
@@ -62,22 +65,32 @@ def ensure_directories_exist():
         LOGS_DIR,
     ] + list(CAMERA_SNAPSHOT_DIRS.values())
 
+    logger.info("Creating/verifying directories:")
     for directory in directories:
         try:
             os.makedirs(directory, exist_ok=True)
+            logger.info(f"Created/verified directory: {directory}")
         except Exception as e:
-            print(f"Failed to create directory {directory}: {e}")
+            logger.error(f"Failed to create directory {directory}: {e}")
             raise
 
 def validate_paths():
     """Validate that all required paths exist"""
+    logger.info("Validating paths and directories...")
+    
     # Check config files
     for name, path in INPUT_CONFIG_FILES.items():
         if not os.path.exists(path):
-            print(f"Configuration file missing: {path}")
+            logger.warning(f"Configuration file missing: {path}")
+
+    # Log camera snapshot directories
+    logger.info("Camera snapshot directories configuration:")
+    for camera, directory in CAMERA_SNAPSHOT_DIRS.items():
+        logger.info(f"Camera: {camera} -> Directory: {directory}")
 
     # Check directories
     ensure_directories_exist()
+    logger.info("Path validation complete")
 
 if __name__ == "__main__":
     print("Validating directory structure...")
