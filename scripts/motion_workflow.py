@@ -12,7 +12,7 @@ import glob
 from utilities.constants import (
     BASE_IMAGES_DIR,
     get_comparison_image_path,
-    get_base_image_filename
+    CAMERA_MAPPINGS
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -45,8 +45,11 @@ def get_latest_base_image(camera_name, lighting_condition):
             f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_*.jpg"
         )
         
+        logger.debug(f"Looking for base images matching pattern: {pattern}")
+        
         # Get list of matching files
         matching_files = glob.glob(pattern)
+        logger.debug(f"Found matching base images: {matching_files}")
         
         if not matching_files:
             # Fall back to basic base image if no lighting-specific one exists
@@ -54,6 +57,7 @@ def get_latest_base_image(camera_name, lighting_condition):
                 BASE_IMAGES_DIR,
                 f"{camera_name.lower().replace(' ', '_')}_base.jpg"
             )
+            logger.debug(f"No lighting-specific base images found, trying basic pattern: {basic_pattern}")
             matching_files = glob.glob(basic_pattern)
             
             if not matching_files:
@@ -140,7 +144,7 @@ def detect_motion(base_image, new_image, config):
         logger.error(f"Error in motion detection: {e}")
         raise
 
-def save_comparison_image(image, camera_name, motion_detected):
+def save_comparison_image(image, camera_name):
     """Save the captured image as a comparison image"""
     try:
         # Get the comparison image path for this camera
@@ -149,20 +153,15 @@ def save_comparison_image(image, camera_name, motion_detected):
             error_msg = f"No comparison image path configured for camera: {camera_name}"
             logger.error(error_msg)
             raise ValueError(error_msg)
-
-        # Create side-by-side comparison with base image
-        if motion_detected:
-            base_image = load_base_image(camera_name, get_current_lighting_condition())
-            comparison = Image.new('RGB', (image.width * 2, image.height))
-            comparison.paste(base_image, (0, 0))
-            comparison.paste(image, (image.width, 0))
-            comparison_image = comparison
-        else:
-            comparison_image = image
-
-        # Save the comparison image
-        comparison_image.save(comparison_path)
-        logger.info(f"Saved {'motion detection' if motion_detected else 'regular'} comparison image: {comparison_path}")
+        
+        # Save the image
+        image.save(comparison_path)
+        logger.info(f"Saved comparison image: {comparison_path}")
+        
+        # Check if we should capture a new base image
+        if should_capture_base_image():
+            from capture_base_images import capture_base_images
+            capture_base_images(get_current_lighting_condition())
         
         return comparison_path
         
@@ -189,8 +188,8 @@ def process_camera(camera_name, config):
             config
         )
         
-        # Save comparison image
-        snapshot_path = save_comparison_image(new_image, camera_name, motion_detected)
+        # Always save the comparison image
+        comparison_path = save_comparison_image(new_image, camera_name)
         
         if motion_detected:
             logger.info(
@@ -207,7 +206,7 @@ def process_camera(camera_name, config):
             "status": status,
             "pixel_change": pixel_change,
             "luminance_change": avg_luminance_change,
-            "snapshot_path": snapshot_path if motion_detected else "",
+            "snapshot_path": comparison_path if motion_detected else "",
             "lighting_condition": lighting_condition
         }
 

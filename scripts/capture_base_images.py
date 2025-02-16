@@ -6,33 +6,19 @@ import pyautogui
 from PIL import Image
 import json
 from datetime import datetime
-import numpy as np
 import pytz
 
 # Import utilities
 from utilities.constants import (
     BASE_IMAGES_DIR,
     CONFIGS_DIR,
-    get_base_image_filename,
-    SUPABASE_STORAGE
+    get_base_image_filename
 )
 from utilities.logging_utils import get_logger
-from push_to_supabase import supabase_client
+from upload_images_to_supabase import upload_base_image
 
 # Initialize logger
 logger = get_logger()
-
-def calculate_average_luminance(image):
-    """Calculate the average luminance of an image"""
-    try:
-        # Convert image to numpy array
-        img_array = np.array(image)
-        # Convert to grayscale using standard luminance formula
-        luminance = 0.299 * img_array[:,:,0] + 0.587 * img_array[:,:,1] + 0.114 * img_array[:,:,2]
-        return float(np.mean(luminance))
-    except Exception as e:
-        logger.error(f"Error calculating luminance: {e}")
-        return 0.0
 
 def load_config():
     """Load camera configurations from the JSON file"""
@@ -54,7 +40,7 @@ def capture_real_image(roi):
 
 def save_base_image(image, camera_name, lighting_condition):
     """
-    Save base image locally and to Supabase.
+    Save base image locally and upload to Supabase.
     
     Args:
         image (PIL.Image): The base image to save
@@ -82,28 +68,10 @@ def save_base_image(image, camera_name, lighting_condition):
         logger.info(f"Saved base image locally: {local_path}")
         
         # Upload to Supabase
-        with open(local_path, 'rb') as f:
-            supabase_response = supabase_client.storage \
-                .from_(SUPABASE_STORAGE['base_images']) \
-                .upload(filename, f)
+        supabase_url = upload_base_image(local_path, camera_name, lighting_condition)
         
-        # Generate public URL
-        supabase_url = f"{supabase_client.storage.get_public_url(SUPABASE_STORAGE['base_images'], filename)}"
-        
-        # Log to base_images_log table
-        light_level = calculate_average_luminance(image)
-        log_entry = {
-            'camera_name': camera_name,
-            'lighting_condition': lighting_condition,
-            'base_image_url': supabase_url,
-            'light_level': light_level,
-            'capture_time': timestamp.strftime('%H:%M:%S'),
-            'capture_date': timestamp.strftime('%Y-%m-%d'),
-            'notes': f'Auto-captured during {lighting_condition} condition'
-        }
-        
-        supabase_client.table('base_images_log').insert(log_entry).execute()
-        logger.info(f"Base image logged to Supabase: {filename}")
+        # Clean up old base images for this camera and lighting condition
+        cleanup_old_base_images(camera_name, lighting_condition)
         
         return local_path, supabase_url
         
@@ -111,17 +79,36 @@ def save_base_image(image, camera_name, lighting_condition):
         logger.error(f"Error saving base image: {e}")
         raise
 
-def clear_local_base_images():
-    """Clear old base images from local storage"""
-    if os.path.exists(BASE_IMAGES_DIR):
-        for file_name in os.listdir(BASE_IMAGES_DIR):
-            file_path = os.path.join(BASE_IMAGES_DIR, file_name)
+def cleanup_old_base_images(camera_name, lighting_condition):
+    """
+    Remove old base images for a specific camera and lighting condition.
+    Keep only the most recent one.
+    
+    Args:
+        camera_name (str): Name of the camera
+        lighting_condition (str): Lighting condition
+    """
+    try:
+        pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_*.jpg"
+        matching_files = [f for f in os.listdir(BASE_IMAGES_DIR) 
+                         if f.startswith(camera_name.lower().replace(' ', '_')) and 
+                         lighting_condition in f]
+        
+        # Sort by creation time
+        matching_files.sort(key=lambda x: os.path.getctime(
+            os.path.join(BASE_IMAGES_DIR, x)
+        ))
+        
+        # Keep only the most recent file
+        for old_file in matching_files[:-1]:
             try:
-                if os.path.isfile(file_path):
-                    os.unlink(file_path)
-                    logger.info(f"Deleted local base image: {file_path}")
+                os.remove(os.path.join(BASE_IMAGES_DIR, old_file))
+                logger.info(f"Removed old base image: {old_file}")
             except Exception as e:
-                logger.error(f"Error deleting file {file_path}: {e}")
+                logger.error(f"Error removing old base image {old_file}: {e}")
+                
+    except Exception as e:
+        logger.error(f"Error cleaning up old base images: {e}")
 
 def capture_base_images(lighting_condition):
     """

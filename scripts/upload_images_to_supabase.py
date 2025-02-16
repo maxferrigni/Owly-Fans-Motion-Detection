@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 # Import utilities
 from utilities.logging_utils import get_logger
-from utilities.constants import SNAPSHOTS_DIR
+from utilities.constants import SUPABASE_STORAGE
 
 # Initialize logger
 logger = get_logger()
@@ -36,12 +36,12 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     raise
 
-def upload_image_to_supabase(local_image_path, detection_type):
+def upload_comparison_image(local_image_path, detection_type):
     """
-    Upload a motion detection image to Supabase Storage.
+    Upload a motion detection comparison image to Supabase Storage.
     
     Args:
-        local_image_path (str): Path to the image stored locally
+        local_image_path (str): Path to the comparison image
         detection_type (str): Type of detection ("owl_in_box", "owl_on_box", "owl_in_area")
     
     Returns:
@@ -49,13 +49,17 @@ def upload_image_to_supabase(local_image_path, detection_type):
     """
     try:
         if not os.path.exists(local_image_path):
-            logger.error(f"Image file not found: {local_image_path}")
+            logger.error(f"Comparison image not found: {local_image_path}")
             return None
 
         # Generate unique filename using timestamp
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        filename = f"{detection_type}_{timestamp}.jpg"
-        storage_path = f"{detection_type}/{filename}"
+        detection_type_clean = detection_type.lower().replace(" ", "_")
+        filename = f"{detection_type_clean}_{timestamp}.jpg"
+        
+        # Create storage path with date-based structure
+        current_date = datetime.datetime.utcnow()
+        storage_path = f"{detection_type_clean}/{current_date.year}-{current_date.month:02d}/{current_date.day:02d}/{filename}"
 
         # Determine MIME type
         mime_type, _ = mimetypes.guess_type(local_image_path)
@@ -68,7 +72,7 @@ def upload_image_to_supabase(local_image_path, detection_type):
 
         # Upload image to Supabase Storage
         with open(local_image_path, "rb") as file:
-            response = supabase_client.storage.from_(SUPABASE_BUCKET).upload(
+            response = supabase_client.storage.from_(SUPABASE_STORAGE["owl_detections"]).upload(
                 path=storage_path,
                 file=file,
                 file_options={"content-type": mime_type}
@@ -78,58 +82,81 @@ def upload_image_to_supabase(local_image_path, detection_type):
         public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{storage_path}"
         logger.info(f"Image successfully uploaded: {public_url}")
         
-        # Clean up local file if upload successful
-        try:
-            os.remove(local_image_path)
-            logger.debug(f"Cleaned up local file: {local_image_path}")
-        except Exception as e:
-            logger.warning(f"Failed to clean up local file {local_image_path}: {e}")
-
         return public_url
 
     except Exception as e:
         logger.error(f"Error uploading image to Supabase: {e}")
         return None
 
-def upload_pending_images():
+def upload_base_image(local_image_path, camera_name, lighting_condition):
     """
-    Upload any pending images in the snapshots directory to Supabase.
+    Upload a base image to Supabase Storage.
+    
+    Args:
+        local_image_path (str): Path to the base image
+        camera_name (str): Name of the camera
+        lighting_condition (str): Current lighting condition
+    
+    Returns:
+        str or None: Public URL of the uploaded image or None if failed
     """
     try:
-        logger.info("Checking for pending images...")
-        for detection_type in ["owl_in_box", "owl_on_box", "owl_in_area"]:
-            snapshot_dir = os.path.join(SNAPSHOTS_DIR, detection_type)
-            if not os.path.exists(snapshot_dir):
-                continue
+        if not os.path.exists(local_image_path):
+            logger.error(f"Base image not found: {local_image_path}")
+            return None
 
-            for filename in os.listdir(snapshot_dir):
-                if filename.endswith(('.jpg', '.jpeg', '.png')):
-                    local_path = os.path.join(snapshot_dir, filename)
-                    logger.info(f"Found pending image: {local_path}")
-                    upload_image_to_supabase(local_path, detection_type)
+        # Generate filename with timestamp
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        filename = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{timestamp}.jpg"
+
+        # Determine MIME type
+        mime_type, _ = mimetypes.guess_type(local_image_path)
+        if not mime_type:
+            mime_type = "image/jpeg"
+        
+        logger.info(f"Uploading base image: {filename}")
+        
+        # Upload image to Supabase Storage
+        with open(local_image_path, "rb") as file:
+            response = supabase_client.storage.from_(SUPABASE_STORAGE["base_images"]).upload(
+                path=filename,
+                file=file,
+                file_options={"content-type": mime_type}
+            )
+
+        # Generate and return public URL
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
+        logger.info(f"Base image successfully uploaded: {public_url}")
+        
+        return public_url
 
     except Exception as e:
-        logger.error(f"Error processing pending images: {e}")
+        logger.error(f"Error uploading base image to Supabase: {e}")
+        return None
 
 # Example usage and testing
 if __name__ == "__main__":
     try:
-        logger.info("Starting image upload test...")
+        logger.info("Testing image upload functionality...")
         
-        # Test image upload
-        test_image_path = os.path.join(SNAPSHOTS_DIR, "owl_in_box", "test_image.jpg")
-        if os.path.exists(test_image_path):
-            uploaded_url = upload_image_to_supabase(test_image_path, "owl_in_box")
-            if uploaded_url:
-                logger.info("Test upload successful")
+        # Test comparison image upload
+        test_comparison_path = "/path/to/test/comparison.jpg"
+        if os.path.exists(test_comparison_path):
+            url = upload_comparison_image(test_comparison_path, "owl_in_box")
+            if url:
+                logger.info("Comparison image upload test successful")
             else:
-                logger.error("Test upload failed")
-        else:
-            logger.warning(f"Test image not found: {test_image_path}")
-
-        # Check for any pending uploads
-        upload_pending_images()
-        
+                logger.error("Comparison image upload test failed")
+                
+        # Test base image upload
+        test_base_path = "/path/to/test/base.jpg"
+        if os.path.exists(test_base_path):
+            url = upload_base_image(test_base_path, "Upper Patio Camera", "day")
+            if url:
+                logger.info("Base image upload test successful")
+            else:
+                logger.error("Base image upload test failed")
+                
     except Exception as e:
-        logger.error(f"Test failed: {e}")
+        logger.error(f"Upload tests failed: {e}")
         raise
