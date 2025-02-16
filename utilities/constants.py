@@ -4,16 +4,12 @@
 import os
 import json
 import pandas as pd
-from utilities.logging_utils import get_logger
+import logging
 
-logger = get_logger()
+# Base directory path definition
+BASE_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection"
 
-def get_base_dir():
-    """Get the base directory for local file storage"""
-    return "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection"
-
-# Base directory structure
-BASE_DIR = get_base_dir()
+# Directory structure
 LOCAL_FILES_DIR = os.path.join(BASE_DIR, "20_Local_Files")
 GIT_DIR = os.path.join(BASE_DIR, "10_GIT", "Owly-Fans-Motion-Detection")
 
@@ -77,9 +73,9 @@ def ensure_directories_exist():
     for directory in directories:
         try:
             os.makedirs(directory, exist_ok=True)
-            logger.info(f"Created/verified directory: {directory}")
+            logging.info(f"Created/verified directory: {directory}")
         except Exception as e:
-            logger.error(f"Failed to create directory {directory}: {e}")
+            logging.error(f"Failed to create directory {directory}: {e}")
             raise
 
 def validate_config_files():
@@ -117,11 +113,11 @@ def validate_config_files():
         if missing_columns:
             raise ValueError(f"Missing required columns in sunrise/sunset data: {missing_columns}")
             
-        logger.info("All configuration files validated successfully")
+        logging.info("All configuration files validated successfully")
         return True
         
     except Exception as e:
-        logger.error(f"Configuration validation failed: {e}")
+        logging.error(f"Configuration validation failed: {e}")
         return False
 
 def validate_system():
@@ -143,15 +139,20 @@ def validate_system():
         for alert_type, path in COMPARISON_IMAGE_PATHS.items():
             parent_dir = os.path.dirname(path)
             if not os.path.exists(parent_dir):
-                logger.error(f"Comparison image directory missing: {parent_dir}")
+                logging.error(f"Comparison image directory missing: {parent_dir}")
                 return False
                 
-        logger.info("System validation completed successfully")
+        logging.info("System validation completed successfully")
         return True
         
     except Exception as e:
-        logger.error(f"System validation failed: {e}")
+        logging.error(f"System validation failed: {e}")
         return False
 
+def get_base_image_filename(camera_name, lighting_condition, timestamp):
+    """Generate filename for base images"""
+    return f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
+
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     validate_system()
