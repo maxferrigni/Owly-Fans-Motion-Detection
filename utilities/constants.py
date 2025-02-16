@@ -35,11 +35,11 @@ CAMERA_MAPPINGS = {
     "Wyze Internal Camera": "Owl In Box"
 }
 
-# Camera-specific snapshot directories
-CAMERA_SNAPSHOT_DIRS = {
-    "Upper Patio Camera": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_area"),
-    "Bindy Patio Camera": os.path.join(IMAGE_COMPARISONS_DIR, "owl_on_box"),
-    "Wyze Internal Camera": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_box")
+# Camera-specific comparison image paths
+COMPARISON_IMAGE_PATHS = {
+    "Owl In Box": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_box_comparison.jpg"),
+    "Owl On Box": os.path.join(IMAGE_COMPARISONS_DIR, "owl_on_box_comparison.jpg"),
+    "Owl In Area": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_area_comparison.jpg")
 }
 
 # Supabase storage buckets
@@ -48,9 +48,10 @@ SUPABASE_STORAGE = {
     "base_images": "base_images"
 }
 
-def get_base_image_filename(camera_name, lighting_condition, timestamp):
-    """Generate consistent filename for base images"""
-    return f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
+def get_comparison_image_path(camera_name):
+    """Get the comparison image path for a given camera"""
+    alert_type = CAMERA_MAPPINGS.get(camera_name)
+    return COMPARISON_IMAGE_PATHS.get(alert_type)
 
 def ensure_directories_exist():
     """Create all necessary directories if they don't exist"""
@@ -58,8 +59,8 @@ def ensure_directories_exist():
         LOCAL_FILES_DIR,
         BASE_IMAGES_DIR,
         IMAGE_COMPARISONS_DIR,
-        LOGS_DIR,
-    ] + list(CAMERA_SNAPSHOT_DIRS.values())
+        LOGS_DIR
+    ]
 
     for directory in directories:
         try:
@@ -78,10 +79,10 @@ def validate_paths():
         if not os.path.exists(path):
             print(f"Configuration file missing: {path}")
 
-    # Log camera snapshot directories
-    print("Camera snapshot directories configuration:")
-    for camera, directory in CAMERA_SNAPSHOT_DIRS.items():
-        print(f"Camera: {camera} -> Directory: {directory}")
+    # Log comparison image paths
+    print("Comparison image paths configuration:")
+    for alert_type, path in COMPARISON_IMAGE_PATHS.items():
+        print(f"Alert Type: {alert_type} -> Path: {path}")
 
     # Check directories
     ensure_directories_exist()

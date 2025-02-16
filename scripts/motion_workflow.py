@@ -11,10 +11,8 @@ import glob
 # Import utilities
 from utilities.constants import (
     BASE_IMAGES_DIR,
-    CAMERA_SNAPSHOT_DIRS,
-    IMAGE_COMPARISONS_DIR,
-    get_base_image_filename,
-    ensure_directories_exist
+    get_comparison_image_path,
+    get_base_image_filename
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -47,11 +45,8 @@ def get_latest_base_image(camera_name, lighting_condition):
             f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_*.jpg"
         )
         
-        logger.debug(f"Looking for base images matching pattern: {pattern}")
-        
         # Get list of matching files
         matching_files = glob.glob(pattern)
-        logger.debug(f"Found matching base images: {matching_files}")
         
         if not matching_files:
             # Fall back to basic base image if no lighting-specific one exists
@@ -59,7 +54,6 @@ def get_latest_base_image(camera_name, lighting_condition):
                 BASE_IMAGES_DIR,
                 f"{camera_name.lower().replace(' ', '_')}_base.jpg"
             )
-            logger.debug(f"No lighting-specific base images found, trying basic pattern: {basic_pattern}")
             matching_files = glob.glob(basic_pattern)
             
             if not matching_files:
@@ -146,54 +140,34 @@ def detect_motion(base_image, new_image, config):
         logger.error(f"Error in motion detection: {e}")
         raise
 
-def save_snapshot(image, camera_name):
-    """Save the captured image as a snapshot"""
+def save_comparison_image(image, camera_name, motion_detected):
+    """Save the captured image as a comparison image"""
     try:
-        # Verify directories exist
-        ensure_directories_exist()
-        
-        # Debug logging for snapshot directory lookup
-        logger.debug(f"Looking for snapshot directory for camera: {camera_name}")
-        logger.debug(f"Available snapshot directories: {CAMERA_SNAPSHOT_DIRS}")
-        
-        # Get the snapshot directory for this camera
-        snapshot_dir = CAMERA_SNAPSHOT_DIRS.get(camera_name)
-        if not snapshot_dir:
-            error_msg = f"No snapshot directory configured for camera: {camera_name}"
+        # Get the comparison image path for this camera
+        comparison_path = get_comparison_image_path(camera_name)
+        if not comparison_path:
+            error_msg = f"No comparison image path configured for camera: {camera_name}"
             logger.error(error_msg)
-            logger.error(f"Camera name '{camera_name}' not found in mappings: {list(CAMERA_SNAPSHOT_DIRS.keys())}")
             raise ValueError(error_msg)
-            
-        logger.debug(f"Found snapshot directory: {snapshot_dir}")
+
+        # Create side-by-side comparison with base image
+        if motion_detected:
+            base_image = load_base_image(camera_name, get_current_lighting_condition())
+            comparison = Image.new('RGB', (image.width * 2, image.height))
+            comparison.paste(base_image, (0, 0))
+            comparison.paste(image, (image.width, 0))
+            comparison_image = comparison
+        else:
+            comparison_image = image
+
+        # Save the comparison image
+        comparison_image.save(comparison_path)
+        logger.info(f"Saved {'motion detection' if motion_detected else 'regular'} comparison image: {comparison_path}")
         
-        # Create dated subfolder
-        date_folder = datetime.now(PACIFIC_TIME).strftime('%Y%m%d')
-        dated_snapshot_dir = os.path.join(snapshot_dir, date_folder)
-        os.makedirs(dated_snapshot_dir, exist_ok=True)
-        logger.debug(f"Created/verified dated snapshot directory: {dated_snapshot_dir}")
-        
-        # Generate filename with timestamp
-        timestamp = datetime.now(PACIFIC_TIME).strftime('%H%M%S')
-        lighting_condition = get_current_lighting_condition()
-        snapshot_name = f"{timestamp}_{lighting_condition}.jpg"
-        
-        # Full path for snapshot
-        snapshot_path = os.path.join(dated_snapshot_dir, snapshot_name)
-        logger.debug(f"Saving snapshot to: {snapshot_path}")
-        
-        # Save the image
-        image.save(snapshot_path)
-        logger.info(f"Saved snapshot: {snapshot_path}")
-        
-        # Check if we should capture a new base image
-        if should_capture_base_image():
-            from capture_base_images import capture_base_images
-            capture_base_images(lighting_condition)
-        
-        return snapshot_path
+        return comparison_path
         
     except Exception as e:
-        logger.error(f"Error saving snapshot: {e}")
+        logger.error(f"Error saving comparison image: {e}")
         raise
 
 def process_camera(camera_name, config):
@@ -215,14 +189,15 @@ def process_camera(camera_name, config):
             config
         )
         
+        # Save comparison image
+        snapshot_path = save_comparison_image(new_image, camera_name, motion_detected)
+        
         if motion_detected:
-            snapshot_path = save_snapshot(new_image, camera_name)
             logger.info(
                 f"Motion detected for {camera_name} "
                 f"during {lighting_condition} condition"
             )
         else:
-            snapshot_path = ""
             logger.debug(f"No motion detected for {camera_name}")
         
         pixel_change = significant_pixels / total_pixels
@@ -232,7 +207,7 @@ def process_camera(camera_name, config):
             "status": status,
             "pixel_change": pixel_change,
             "luminance_change": avg_luminance_change,
-            "snapshot_path": snapshot_path,
+            "snapshot_path": snapshot_path if motion_detected else "",
             "lighting_condition": lighting_condition
         }
 
