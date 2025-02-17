@@ -94,7 +94,7 @@ def process_camera(camera_name, config, lighting_info=None):
     Args:
         camera_name (str): Name of the camera
         config (dict): Camera configuration
-        lighting_info (dict, optional): Pre-calculated lighting information
+        lighting_info (dict, optional): Current lighting information
         
     Returns:
         dict: Detection results
@@ -105,11 +105,14 @@ def process_camera(camera_name, config, lighting_info=None):
         # Get or use provided lighting condition
         if lighting_info is None:
             lighting_condition = get_current_lighting_condition()
-            logger.info(f"Current lighting condition: {lighting_condition}")
+            threshold_multiplier = get_luminance_threshold_multiplier()
         else:
-            lighting_condition = lighting_info["condition"]
+            lighting_condition = lighting_info['condition']
+            threshold_multiplier = lighting_info['threshold_multiplier']
+            
+        logger.info(f"Current lighting condition: {lighting_condition}")
         
-        # Load appropriate base image
+        # Load base image and capture new image
         base_image = get_latest_base_image(camera_name, lighting_condition)
         new_image = capture_real_image(config["roi"])
         
@@ -128,7 +131,7 @@ def process_camera(camera_name, config, lighting_info=None):
                 base_image, 
                 new_image, 
                 camera_name=config["alert_type"],
-                threshold=config["luminance_threshold"] * get_luminance_threshold_multiplier()
+                threshold=config["luminance_threshold"] * threshold_multiplier
             )
             
             # Get metrics from comparison image
@@ -155,7 +158,6 @@ def process_camera(camera_name, config, lighting_info=None):
             )
             
         return {
-            "camera": camera_name,
             "status": config["alert_type"] if motion_detected else "No Motion",
             "pixel_change": owl_info.get("pixel_change", 0.0) * 100 if owl_info else 0.0,
             "luminance_change": owl_info.get("luminance_change", 0.0) if owl_info else 0.0,
@@ -167,7 +169,6 @@ def process_camera(camera_name, config, lighting_info=None):
     except Exception as e:
         logger.error(f"Error processing {camera_name}: {e}")
         return {
-            "camera": camera_name,
             "status": "Error",
             "error_message": str(e),
             "pixel_change": 0.0,
@@ -179,7 +180,7 @@ def process_camera(camera_name, config, lighting_info=None):
 
 def process_cameras(camera_configs):
     """
-    Process all cameras in one batch, sharing lighting and threshold calculations.
+    Process all cameras in batch for efficient motion detection.
     
     Args:
         camera_configs (dict): Dictionary of camera configurations
@@ -190,6 +191,13 @@ def process_cameras(camera_configs):
     try:
         # Get lighting information once for all cameras
         lighting_condition = get_current_lighting_condition()
+        threshold_multiplier = get_luminance_threshold_multiplier()
+        
+        lighting_info = {
+            'condition': lighting_condition,
+            'threshold_multiplier': threshold_multiplier
+        }
+        
         logger.info(f"Processing cameras under {lighting_condition} condition")
         
         # Check if we need to capture new base images
@@ -197,13 +205,7 @@ def process_cameras(camera_configs):
             logger.info("Time to capture new base images")
             capture_base_images(lighting_condition)
         
-        # Pre-calculate lighting info
-        lighting_info = {
-            "condition": lighting_condition,
-            "threshold_multiplier": get_luminance_threshold_multiplier()
-        }
-        
-        # Process all cameras
+        # Process each camera with shared lighting info
         results = []
         for camera_name, config in camera_configs.items():
             try:
@@ -214,12 +216,7 @@ def process_cameras(camera_configs):
                 results.append({
                     "camera": camera_name,
                     "status": "Error",
-                    "error_message": str(e),
-                    "pixel_change": 0.0,
-                    "luminance_change": 0.0,
-                    "snapshot_path": "",
-                    "lighting_condition": "unknown",
-                    "detection_info": None
+                    "error_message": str(e)
                 })
         
         return results
