@@ -15,10 +15,11 @@ from utilities.constants import (
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
-    get_lighting_info,
+    get_current_lighting_condition,
     should_capture_base_image,
     get_luminance_threshold_multiplier
 )
+from utilities.owl_detection_utils import detect_owl_in_box
 from utilities.image_comparison_utils import create_comparison_image
 from capture_base_images import capture_base_images
 
@@ -85,149 +86,82 @@ def capture_real_image(roi):
         logger.error(f"Error capturing screenshot: {e}")
         raise
 
-def detect_motion(base_image, new_image, config, threshold_multiplier):
-    """
-    Compare images with lighting-adjusted thresholds.
-    
-    Args:
-        base_image (PIL.Image): Reference image
-        new_image (PIL.Image): Current captured image
-        config (dict): Camera configuration with thresholds
-        threshold_multiplier (float): Current lighting threshold multiplier
-    """
+def process_camera(camera_name, config):
+    """Process motion detection for a specific camera"""
     try:
-        # Calculate adjusted threshold
-        adjusted_luminance_threshold = config["luminance_threshold"] * threshold_multiplier
-        threshold_pixels = base_image.size[0] * base_image.size[1] * config["threshold_percentage"]
+        logger.info(f"Processing camera: {camera_name}")
         
-        # Create comparison image and get metrics
-        comparison_path = create_comparison_image(
-            base_image, 
-            new_image, 
-            camera_name=config["alert_type"],
-            threshold=adjusted_luminance_threshold
-        )
-        
-        # Get metrics from comparison image
-        diff_image = Image.open(comparison_path)
-        width = diff_image.size[0] // 3  # Get the size of one panel
-        diff_panel = diff_image.crop((width * 2, 0, width * 3, diff_image.height))
-        
-        # Count red pixels in difference panel
-        red_pixels = sum(1 for pixel in diff_panel.getdata() 
-                        if isinstance(pixel, tuple) and pixel[0] > 200 and pixel[1] < 100 and pixel[2] < 100)
-        
-        total_pixels = diff_panel.size[0] * diff_panel.size[1]
-        motion_detected = red_pixels > threshold_pixels
-        
-        # Calculate average luminance
-        luminance_values = [sum(pixel[:3])/3 for pixel in diff_panel.getdata()]
-        avg_luminance_change = sum(luminance_values) / len(luminance_values)
-        
-        # Log detection details
-        logger.debug(
-            f"Motion detection metrics - "
-            f"Adjusted Threshold: {adjusted_luminance_threshold}, "
-            f"Changed Pixels: {red_pixels}, "
-            f"Threshold Pixels: {threshold_pixels}, "
-            f"Average Luminance Change: {avg_luminance_change}"
-        )
-        
-        return motion_detected, red_pixels/total_pixels, avg_luminance_change
-        
-    except Exception as e:
-        logger.error(f"Error in motion detection: {e}")
-        raise
-
-def process_cameras(camera_configs):
-    """
-    Process all cameras in a single cycle, sharing lighting information.
-    
-    Args:
-        camera_configs (dict): Dictionary of camera configurations
-    
-    Returns:
-        list: List of detection results for each camera
-    """
-    try:
-        # Get lighting information once for all cameras
-        lighting_info = get_lighting_info()
-        if not lighting_info:
-            raise ValueError("Could not get lighting information")
-            
-        current_condition = lighting_info['condition']
-        logger.info(f"Processing cameras under {current_condition} condition")
+        # Get current lighting condition
+        lighting_condition = get_current_lighting_condition()
+        logger.info(f"Current lighting condition: {lighting_condition}")
         
         # Check if we need to capture new base images
         if should_capture_base_image():
             logger.info("Time to capture new base images")
-            capture_base_images(current_condition)
+            capture_base_images(lighting_condition)
         
-        # Get threshold multiplier once
-        threshold_multiplier = get_luminance_threshold_multiplier()
+        # Load appropriate base image
+        base_image = get_latest_base_image(camera_name, lighting_condition)
+        new_image = capture_real_image(config["roi"])
         
-        results = []
-        for camera_name, config in camera_configs.items():
-            try:
-                logger.info(f"Processing camera: {camera_name}")
-                
-                # Load base image and capture new image
-                base_image = get_latest_base_image(camera_name, current_condition)
-                new_image = capture_real_image(config["roi"])
-                
-                # Detect motion
-                motion_detected, pixel_change, avg_luminance_change = detect_motion(
-                    base_image,
-                    new_image,
-                    config,
-                    threshold_multiplier
-                )
-                
-                if motion_detected:
-                    logger.info(
-                        f"Motion detected for {camera_name} "
-                        f"during {current_condition} condition"
-                    )
-                
-                # Get the comparison image path
-                comparison_path = get_comparison_image_path(camera_name)
-                
-                results.append({
-                    "camera": camera_name,
-                    "status": config["alert_type"] if motion_detected else "No Motion",
-                    "pixel_change": pixel_change * 100,  # Convert to percentage
-                    "luminance_change": avg_luminance_change,
-                    "snapshot_path": comparison_path if motion_detected else "",
-                    "lighting_condition": current_condition
-                })
-                
-            except Exception as e:
-                logger.error(f"Error processing {camera_name}: {e}")
-                results.append({
-                    "camera": camera_name,
-                    "status": "Error",
-                    "error_message": str(e),
-                    "pixel_change": 0.0,
-                    "luminance_change": 0.0,
-                    "snapshot_path": "",
-                    "lighting_condition": "unknown"
-                })
+        # Handle different camera types
+        motion_detected = False
+        owl_info = None
         
-        return results
+        if config["alert_type"] == "Owl In Box":
+            # Use specialized owl detection for box camera
+            is_owl_present, detection_info = detect_owl_in_box(new_image, base_image)
+            motion_detected = is_owl_present
+            owl_info = detection_info
+        else:
+            # Create comparison image and get metrics
+            comparison_path = create_comparison_image(
+                base_image, 
+                new_image, 
+                camera_name=config["alert_type"],
+                threshold=config["luminance_threshold"] * get_luminance_threshold_multiplier()
+            )
+            
+            # Get metrics from comparison image
+            diff_image = Image.open(comparison_path)
+            width = diff_image.size[0] // 3  # Get the size of one panel
+            diff_panel = diff_image.crop((width * 2, 0, width * 3, diff_image.height))
+            
+            # Process metrics
+            pixels_array = np.array(diff_panel.convert('L'))
+            changed_pixels = np.sum(pixels_array > config["luminance_threshold"])
+            total_pixels = pixels_array.size
+            
+            motion_detected = (changed_pixels / total_pixels) > config["threshold_percentage"]
+            owl_info = {
+                "pixel_change": changed_pixels / total_pixels,
+                "luminance_change": np.mean(pixels_array),
+                "threshold_used": config["luminance_threshold"]
+            }
+        
+        if motion_detected:
+            logger.info(
+                f"Motion detected for {camera_name} "
+                f"during {lighting_condition} condition"
+            )
+            
+        return {
+            "status": config["alert_type"] if motion_detected else "No Motion",
+            "pixel_change": owl_info.get("pixel_change", 0.0) * 100 if owl_info else 0.0,
+            "luminance_change": owl_info.get("luminance_change", 0.0) if owl_info else 0.0,
+            "snapshot_path": get_comparison_image_path(camera_name) if motion_detected else "",
+            "lighting_condition": lighting_condition,
+            "detection_info": owl_info
+        }
 
     except Exception as e:
-        logger.error(f"Error in camera processing cycle: {e}")
-        raise
-
-# For backward compatibility
-def process_camera(camera_name, config):
-    """Process a single camera (legacy support)"""
-    results = process_cameras({camera_name: config})
-    return next((r for r in results if r["camera"] == camera_name), {
-        "status": "Error",
-        "error_message": "Camera not processed",
-        "pixel_change": 0.0,
-        "luminance_change": 0.0,
-        "snapshot_path": "",
-        "lighting_condition": "unknown"
-    })
+        logger.error(f"Error processing {camera_name}: {e}")
+        return {
+            "status": "Error",
+            "error_message": str(e),
+            "pixel_change": 0.0,
+            "luminance_change": 0.0,
+            "snapshot_path": "",
+            "lighting_condition": "unknown",
+            "detection_info": None
+        }
