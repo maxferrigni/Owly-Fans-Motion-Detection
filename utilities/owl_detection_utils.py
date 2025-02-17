@@ -1,6 +1,14 @@
 # File: utilities/owl_detection_utils.py
 # Purpose: Specialized detection algorithms for owl presence
 
+# Debug information
+import sys
+print("Debug - Python Path in owl_detection_utils.py:")
+print(f"Executable: {sys.executable}")
+print(f"Version: {sys.version}")
+print(f"Path: {sys.path}")
+
+# Main imports
 import cv2
 import numpy as np
 from PIL import Image
