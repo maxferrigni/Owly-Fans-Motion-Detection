@@ -34,47 +34,24 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     raise
 
-def get_subscribers(notification_type=None, owl_location=None):
+def get_subscribers():
     """
-    Get subscribers from Supabase database with optional filtering.
-    
-    Args:
-        notification_type (str, optional): Filter by "email" or "sms"
-        owl_location (str, optional): Filter by owl location preference
-            ("owl_in_box", "owl_on_box", "owl_in_area")
-    
-    Returns:
-        list: List of subscriber records
+    Get all subscribers from Supabase database.
     """
     try:
         query = supabase_client.table("subscribers").select("*")
         response = query.execute()
-        
+
         if not hasattr(response, 'data'):
             logger.error("Failed to retrieve subscribers")
             return []
-            
-        subscribers = response.data
-        
-        # Filter based on notification type
-        if notification_type == "email":
-            subscribers = [sub for sub in subscribers 
-                         if sub.get('email') and 
-                         sub.get('preferences', {}).get('email_notifications', True)]
-        elif notification_type == "sms":
-            subscribers = [sub for sub in subscribers 
-                         if sub.get('phone') and 
-                         sub.get('preferences', {}).get('sms_notifications', True)]
-        
-        # Filter based on owl location preference
-        if owl_location:
-            subscribers = [sub for sub in subscribers 
-                         if owl_location in sub.get('preferences', {}).get('notification_types', [])]
-        
-        logger.info(f"Retrieved {len(subscribers)} subscribers for {notification_type or 'all'} "
-                   f"notifications and {owl_location or 'all'} locations")
+
+        # Only return subscribers with a valid email
+        subscribers = [sub for sub in response.data if sub.get('email')]
+
+        logger.info(f"Retrieved {len(subscribers)} total subscribers")
         return subscribers
-        
+
     except Exception as e:
         logger.error(f"Error retrieving subscribers: {e}")
         return []
