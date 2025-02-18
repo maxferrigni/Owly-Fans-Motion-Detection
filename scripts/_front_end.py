@@ -175,44 +175,45 @@ class OwlApp:
             self.log_message("Test Mode Deactivated")
 
     def trigger_test_alert(self, alert_type):
-        """
-        Trigger a test alert for the specified type
-        
-        Args:
-            alert_type (str): Type of alert to test ("Owl In Box", "Owl On Box", "Owl In Area")
-        """
-        try:
-            self.log_message(f"Triggering test alert: {alert_type}")
-            self.alert_status.config(text=alert_type)
-            
-            # Create simulated detection result
-            detection_result = {
-                "status": alert_type,
-                "pixel_change": 50.0,  # Simulated values
-                "luminance_change": 40.0,
-                "snapshot_path": "",  # No actual image in test mode
-                "lighting_condition": "day",
-                "detection_info": {
-                    "confidence": 0.8,
-                    "is_test": True
-                }
+  
+    # Trigger a test alert for the specified type.
+    
+   # Args:
+         # alert_type (str): Type of alert to test ("Owl In Box", "Owl On Box", "Owl In Area")
+    
+    try:
+        self.log_message(f"Triggering test alert: {alert_type}")
+        self.alert_status.config(text=alert_type)
+
+        # Create simulated detection result
+        detection_result = {
+            "status": alert_type,
+            "pixel_change": 50.0,  # Simulated values
+            "luminance_change": 40.0,
+            "snapshot_path": "",  # No actual image in test mode
+            "lighting_condition": "day",
+            "detection_info": {
+                "confidence": 0.8,
+                "is_test": True
             }
-            
-            # Get camera name for this alert type
-            camera_name = next(
-                (name for name, type_ in CAMERA_MAPPINGS.items() 
-                 if type_ == alert_type),
-                "Test Camera"
-            )
-            
-            # Process the test detection (this will trigger alerts with appropriate hierarchy)
-            self.alert_manager.process_detection(camera_name, detection_result)
-            
-            self.log_message(f"Test alert processed: {alert_type}")
-            
-        except Exception as e:
-            self.log_message(f"Error triggering test alert: {e}")
-            messagebox.showerror("Test Error", f"Failed to trigger test alert: {e}")
+        }
+
+        # Get camera name for this alert type
+        camera_name = next(
+            (name for name, type_ in CAMERA_MAPPINGS.items() 
+             if type_ == alert_type),
+            "Test Camera"
+        )
+
+        # Ensure only the selected test alert is triggered, and prevent unintended alerts
+        self.alert_manager.process_detection(camera_name, detection_result)
+
+        self.log_message(f"Test alert processed: {alert_type}")
+
+    except Exception as e:
+        self.log_message(f"Error triggering test alert: {e}")
+        messagebox.showerror("Test Error", f"Failed to trigger test alert: {e}")
+
 
     def verify_directories(self):
         """Verify all required directories exist"""
