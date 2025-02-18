@@ -15,8 +15,9 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 # Import utilities
-from utilities.constants import SCRIPTS_DIR, ensure_directories_exist
+from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, CAMERA_MAPPINGS
 from utilities.logging_utils import get_logger
+from utilities.alert_manager import AlertManager
 
 class OwlApp:
     def __init__(self, root):
@@ -41,6 +42,9 @@ class OwlApp:
         
         # Store the path of main.py
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
+        
+        # Initialize alert manager
+        self.alert_manager = AlertManager()
         
         # Create GUI elements
         self._create_gui()
@@ -80,7 +84,7 @@ class OwlApp:
             width=20,
             bg='lightblue'
         )
-        self.update_button.pack(pady=10)
+        self.update_button.pack(pady=5)
 
         # Add Start and Stop buttons
         self.start_button = tk.Button(
@@ -89,7 +93,7 @@ class OwlApp:
             command=self.start_script, 
             width=20
         )
-        self.start_button.pack(pady=10)
+        self.start_button.pack(pady=5)
 
         self.stop_button = tk.Button(
             self.root, 
@@ -98,7 +102,56 @@ class OwlApp:
             state=tk.DISABLED, 
             width=20
         )
-        self.stop_button.pack(pady=10)
+        self.stop_button.pack(pady=5)
+        
+        # Add Test Mode frame
+        self.test_mode_frame = tk.Frame(self.root)
+        self.test_mode_frame.pack(pady=5)
+        
+        # Test Mode toggle button
+        self.test_mode_button = tk.Button(
+            self.test_mode_frame,
+            text="Enter Test Mode",
+            command=self.toggle_test_mode,
+            width=20,
+            bg='yellow'
+        )
+        self.test_mode_button.pack(side=tk.LEFT, padx=5)
+        
+        # Test alert buttons frame (initially hidden)
+        self.test_buttons_frame = tk.Frame(self.test_mode_frame)
+        self.test_buttons = {
+            "Owl In Box": tk.Button(
+                self.test_buttons_frame,
+                text="Test Owl In Box",
+                command=lambda: self.trigger_test_alert("Owl In Box"),
+                width=15
+            ),
+            "Owl On Box": tk.Button(
+                self.test_buttons_frame,
+                text="Test Owl On Box",
+                command=lambda: self.trigger_test_alert("Owl On Box"),
+                width=15
+            ),
+            "Owl In Area": tk.Button(
+                self.test_buttons_frame,
+                text="Test Owl In Area",
+                command=lambda: self.trigger_test_alert("Owl In Area"),
+                width=15
+            )
+        }
+        
+        for btn in self.test_buttons.values():
+            btn.pack(side=tk.LEFT, padx=5)
+        
+        # Add alert status label
+        self.alert_status = tk.Label(
+            self.root,
+            text="",
+            fg='red',
+            font=('Arial', 14, 'bold')
+        )
+        self.alert_status.place(relx=0.7, rely=0.05)  # Top right position
 
         # Add a log display
         self.log_display = scrolledtext.ScrolledText(
@@ -108,6 +161,58 @@ class OwlApp:
             wrap=tk.WORD
         )
         self.log_display.pack(pady=10)
+
+    def toggle_test_mode(self):
+        """Toggle test mode on/off"""
+        if self.test_mode_button.cget("text") == "Enter Test Mode":
+            self.test_mode_button.config(text="Exit Test Mode", bg='orange')
+            self.test_buttons_frame.pack(side=tk.LEFT)
+            self.log_message("Test Mode Activated")
+        else:
+            self.test_mode_button.config(text="Enter Test Mode", bg='yellow')
+            self.test_buttons_frame.pack_forget()
+            self.alert_status.config(text="")
+            self.log_message("Test Mode Deactivated")
+
+    def trigger_test_alert(self, alert_type):
+        """
+        Trigger a test alert for the specified type
+        
+        Args:
+            alert_type (str): Type of alert to test ("Owl In Box", "Owl On Box", "Owl In Area")
+        """
+        try:
+            self.log_message(f"Triggering test alert: {alert_type}")
+            self.alert_status.config(text=alert_type)
+            
+            # Create simulated detection result
+            detection_result = {
+                "status": alert_type,
+                "pixel_change": 50.0,  # Simulated values
+                "luminance_change": 40.0,
+                "snapshot_path": "",  # No actual image in test mode
+                "lighting_condition": "day",
+                "detection_info": {
+                    "confidence": 0.8,
+                    "is_test": True
+                }
+            }
+            
+            # Get camera name for this alert type
+            camera_name = next(
+                (name for name, type_ in CAMERA_MAPPINGS.items() 
+                 if type_ == alert_type),
+                "Test Camera"
+            )
+            
+            # Process the test detection (this will trigger alerts with appropriate hierarchy)
+            self.alert_manager.process_detection(camera_name, detection_result)
+            
+            self.log_message(f"Test alert processed: {alert_type}")
+            
+        except Exception as e:
+            self.log_message(f"Error triggering test alert: {e}")
+            messagebox.showerror("Test Error", f"Failed to trigger test alert: {e}")
 
     def verify_directories(self):
         """Verify all required directories exist"""
@@ -209,6 +314,7 @@ class OwlApp:
                 self.start_button.config(state=tk.NORMAL)
                 self.stop_button.config(state=tk.DISABLED)
                 self.update_button.config(state=tk.NORMAL)
+                self.alert_status.config(text="")  # Clear alert status
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}")
 
