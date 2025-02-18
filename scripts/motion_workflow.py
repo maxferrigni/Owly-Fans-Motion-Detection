@@ -22,10 +22,12 @@ from utilities.time_utils import (
 )
 from utilities.owl_detection_utils import detect_owl_in_box
 from utilities.image_comparison_utils import create_comparison_image
+from utilities.alert_manager import AlertManager
 from capture_base_images import capture_base_images
 
-# Initialize logger
+# Initialize logger and alert manager
 logger = get_logger()
+alert_manager = AlertManager()
 
 # Set timezone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
@@ -210,6 +212,10 @@ def process_cameras(camera_configs):
         for camera_name, config in camera_configs.items():
             try:
                 result = process_camera(camera_name, config, lighting_info)
+                
+                # Process detection for alerts
+                alert_manager.process_detection(camera_name, result)
+                
                 results.append(result)
             except Exception as e:
                 logger.error(f"Error processing camera {camera_name}: {e}")
