@@ -3,6 +3,7 @@
 
 from datetime import datetime, timedelta
 import pytz
+import time
 from utilities.logging_utils import get_logger
 from alert_email import send_email_alert
 
@@ -49,17 +50,33 @@ class AlertManager:
         
         return time_since_last > cooldown
 
-    def _should_suppress_alert(self, alert_type):
-        """Check if alert should be suppressed due to higher priority alert"""
-        alert_priority = self.ALERT_HIERARCHY[alert_type]
-        
-        # Check if any higher priority alerts are active
-        for other_type, other_priority in self.ALERT_HIERARCHY.items():
-            if other_priority > alert_priority and self.current_states[other_type]:
-                logger.info(f"Suppressing {alert_type} alert due to active {other_type}")
+   def _should_suppress_alert(self, alert_type):
+    """
+    Determines if an alert should be suppressed based on alert hierarchy.
+    If a higher-priority alert has already been sent recently, suppress lower-priority alerts.
+    """
+    # Suppression window (e.g., 5 minutes)
+    SUPPRESSION_WINDOW = 300  # in seconds
+
+    # Alert priority mapping
+    priority = {
+        "Owl In Box": 3,   # 🏆 Highest priority
+        "Owl On Box": 2,   # 🥈 Medium priority
+        "Owl In Area": 1   # 🥉 Lowest priority
+    }
+
+    # Get current time
+    current_time = time.time()
+
+    # Iterate through active alerts and check priority
+    for other_type, timestamp in self.active_alerts.items():
+        if priority.get(other_type, 0) > priority.get(alert_type, 0):
+            time_diff = current_time - timestamp
+            if time_diff < SUPPRESSION_WINDOW:
+                logger.info(f"Suppressing {alert_type} alert due to recent {other_type} alert")
                 return True
-        
-        return False
+
+    return False
 
     def process_detection(self, camera_name, detection_result):
         """
