@@ -19,49 +19,51 @@ from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, CAMERA_MA
 from utilities.logging_utils import get_logger
 from utilities.alert_manager import AlertManager
 
+
 class OwlApp:
     def __init__(self, root):
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        
+
         # Set window size and position for secondary monitor
         self.root.geometry("704x455+-1920+0")
         self.root.update_idletasks()  # Force geometry update
-        
+
         # Prevent window resizing
         self.root.resizable(False, False)
-        
+
         # Force window to stay on top initially
         self.root.attributes('-topmost', True)
         self.root.update()
         self.root.attributes('-topmost', False)
-        
+
         # Initialize variables
         self.script_process = None
-        
+
         # Store the path of main.py
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
-        
+
         # Initialize alert manager
         self.alert_manager = AlertManager()
-        
+
         # Create GUI elements
         self._create_gui()
-        
+
         # Initialize logger after GUI creation so we can capture output
         self.logger = get_logger()
         sys.stdout = self.LogRedirector(self)
         sys.stderr = self.LogRedirector(self)
-        
+
         # Ensure directories exist
         self.verify_directories()
-        
+
         # Log initialization
         self.log_message("GUI initialized and ready")
-        
+
         # Update UI
         self.root.update()
+
 
     class LogRedirector:
         def __init__(self, app):
@@ -74,12 +76,13 @@ class OwlApp:
         def flush(self):
             pass
 
+
     def _create_gui(self):
         """Create all GUI elements"""
         # Add Update System button at the top
         self.update_button = tk.Button(
-            self.root, 
-            text="Update System", 
+            self.root,
+            text="Update System",
             command=self.update_system,
             width=20,
             bg='lightblue'
@@ -88,26 +91,26 @@ class OwlApp:
 
         # Add Start and Stop buttons
         self.start_button = tk.Button(
-            self.root, 
-            text="Start Motion Detection", 
-            command=self.start_script, 
+            self.root,
+            text="Start Motion Detection",
+            command=self.start_script,
             width=20
         )
         self.start_button.pack(pady=5)
 
         self.stop_button = tk.Button(
-            self.root, 
-            text="Stop Motion Detection", 
-            command=self.stop_script, 
-            state=tk.DISABLED, 
+            self.root,
+            text="Stop Motion Detection",
+            command=self.stop_script,
+            state=tk.DISABLED,
             width=20
         )
         self.stop_button.pack(pady=5)
-        
+
         # Add Test Mode frame
         self.test_mode_frame = tk.Frame(self.root)
         self.test_mode_frame.pack(pady=5)
-        
+
         # Test Mode toggle button
         self.test_mode_button = tk.Button(
             self.test_mode_frame,
@@ -117,7 +120,7 @@ class OwlApp:
             bg='yellow'
         )
         self.test_mode_button.pack(side=tk.LEFT, padx=5)
-        
+
         # Test alert buttons frame (initially hidden)
         self.test_buttons_frame = tk.Frame(self.test_mode_frame)
         self.test_buttons = {
@@ -140,10 +143,10 @@ class OwlApp:
                 width=15
             )
         }
-        
+
         for btn in self.test_buttons.values():
             btn.pack(side=tk.LEFT, padx=5)
-        
+
         # Add alert status label
         self.alert_status = tk.Label(
             self.root,
@@ -155,12 +158,13 @@ class OwlApp:
 
         # Add a log display
         self.log_display = scrolledtext.ScrolledText(
-            self.root, 
-            width=80, 
-            height=15, 
+            self.root,
+            width=80,
+            height=15,
             wrap=tk.WORD
         )
         self.log_display.pack(pady=10)
+
 
     def toggle_test_mode(self):
         """Toggle test mode on/off"""
@@ -174,45 +178,45 @@ class OwlApp:
             self.alert_status.config(text="")
             self.log_message("Test Mode Deactivated")
 
+
     def trigger_test_alert(self, alert_type):
-  
-    # Trigger a test alert for the specified type.
-    
-   # Args:
-         # alert_type (str): Type of alert to test ("Owl In Box", "Owl On Box", "Owl In Area")
-    
-    try:
-        self.log_message(f"Triggering test alert: {alert_type}")
-        self.alert_status.config(text=alert_type)
+        """Trigger a test alert for the specified type.
 
-        # Create simulated detection result
-        detection_result = {
-            "status": alert_type,
-            "pixel_change": 50.0,  # Simulated values
-            "luminance_change": 40.0,
-            "snapshot_path": "",  # No actual image in test mode
-            "lighting_condition": "day",
-            "detection_info": {
-                "confidence": 0.8,
-                "is_test": True
+        Args:
+            alert_type (str): Type of alert to test ("Owl In Box", "Owl On Box", "Owl In Area")
+        """
+        try:
+            self.log_message(f"Triggering test alert: {alert_type}")
+            self.alert_status.config(text=alert_type)
+
+            # Create simulated detection result
+            detection_result = {
+                "status": alert_type,
+                "pixel_change": 50.0,  # Simulated values
+                "luminance_change": 40.0,
+                "snapshot_path": "",  # No actual image in test mode
+                "lighting_condition": "day",
+                "detection_info": {
+                    "confidence": 0.8,
+                    "is_test": True
+                }
             }
-        }
 
-        # Get camera name for this alert type
-        camera_name = next(
-            (name for name, type_ in CAMERA_MAPPINGS.items() 
-             if type_ == alert_type),
-            "Test Camera"
-        )
+            # Get camera name for this alert type
+            camera_name = next(
+                (name for name, type_ in CAMERA_MAPPINGS.items()
+                 if type_ == alert_type),
+                "Test Camera"
+            )
 
-        # Ensure only the selected test alert is triggered, and prevent unintended alerts
-        self.alert_manager.process_detection(camera_name, detection_result)
+            # Ensure only the selected test alert is triggered, and prevent unintended alerts
+            self.alert_manager.process_detection(camera_name, detection_result)
 
-        self.log_message(f"Test alert processed: {alert_type}")
+            self.log_message(f"Test alert processed: {alert_type}")
 
-    except Exception as e:
-        self.log_message(f"Error triggering test alert: {e}")
-        messagebox.showerror("Test Error", f"Failed to trigger test alert: {e}")
+        except Exception as e:
+            self.log_message(f"Error triggering test alert: {e}")
+            messagebox.showerror("Test Error", f"Failed to trigger test alert: {e}")
 
 
     def verify_directories(self):
@@ -224,6 +228,7 @@ class OwlApp:
         except Exception as e:
             self.log_message(f"Error verifying directories: {e}")
             messagebox.showerror("Error", f"Failed to verify directories: {e}")
+
 
     def update_system(self):
         """Update the system from git repository"""
@@ -276,6 +281,7 @@ class OwlApp:
             self.log_message(f"Error during update: {e}")
             messagebox.showerror("Update Error", f"An error occurred: {e}")
 
+
     def restart_application(self):
         """Restart the entire application"""
         self.root.destroy()
@@ -283,13 +289,14 @@ class OwlApp:
         script_path = os.path.join(SCRIPTS_DIR, "_front_end.py")
         os.execv(python_executable, [python_executable, script_path])
 
+
     def start_script(self):
         """Start the motion detection script"""
         if not self.script_process:
             self.log_message("Starting motion detection script...")
             try:
                 cmd = [sys.executable, self.main_script_path]
-                
+
                 self.script_process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -303,6 +310,7 @@ class OwlApp:
                 threading.Thread(target=self.refresh_logs, daemon=True).start()
             except Exception as e:
                 self.log_message(f"Error starting script: {e}")
+
 
     def stop_script(self):
         """Stop the motion detection script"""
@@ -319,6 +327,7 @@ class OwlApp:
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}")
 
+
     def refresh_logs(self):
         """Refresh the log display with new output"""
         try:
@@ -328,6 +337,7 @@ class OwlApp:
                     self.log_message(line.strip())
         except Exception as e:
             self.log_message(f"Error reading logs: {e}")
+
 
     def log_message(self, message):
         """Add a message to the log display"""
@@ -339,15 +349,16 @@ class OwlApp:
         except Exception as e:
             print(f"Error logging message: {e}")
 
+
 if __name__ == "__main__":
     try:
         root = tk.Tk()
         logger = get_logger()
         logger.info("Tkinter root window created")
-        
+
         # Force a short delay to ensure window manager is ready
         root.after(100)
-        
+
         app = OwlApp(root)
         logger.info(f"Final window geometry: {root.geometry()}")
         root.mainloop()
