@@ -10,6 +10,13 @@
             "civil_twilight": 25,
             "astronomical_twilight": 20,
             "night": 15
+        },
+        "motion_detection": {
+            "min_circularity": 0.5,
+            "min_aspect_ratio": 0.5,
+            "max_aspect_ratio": 2.0,
+            "min_area_ratio": 0.2,
+            "brightness_threshold": 20
         }
     },
     "Bindy Patio Camera": {
@@ -23,6 +30,13 @@
             "civil_twilight": 30,
             "astronomical_twilight": 20,
             "night": 15
+        },
+        "motion_detection": {
+            "min_circularity": 0.6,
+            "min_aspect_ratio": 0.7,
+            "max_aspect_ratio": 1.5,
+            "min_area_ratio": 0.15,
+            "brightness_threshold": 30
         }
     },
     "Wyze Internal Camera": {
@@ -36,6 +50,13 @@
             "civil_twilight": 8,
             "astronomical_twilight": 6,
             "night": 5
+        },
+        "motion_detection": {
+            "min_circularity": 0.5,
+            "min_aspect_ratio": 0.5,
+            "max_aspect_ratio": 2.0,
+            "min_area_ratio": 0.2,
+            "brightness_threshold": 20
         }
     }
 }
