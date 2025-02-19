@@ -61,17 +61,13 @@ class AlertManager:
         SUPPRESSION_WINDOW = 300  # 5 minutes
 
         # Alert priority mapping
-        priority = {
-            "Owl In Box": 3,  # Highest priority
-            "Owl On Box": 2,
-            "Owl In Area": 1  # Lowest priority
-        }
+        priority = self.ALERT_HIERARCHY.get(alert_type, 0)
 
         current_time = time.time()
 
         # Check for any active higher-priority alerts
         for other_type, timestamp in self.active_alerts.items():
-            if priority.get(other_type, 0) > priority.get(alert_type, 0):
+            if self.ALERT_HIERARCHY.get(other_type, 0) > priority:
                 time_diff = current_time - timestamp
                 if time_diff < SUPPRESSION_WINDOW:
                     logger.info(f"Suppressing {alert_type} alert due to recent {other_type} alert")
@@ -106,7 +102,9 @@ class AlertManager:
             if not self._should_suppress_alert(alert_type):
                 if self._can_send_alert(alert_type):
                     logger.info(f"Sending alert for {alert_type}")
+                    # Send email alert only for now
                     send_email_alert(camera_name, alert_type)
+                    
                     self.last_alert_times[alert_type] = datetime.now(pytz.timezone('America/Los_Angeles'))
                     self.active_alerts[alert_type] = time.time()  # Mark as active
                 else:
