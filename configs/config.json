@@ -14,15 +14,15 @@
     },
     "Bindy Patio Camera": {
         "roi": [1441, 350, 1636, 526],
-        "threshold_percentage": 0.05,
-        "luminance_threshold": 20,
+        "threshold_percentage": 0.02,
+        "luminance_threshold": 40,
         "alert_type": "Owl On Box",
         "interval_seconds": 3,
         "lighting_thresholds": {
-            "day": 20,
-            "civil_twilight": 15,
-            "astronomical_twilight": 10,
-            "night": 8
+            "day": 40,
+            "civil_twilight": 30,
+            "astronomical_twilight": 20,
+            "night": 15
         }
     },
     "Wyze Internal Camera": {
