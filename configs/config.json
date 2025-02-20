@@ -1,24 +1,24 @@
 {
-    "Upper Patio Camera": {
-        "roi": [395, 454, 900, 680],
-        "threshold_percentage": 0.005,
-        "luminance_threshold": 30,
-        "alert_type": "Owl In Area",
-        "interval_seconds": 3,
-        "lighting_thresholds": {
-            "day": 30,
-            "civil_twilight": 25,
-            "astronomical_twilight": 20,
-            "night": 15
-        },
-        "motion_detection": {
-            "min_circularity": 0.5,
-            "min_aspect_ratio": 0.5,
-            "max_aspect_ratio": 2.0,
-            "min_area_ratio": 0.2,
-            "brightness_threshold": 20
-        }
+   "Upper Patio Camera": {
+    "roi": [395, 454, 900, 680],
+    "threshold_percentage": 0.002,
+    "luminance_threshold": 25,
+    "alert_type": "Owl In Area",
+    "interval_seconds": 3,
+    "lighting_thresholds": {
+        "day": 30,
+        "civil_twilight": 25,
+        "astronomical_twilight": 20,
+        "night": 15
     },
+    "motion_detection": {
+        "min_circularity": 0.6,
+        "min_aspect_ratio": 0.8,
+        "max_aspect_ratio": 1.3,
+        "min_area_ratio": 0.01,
+        "brightness_threshold": 25
+    }
+},
     "Bindy Patio Camera": {
         "roi": [1441, 350, 1636, 526],
         "threshold_percentage": 0.04,
