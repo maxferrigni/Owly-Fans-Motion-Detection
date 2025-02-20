@@ -2,6 +2,7 @@
 # Purpose: Handle motion detection with adaptive lighting conditions
 
 import os
+import time
 from datetime import datetime
 from PIL import Image
 import pyautogui
@@ -31,6 +32,47 @@ alert_manager = AlertManager()
 
 # Set timezone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
+
+def initialize_system(camera_configs):
+    """
+    Initialize the system with fresh base images and proper delays.
+    
+    Args:
+        camera_configs (dict): Dictionary of camera configurations
+        
+    Returns:
+        bool: True if initialization successful
+    """
+    try:
+        logger.info("Starting system initialization...")
+        
+        # Initial delay to let cameras stabilize
+        time.sleep(5)
+        logger.info("Initial stabilization delay complete")
+        
+        # Get current lighting condition
+        lighting_condition = get_current_lighting_condition()
+        logger.info(f"Current lighting condition: {lighting_condition}")
+        
+        # Force capture of fresh base images
+        logger.info("Capturing fresh base images...")
+        results = capture_base_images(lighting_condition, force_capture=True)
+        
+        # Verify base images were captured successfully
+        if not all(result.get('status') == 'success' for result in results):
+            failed_cameras = [r['camera'] for r in results if r.get('status') != 'success']
+            logger.error(f"Failed to capture base images for cameras: {failed_cameras}")
+            return False
+            
+        # Additional delay after base image capture
+        time.sleep(3)
+        logger.info("Base image capture and stabilization complete")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error during system initialization: {e}")
+        return False
 
 def get_latest_base_image(camera_name, lighting_condition):
     """
@@ -206,6 +248,8 @@ def process_cameras(camera_configs):
         if should_capture_base_image():
             logger.info("Time to capture new base images")
             capture_base_images(lighting_condition)
+            # Add delay after base image capture
+            time.sleep(3)
         
         # Process each camera with shared lighting info
         results = []
