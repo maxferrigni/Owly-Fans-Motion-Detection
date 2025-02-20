@@ -35,7 +35,7 @@ PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
 
 def initialize_system(camera_configs):
     """
-    Initialize the system with fresh base images and proper delays.
+    Initialize the motion detection system.
     
     Args:
         camera_configs (dict): Dictionary of camera configurations
@@ -44,34 +44,53 @@ def initialize_system(camera_configs):
         bool: True if initialization successful
     """
     try:
-        logger.info("Starting system initialization...")
+        logger.info("Initializing motion detection system...")
         
-        # Initial delay to let cameras stabilize
-        time.sleep(5)
-        logger.info("Initial stabilization delay complete")
+        # Verify all camera ROIs are valid
+        for camera_name, config in camera_configs.items():
+            roi = config.get("roi")
+            if not roi or len(roi) != 4:
+                logger.error(f"Invalid ROI configuration for {camera_name}")
+                return False
+                
+            # Verify ROI values are valid
+            if not all(isinstance(x, (int, float)) for x in roi):
+                logger.error(f"Invalid ROI values for {camera_name}")
+                return False
         
-        # Get current lighting condition
-        lighting_condition = get_current_lighting_condition()
-        logger.info(f"Current lighting condition: {lighting_condition}")
-        
-        # Force capture of fresh base images
-        logger.info("Capturing fresh base images...")
-        results = capture_base_images(lighting_condition, force_capture=True)
-        
-        # Verify base images were captured successfully
-        if not all(result.get('status') == 'success' for result in results):
-            failed_cameras = [r['camera'] for r in results if r.get('status') != 'success']
-            logger.error(f"Failed to capture base images for cameras: {failed_cameras}")
-            return False
-            
-        # Additional delay after base image capture
-        time.sleep(3)
-        logger.info("Base image capture and stabilization complete")
-        
+        logger.info("Camera configurations validated")
         return True
         
     except Exception as e:
-        logger.error(f"Error during system initialization: {e}")
+        logger.error(f"Error during motion detection initialization: {e}")
+        return False
+
+def verify_base_image(base_image_path, camera_name):
+    """
+    Verify a base image exists and is valid.
+    
+    Args:
+        base_image_path (str): Path to base image
+        camera_name (str): Name of the camera
+        
+    Returns:
+        bool: True if image is valid
+    """
+    try:
+        if not os.path.exists(base_image_path):
+            logger.error(f"Base image not found for {camera_name}: {base_image_path}")
+            return False
+            
+        # Try to open and verify the image
+        with Image.open(base_image_path) as img:
+            if not img.size or img.size[0] < 10 or img.size[1] < 10:
+                logger.error(f"Invalid base image dimensions for {camera_name}")
+                return False
+                
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error verifying base image for {camera_name}: {e}")
         return False
 
 def get_latest_base_image(camera_name, lighting_condition):
@@ -97,6 +116,7 @@ def get_latest_base_image(camera_name, lighting_condition):
             # If no base image exists, capture new ones
             logger.info(f"No base image found for {camera_name}. Capturing new base images...")
             capture_base_images(lighting_condition, force_capture=True)
+            time.sleep(3)  # Allow system to stabilize after capture
             
             # Try to find the base image again
             matching_files = [f for f in os.listdir(BASE_IMAGES_DIR) 
@@ -111,8 +131,15 @@ def get_latest_base_image(camera_name, lighting_condition):
         ))
         
         base_image_path = os.path.join(BASE_IMAGES_DIR, latest_file)
-        logger.info(f"Using base image: {base_image_path}")
         
+        # Verify the base image
+        if not verify_base_image(base_image_path, camera_name):
+            logger.error(f"Invalid base image for {camera_name}, forcing new capture")
+            capture_base_images(lighting_condition, force_capture=True)
+            time.sleep(3)
+            return get_latest_base_image(camera_name, lighting_condition)
+            
+        logger.info(f"Using base image: {base_image_path}")
         return Image.open(base_image_path).convert("RGB")
         
     except Exception as e:
