@@ -26,7 +26,7 @@ class OwlApp:
         self.root.title("Owl Monitoring App")
 
         # Set window size and position for secondary monitor
-        self.root.geometry("704x505")  # Increased height for new controls
+        self.root.geometry("704x455+-1920+0")  # Increased height for new controls
         self.root.update_idletasks()  # Force geometry update
 
         # Prevent window resizing
