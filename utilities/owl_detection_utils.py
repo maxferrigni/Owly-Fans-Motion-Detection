@@ -196,21 +196,12 @@ def find_owl_contours(binary_mask):
         contour_data = []
         for i, contour in enumerate(contours):
             metrics = analyze_contour_shape(contour, compartment_area)
-            
-            # Filter for owl-like characteristics
-            if (metrics["circularity"] > 0.5 and  # Fairly round
-                0.5 < metrics["aspect_ratio"] < 2.0 and  # Not too elongated
-                metrics["area_ratio"] > 0.2):  # Large enough
-                
-                logger.info(f"Found owl-like contour {i+1} - Area Ratio: {metrics['area_ratio']:.2f}")
-                contour_data.append({
-                    "contour": contour,
-                    "metrics": metrics
-                })
-            else:
-                logger.debug(f"Rejected contour {i+1} - Does not match owl characteristics")
+            contour_data.append({
+                "contour": contour,
+                "metrics": metrics
+            })
         
-        logger.info(f"Found {len(contour_data)} owl-like contours")
+        logger.info(f"Analyzed {len(contour_data)} contours")
         return contour_data
         
     except Exception as e:
@@ -241,7 +232,7 @@ def check_brightness(contour, image, base_image):
         base_brightness = np.mean(base_image[mask == 255])
         
         brightness_diff = current_brightness - base_brightness
-        is_brighter = brightness_diff > 20  # Threshold for significant brightness
+        is_brighter = brightness_diff > 20  # Base threshold for significant brightness
         
         logger.info(f"Brightness analysis - Current: {current_brightness:.2f}, "
                    f"Base: {base_brightness:.2f}, Difference: {brightness_diff:.2f}, "
@@ -253,13 +244,14 @@ def check_brightness(contour, image, base_image):
         logger.error(f"Error checking brightness: {e}")
         raise
 
-def detect_owl_in_box(new_image, base_image):
+def detect_owl_in_box(new_image, base_image, config):
     """
     Main function to detect owl presence in box.
     
     Args:
         new_image (PIL.Image): New captured image
         base_image (PIL.Image): Base reference image
+        config (dict): Camera configuration parameters
         
     Returns:
         tuple: (bool, dict) - (is_owl_present, detection_info)
@@ -273,6 +265,14 @@ def detect_owl_in_box(new_image, base_image):
         # Split into compartments
         new_left, new_right = split_box_image(new_cv)
         base_left, base_right = split_box_image(base_cv)
+        
+        # Get configuration parameters
+        motion_config = config.get("motion_detection", {})
+        min_circularity = motion_config.get("min_circularity", 0.5)
+        min_aspect_ratio = motion_config.get("min_aspect_ratio", 0.5)
+        max_aspect_ratio = motion_config.get("max_aspect_ratio", 2.0)
+        min_area_ratio = motion_config.get("min_area_ratio", 0.2)
+        brightness_threshold = motion_config.get("brightness_threshold", 20)
         
         # Analyze differences in left compartment
         binary_mask, diff_metrics = analyze_compartment_differences(
@@ -292,10 +292,17 @@ def detect_owl_in_box(new_image, base_image):
                 base_left
             )
             
-            if is_brighter:
+            # Apply configured thresholds
+            metrics = data["metrics"]
+            if (is_brighter and
+                metrics["circularity"] > min_circularity and
+                min_aspect_ratio < metrics["aspect_ratio"] < max_aspect_ratio and
+                metrics["area_ratio"] > min_area_ratio and
+                brightness_diff > brightness_threshold):
+                
                 logger.info(f"Found bright owl-like candidate {i+1}")
                 owl_candidates.append({
-                    **data["metrics"],
+                    **metrics,
                     "brightness_diff": brightness_diff
                 })
         
@@ -325,7 +332,16 @@ if __name__ == "__main__":
     try:
         test_new = Image.open("test_new.jpg")
         test_base = Image.open("test_base.jpg")
-        result, info = detect_owl_in_box(test_new, test_base)
+        test_config = {
+            "motion_detection": {
+                "min_circularity": 0.5,
+                "min_aspect_ratio": 0.5,
+                "max_aspect_ratio": 2.0,
+                "min_area_ratio": 0.2,
+                "brightness_threshold": 20
+            }
+        }
+        result, info = detect_owl_in_box(test_new, test_base, test_config)
         print(f"Detection result: {result}")
         print(f"Detection info: {info}")
     except Exception as e:

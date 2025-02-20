@@ -1,27 +1,27 @@
 {
-   "Upper Patio Camera": {
-    "roi": [395, 454, 900, 680],
-    "threshold_percentage": 0.002,
-    "luminance_threshold": 25,
-    "alert_type": "Owl In Area",
-    "interval_seconds": 3,
-    "lighting_thresholds": {
-        "day": 30,
-        "civil_twilight": 25,
-        "astronomical_twilight": 20,
-        "night": 15
+    "Upper Patio Camera": {
+        "roi": [395, 454, 900, 680],
+        "threshold_percentage": 0.05,
+        "luminance_threshold": 40,
+        "alert_type": "Owl In Area",
+        "interval_seconds": 3,
+        "lighting_thresholds": {
+            "day": 30,
+            "civil_twilight": 25,
+            "astronomical_twilight": 20,
+            "night": 15
+        },
+        "motion_detection": {
+            "min_circularity": 0.6,
+            "min_aspect_ratio": 0.8,
+            "max_aspect_ratio": 1.3,
+            "min_area_ratio": 0.01,
+            "brightness_threshold": 35
+        }
     },
-    "motion_detection": {
-        "min_circularity": 0.6,
-        "min_aspect_ratio": 0.8,
-        "max_aspect_ratio": 1.3,
-        "min_area_ratio": 0.01,
-        "brightness_threshold": 25
-    }
-},
     "Bindy Patio Camera": {
         "roi": [1441, 350, 1636, 526],
-        "threshold_percentage": 0.04,
+        "threshold_percentage": 0.05,
         "luminance_threshold": 35,
         "alert_type": "Owl On Box",
         "interval_seconds": 3,
@@ -32,12 +32,12 @@
             "night": 15
         },
         "motion_detection": {
-    "min_circularity": 0.7,
-    "min_aspect_ratio": 0.8,
-    "max_aspect_ratio": 1.3,
-    "min_area_ratio": 0.1,
-    "brightness_threshold": 40
-}
+            "min_circularity": 0.7,
+            "min_aspect_ratio": 0.8,
+            "max_aspect_ratio": 1.3,
+            "min_area_ratio": 0.1,
+            "brightness_threshold": 40
+        }
     },
     "Wyze Internal Camera": {
         "roi": [-1899, 698, -1255, 1039],
