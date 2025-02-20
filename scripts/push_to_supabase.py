@@ -1,4 +1,4 @@
-=# File: push_to_supabase.py
+# File: push_to_supabase.py
 # Purpose: Log owl detection data to Supabase database and manage subscribers
 
 import os
