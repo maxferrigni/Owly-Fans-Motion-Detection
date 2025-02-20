@@ -6,8 +6,11 @@ import pytz
 import time
 from utilities.logging_utils import get_logger
 from alert_email import send_email_alert
-from alert_text import send_text_alert
-from alert_email_to_text import send_email_to_text
+
+# NOTE: Twilio SMS notifications are temporarily disabled
+# TODO: Re-enable these imports and functionality when ready to implement SMS
+# from alert_text import send_text_alert
+# from alert_email_to_text import send_email_to_text
 
 logger = get_logger()
 
@@ -71,19 +74,20 @@ class AlertManager:
         if self._can_send_alert(alert_type):
             logger.info(f"Sending alert for {alert_type}")
             
-            # Send primary notifications
+            # Send email notification
             send_email_alert(camera_name, alert_type)
-            send_text_alert(camera_name, alert_type)
+            
+            # NOTE: SMS notifications are temporarily disabled
+            # TODO: Re-enable when ready to implement SMS
+            # try:
+            #     send_text_alert(camera_name, alert_type)
+            #     send_email_to_text(camera_name, alert_type)
+            # except Exception as e:
+            #     logger.error(f"SMS notification failed: {e}")
             
             # Update tracking
             self.last_alert_times[alert_type] = datetime.now(pytz.timezone('America/Los_Angeles'))
             self.active_alerts[alert_type] = time.time()
-            
-            # Try backup notification if needed
-            try:
-                send_email_to_text(camera_name, alert_type)
-            except Exception as e:
-                logger.error(f"Backup notification failed: {e}")
 
     def process_detection(self, camera_name, detection_result):
         """
