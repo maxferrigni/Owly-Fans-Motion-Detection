@@ -2,7 +2,7 @@
 # Purpose: Graphical user interface for the Owl Monitoring System
 
 import tkinter as tk
-from tkinter import scrolledtext, messagebox
+from tkinter import scrolledtext, messagebox, ttk
 import subprocess
 import threading
 import os
@@ -26,7 +26,7 @@ class OwlApp:
         self.root.title("Owl Monitoring App")
 
         # Set window size and position for secondary monitor
-        self.root.geometry("704x455+-1920+0")
+        self.root.geometry("704x505")  # Increased height for new controls
         self.root.update_idletasks()  # Force geometry update
 
         # Prevent window resizing
@@ -40,6 +40,8 @@ class OwlApp:
         # Initialize variables
         self.script_process = None
         self.test_mode = False
+        self.alert_delay_enabled = tk.BooleanVar(value=True)  # Default to enabled
+        self.alert_delay_minutes = tk.StringVar(value="30")  # Default 30 minutes
 
         # Store the path of main.py
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
@@ -105,6 +107,34 @@ class OwlApp:
         )
         self.stop_button.pack(pady=5)
 
+        # Add Alert Delay frame
+        self.alert_delay_frame = tk.Frame(self.root)
+        self.alert_delay_frame.pack(pady=5)
+
+        # Alert Delay toggle button
+        self.alert_delay_button = tk.Checkbutton(
+            self.alert_delay_frame,
+            text="Alert Delay",
+            variable=self.alert_delay_enabled,
+            command=self.toggle_alert_delay,
+            width=10
+        )
+        self.alert_delay_button.pack(side=tk.LEFT, padx=5)
+
+        # Alert Delay minutes entry
+        self.alert_delay_entry = ttk.Entry(
+            self.alert_delay_frame,
+            textvariable=self.alert_delay_minutes,
+            width=5
+        )
+        self.alert_delay_entry.pack(side=tk.LEFT)
+
+        # Minutes label
+        tk.Label(
+            self.alert_delay_frame,
+            text="minutes"
+        ).pack(side=tk.LEFT, padx=5)
+
         # Add Test Mode frame
         self.test_mode_frame = tk.Frame(self.root)
         self.test_mode_frame.pack(pady=5)
@@ -163,6 +193,27 @@ class OwlApp:
         )
         self.log_display.pack(pady=10)
 
+    def toggle_alert_delay(self):
+        """Handle alert delay toggle"""
+        try:
+            if self.alert_delay_enabled.get():
+                delay = int(self.alert_delay_minutes.get())
+                if delay < 1:
+                    messagebox.showwarning("Invalid Delay", "Delay must be at least 1 minute")
+                    self.alert_delay_minutes.set("1")
+                    delay = 1
+                self.alert_manager.set_alert_delay(delay)
+                self.alert_delay_entry.config(state='normal')
+                self.log_message(f"Alert delay enabled: {delay} minutes")
+            else:
+                self.alert_delay_entry.config(state='disabled')
+                self.alert_manager.set_alert_delay(1)  # Minimum delay when disabled
+                self.log_message("Alert delay disabled")
+        except ValueError:
+            messagebox.showerror("Error", "Please enter a valid number of minutes")
+            self.alert_delay_minutes.set("30")
+            self.alert_delay_enabled.set(True)
+
     def toggle_test_mode(self):
         """Toggle test mode on/off"""
         self.test_mode = not self.test_mode
@@ -208,9 +259,13 @@ class OwlApp:
                 }
             }
 
-            # Process only this specific test alert
-            self.alert_manager.process_detection(camera_name, detection_result)
-            self.log_message(f"Test alert processed: {alert_type}")
+            # Process test alert
+            alert_sent = self.alert_manager.process_detection(camera_name, detection_result)
+            
+            if alert_sent:
+                self.log_message(f"Test alert sent: {alert_type}")
+            else:
+                self.log_message(f"Test alert blocked by delay: {alert_type}")
 
         except Exception as e:
             self.log_message(f"Error triggering test alert: {e}")

@@ -1,4 +1,4 @@
-# File: push_to_supabase.py
+=# File: push_to_supabase.py
 # Purpose: Log owl detection data to Supabase database and manage subscribers
 
 import os
@@ -56,6 +56,39 @@ def get_subscribers():
         logger.error(f"Error retrieving subscribers: {e}")
         return []
 
+def get_last_alert_time(alert_type):
+    """
+    Get the timestamp of the last alert sent for a specific type.
+    
+    Args:
+        alert_type (str): Type of alert to check ("Owl In Box", "Owl On Box", "Owl In Area")
+        
+    Returns:
+        datetime or None: Timestamp of last alert or None if no previous alert
+    """
+    try:
+        # Build query based on alert type
+        query = supabase_client.table("owl_activity_log").select("created_at")
+        
+        if alert_type == "Owl In Box":
+            query = query.eq("owl_in_box", True)
+        elif alert_type == "Owl On Box":
+            query = query.eq("owl_on_box", True)
+        else:  # Owl In Area
+            query = query.eq("owl_in_area", True)
+            
+        query = query.eq("alert_sent", True).order("created_at", desc=True).limit(1)
+        
+        response = query.execute()
+        
+        if response.data and len(response.data) > 0:
+            return datetime.datetime.fromisoformat(response.data[0]['created_at'].replace('Z', '+00:00'))
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error getting last alert time: {e}")
+        return None
+
 def push_log_to_supabase(log_data):
     """
     Push motion detection logs to Supabase database.
@@ -88,7 +121,8 @@ def format_log_entry(
     owl_on_box, pixel_change_owl_on_box, luminance_change_owl_on_box, 
     owl_on_box_image_url, owl_on_box_image_comparison_url,
     owl_in_area, pixel_change_owl_in_area, luminance_change_owl_in_area, 
-    owl_in_area_image_url, owl_in_area_image_comparison_url
+    owl_in_area_image_url, owl_in_area_image_comparison_url,
+    alert_sent=False  # New parameter to track if alert was sent
 ):
     """
     Format the log entry for Supabase database.
@@ -116,6 +150,8 @@ def format_log_entry(
             "luminance_change_owl_in_area": luminance_change_owl_in_area,
             "owl_in_area_image_url": owl_in_area_image_url,
             "owl_in_area_image_comparison_url": owl_in_area_image_comparison_url,
+            
+            "alert_sent": alert_sent  # Track if alert was sent
         }
         
         logger.debug(f"Formatted log entry: {log_entry}")
@@ -131,13 +167,17 @@ if __name__ == "__main__":
         logger.info("Testing Supabase connection...")
         
         # Test subscriber retrieval
-        email_subscribers = get_subscribers(notification_type="email")
-        logger.info(f"Found {len(email_subscribers)} email subscribers")
+        email_subscribers = get_subscribers()
+        logger.info(f"Found {len(email_subscribers)} subscribers")
         
-        sms_subscribers = get_subscribers(notification_type="sms")
-        logger.info(f"Found {len(sms_subscribers)} SMS subscribers")
+        # Test last alert time retrieval
+        last_alert = get_last_alert_time("Owl In Box")
+        if last_alert:
+            logger.info(f"Last Owl In Box alert was sent at: {last_alert}")
+        else:
+            logger.info("No previous Owl In Box alerts found")
         
-        # Test log upload
+        # Test log upload with alert tracking
         sample_log = format_log_entry(
             owl_in_box=True, pixel_change_owl_in_box=5.2, 
             luminance_change_owl_in_box=12.3, 
@@ -152,7 +192,9 @@ if __name__ == "__main__":
             owl_in_area=True, pixel_change_owl_in_area=7.5, 
             luminance_change_owl_in_area=10.2, 
             owl_in_area_image_url="example.com/owl3.jpg", 
-            owl_in_area_image_comparison_url="example.com/owl_compare3.jpg"
+            owl_in_area_image_comparison_url="example.com/owl_compare3.jpg",
+            
+            alert_sent=True  # Indicate alert was sent
         )
         
         push_log_to_supabase(sample_log)

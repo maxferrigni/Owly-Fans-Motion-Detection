@@ -46,51 +46,74 @@ def initialize_system(camera_configs):
     try:
         logger.info("Initializing motion detection system...")
         
-        # Verify all camera ROIs are valid
-        for camera_name, config in camera_configs.items():
-            roi = config.get("roi")
-            if not roi or len(roi) != 4:
-                logger.error(f"Invalid ROI configuration for {camera_name}")
-                return False
-                
-            # Verify ROI values are valid
-            if not all(isinstance(x, (int, float)) for x in roi):
-                logger.error(f"Invalid ROI values for {camera_name}")
-                return False
-        
-        logger.info("Camera configurations validated")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error during motion detection initialization: {e}")
-        return False
-
-def verify_base_image(base_image_path, camera_name):
-    """
-    Verify a base image exists and is valid.
-    
-    Args:
-        base_image_path (str): Path to base image
-        camera_name (str): Name of the camera
-        
-    Returns:
-        bool: True if image is valid
-    """
-    try:
-        if not os.path.exists(base_image_path):
-            logger.error(f"Base image not found for {camera_name}: {base_image_path}")
+        # Verify camera configurations
+        if not camera_configs:
+            logger.error("No camera configurations provided")
             return False
             
-        # Try to open and verify the image
-        with Image.open(base_image_path) as img:
-            if not img.size or img.size[0] < 10 or img.size[1] < 10:
-                logger.error(f"Invalid base image dimensions for {camera_name}")
+        # Check for required ROIs
+        for camera_name, config in camera_configs.items():
+            if "roi" not in config or not config["roi"]:
+                logger.error(f"Missing ROI configuration for {camera_name}")
                 return False
                 
+        # Verify base images directory exists
+        if not os.path.exists(BASE_IMAGES_DIR):
+            logger.error("Base images directory not found")
+            return False
+            
+        # Motion detection system initialized successfully
+        logger.info("Motion detection system initialization complete")
         return True
         
     except Exception as e:
-        logger.error(f"Error verifying base image for {camera_name}: {e}")
+        logger.error(f"Error during motion detection system initialization: {e}")
+        return False
+
+def verify_base_images(lighting_condition):
+    """
+    Verify that all necessary base images exist and are recent.
+    
+    Args:
+        lighting_condition (str): Current lighting condition
+        
+    Returns:
+        bool: True if all base images are valid
+    """
+    try:
+        logger.info("Verifying base images...")
+        
+        # Check for base images
+        base_images = os.listdir(BASE_IMAGES_DIR)
+        if not base_images:
+            logger.info("No base images found")
+            return False
+            
+        # Check for each camera
+        for camera_name in CAMERA_MAPPINGS.keys():
+            base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
+            matching_files = [f for f in base_images if f.startswith(base_pattern)]
+            
+            if not matching_files:
+                logger.info(f"No base image found for {camera_name}")
+                return False
+                
+            # Check age of most recent base image
+            latest_file = max(matching_files, key=lambda f: os.path.getctime(
+                os.path.join(BASE_IMAGES_DIR, f)
+            ))
+            file_age = time.time() - os.path.getctime(os.path.join(BASE_IMAGES_DIR, latest_file))
+            
+            # If base image is more than 24 hours old, consider it invalid
+            if file_age > 86400:  # 24 hours in seconds
+                logger.info(f"Base image for {camera_name} is too old")
+                return False
+                
+        logger.info("Base image verification complete")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error verifying base images: {e}")
         return False
 
 def get_latest_base_image(camera_name, lighting_condition):
@@ -116,7 +139,6 @@ def get_latest_base_image(camera_name, lighting_condition):
             # If no base image exists, capture new ones
             logger.info(f"No base image found for {camera_name}. Capturing new base images...")
             capture_base_images(lighting_condition, force_capture=True)
-            time.sleep(3)  # Allow system to stabilize after capture
             
             # Try to find the base image again
             matching_files = [f for f in os.listdir(BASE_IMAGES_DIR) 
@@ -131,15 +153,8 @@ def get_latest_base_image(camera_name, lighting_condition):
         ))
         
         base_image_path = os.path.join(BASE_IMAGES_DIR, latest_file)
-        
-        # Verify the base image
-        if not verify_base_image(base_image_path, camera_name):
-            logger.error(f"Invalid base image for {camera_name}, forcing new capture")
-            capture_base_images(lighting_condition, force_capture=True)
-            time.sleep(3)
-            return get_latest_base_image(camera_name, lighting_condition)
-            
         logger.info(f"Using base image: {base_image_path}")
+        
         return Image.open(base_image_path).convert("RGB")
         
     except Exception as e:
@@ -271,12 +286,11 @@ def process_cameras(camera_configs):
         
         logger.info(f"Processing cameras under {lighting_condition} condition")
         
-        # Check if we need to capture new base images
-        if should_capture_base_image():
-            logger.info("Time to capture new base images")
-            capture_base_images(lighting_condition)
-            # Add delay after base image capture
-            time.sleep(3)
+        # Verify base images are valid
+        if not verify_base_images(lighting_condition):
+            logger.info("Base images need to be updated")
+            capture_base_images(lighting_condition, force_capture=True)
+            time.sleep(3)  # Allow system to stabilize after capture
         
         # Process each camera with shared lighting info
         results = []
