@@ -124,7 +124,7 @@ def process_camera(camera_name, config, lighting_info=None):
         
         if config["alert_type"] == "Owl In Box":
             # Use specialized owl detection for box camera
-            is_owl_present, detection_info = detect_owl_in_box(new_image, base_image)
+            is_owl_present, detection_info = detect_owl_in_box(new_image, base_image, config)
             motion_detected = is_owl_present
             owl_info = detection_info
         else:
