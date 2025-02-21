@@ -6,6 +6,7 @@ import pytz
 import time
 from utilities.logging_utils import get_logger
 from alert_email import send_email_alert
+from alert_email_to_text import send_text_alert
 from push_to_supabase import get_last_alert_time
 
 logger = get_logger()
@@ -111,8 +112,9 @@ class AlertManager:
         if self._can_send_alert(alert_type):
             logger.info(f"Sending alert for {alert_type}")
             
-            # Send email notification
+            # Send both email and text notifications
             send_email_alert(camera_name, alert_type)
+            send_text_alert(camera_name, alert_type)
             
             # Update tracking
             self.last_alert_times[alert_type] = datetime.now(pytz.timezone('America/Los_Angeles'))
@@ -155,9 +157,7 @@ class AlertManager:
         if is_test:
             if self._can_send_alert(alert_type):
                 logger.info(f"Sending test alert for {alert_type}")
-                send_email_alert(camera_name, alert_type)
-                self.last_alert_times[alert_type] = datetime.now(pytz.timezone('America/Los_Angeles'))
-                alert_sent = True
+                alert_sent = self._send_alert(camera_name, alert_type)
             return alert_sent
 
         # For real alerts, enforce hierarchy
