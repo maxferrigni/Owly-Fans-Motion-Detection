@@ -53,7 +53,7 @@ def get_subscribers(notification_type=None, owl_location=None):
         if notification_type == "sms":
             query = query.eq("sms_alerts", True).not_.is_("phone", "null")
         elif notification_type == "email":
-            query = query.eq("email_alerts", True).not_.is_("email", "null")
+            query = supabase_client.table("subscribers").select("*").filter("email_alerts", "eq", True).filter("email", "neq", None)
         
         # Execute query
         response = query.execute()
