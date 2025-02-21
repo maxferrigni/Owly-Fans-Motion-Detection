@@ -83,6 +83,17 @@ def send_single_text(message, phone_number, recipient_name=None):
         recipient_name (str, optional): Recipient's name for personalization
     """
     try:
+        # Validate phone number format
+        if not is_valid_phone_number(phone_number):
+            logger.error(f"Invalid phone number format: {phone_number}")
+            return
+
+        # Format phone number consistently
+        formatted_phone = format_phone_number(phone_number)
+        if not formatted_phone:
+            logger.error(f"Could not format phone number: {phone_number}")
+            return
+
         # Personalize message if name is available
         if recipient_name:
             message = f"Hi {recipient_name}, {message}"
@@ -91,9 +102,9 @@ def send_single_text(message, phone_number, recipient_name=None):
         twilio_client.messages.create(
             body=message,
             from_=TWILIO_PHONE_NUMBER,
-            to=phone_number
+            to=formatted_phone
         )
-        logger.info(f"SMS sent successfully to {phone_number}")
+        logger.info(f"SMS sent successfully to {formatted_phone}")
 
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
@@ -151,7 +162,15 @@ if __name__ == "__main__":
     # Test SMS functionality
     try:
         logger.info("Testing SMS alert system...")
+        
+        # Test case 1: Owl In Box alert
+        send_text_alert("Wyze Internal Camera", "Owl In Box")
+        time.sleep(2)  # Wait between tests
+        
+        # Test case 2: Owl In Area alert
         send_text_alert("Upper Patio Camera", "Owl In Area")
-        logger.info("SMS test complete")
+        
+        logger.info("SMS tests complete")
     except Exception as e:
         logger.error(f"SMS test failed: {e}")
+        raise

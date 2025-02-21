@@ -45,8 +45,8 @@ def send_email_alert(camera_name, alert_type):
             body = (f"Motion has been detected at {camera_name}. "
                    f"Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
 
-        # Get subscribers who want email notifications for this alert type
-        subscribers = get_subscribers()
+        # Get subscribers who want email notifications
+        subscribers = get_subscribers(notification_type="email")
 
         if subscribers:
             logger.info(f"Sending email alerts to {len(subscribers)} subscribers")

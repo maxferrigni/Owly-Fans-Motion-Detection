@@ -34,22 +34,36 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     raise
 
-def get_subscribers():
+def get_subscribers(notification_type=None, owl_location=None):
     """
-    Get all subscribers from Supabase database.
+    Get subscribers based on notification type and preferences.
+    
+    Args:
+        notification_type (str, optional): Type of notification ("email" or "sms")
+        owl_location (str, optional): Type of owl detection for filtering
+        
+    Returns:
+        list: List of subscriber records
     """
     try:
-        query = supabase_client.table("subscribers").select("*")
+        # Start with base query
+        query = supabase_client.table("subscribers")
+        
+        # Filter based on notification type and valid contact info
+        if notification_type == "sms":
+            query = query.eq("sms_alerts", True).not_.is_("phone", "null")
+        elif notification_type == "email":
+            query = query.eq("email_alerts", True).not_.is_("email", "null")
+        
+        # Execute query
         response = query.execute()
-
+        
         if not hasattr(response, 'data'):
             logger.error("Failed to retrieve subscribers")
             return []
-
-        # Only return subscribers with a valid email
-        subscribers = [sub for sub in response.data if sub.get('email')]
-
-        logger.info(f"Retrieved {len(subscribers)} total subscribers")
+            
+        subscribers = response.data
+        logger.info(f"Retrieved {len(subscribers)} {notification_type} subscribers")
         return subscribers
 
     except Exception as e:
@@ -122,7 +136,7 @@ def format_log_entry(
     owl_on_box_image_url, owl_on_box_image_comparison_url,
     owl_in_area, pixel_change_owl_in_area, luminance_change_owl_in_area, 
     owl_in_area_image_url, owl_in_area_image_comparison_url,
-    alert_sent=False  # New parameter to track if alert was sent
+    alert_sent=False
 ):
     """
     Format the log entry for Supabase database.
@@ -151,7 +165,7 @@ def format_log_entry(
             "owl_in_area_image_url": owl_in_area_image_url,
             "owl_in_area_image_comparison_url": owl_in_area_image_comparison_url,
             
-            "alert_sent": alert_sent  # Track if alert was sent
+            "alert_sent": alert_sent
         }
         
         logger.debug(f"Formatted log entry: {log_entry}")
@@ -166,9 +180,12 @@ if __name__ == "__main__":
     try:
         logger.info("Testing Supabase connection...")
         
-        # Test subscriber retrieval
-        email_subscribers = get_subscribers()
-        logger.info(f"Found {len(email_subscribers)} subscribers")
+        # Test subscriber retrieval for both notification types
+        email_subscribers = get_subscribers(notification_type="email")
+        logger.info(f"Found {len(email_subscribers)} email subscribers")
+        
+        sms_subscribers = get_subscribers(notification_type="sms")
+        logger.info(f"Found {len(sms_subscribers)} SMS subscribers")
         
         # Test last alert time retrieval
         last_alert = get_last_alert_time("Owl In Box")
@@ -194,7 +211,7 @@ if __name__ == "__main__":
             owl_in_area_image_url="example.com/owl3.jpg", 
             owl_in_area_image_comparison_url="example.com/owl_compare3.jpg",
             
-            alert_sent=True  # Indicate alert was sent
+            alert_sent=True
         )
         
         push_log_to_supabase(sample_log)
