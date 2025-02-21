@@ -1,5 +1,5 @@
 # File: _front_end.py
-# Purpose: Graphical user interface for the Owl Monitoring System
+# Purpose: Main GUI for the Owl Monitoring System
 
 import tkinter as tk
 from tkinter import scrolledtext, messagebox, ttk
@@ -14,37 +14,25 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-# Import utilities
-from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, CAMERA_MAPPINGS
+# Import utilities and modules
+from utilities.constants import SCRIPTS_DIR, ensure_directories_exist
 from utilities.logging_utils import get_logger
 from utilities.alert_manager import AlertManager
+from test_interface import TestInterface
 
 class OwlApp:
     def __init__(self, root):
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-
-        # Set window size and position for secondary monitor
-        self.root.geometry("704x455+-1920+0")  # Increased height for new controls
-        self.root.update_idletasks()  # Force geometry update
-
-        # Prevent window resizing
+        self.root.geometry("800x455+-1920+0")  # Increased width for better spacing
+        self.root.update_idletasks()
         self.root.resizable(False, False)
-
-        # Force window to stay on top initially
-        self.root.attributes('-topmost', True)
-        self.root.update()
-        self.root.attributes('-topmost', False)
 
         # Initialize variables
         self.script_process = None
-        self.test_mode = False
-        self.alert_delay_enabled = tk.BooleanVar(value=True)  # Default to enabled
-        self.alert_delay_minutes = tk.StringVar(value="30")  # Default 30 minutes
-        self.active_test_button = None  # Track currently pressed test button
-
-        # Store the path of main.py
+        self.alert_delay_enabled = tk.BooleanVar(value=True)
+        self.alert_delay_minutes = tk.StringVar(value="30")
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         # Initialize alert manager
@@ -53,52 +41,52 @@ class OwlApp:
         # Create GUI elements
         self._create_gui()
 
-        # Initialize logger after GUI creation so we can capture output
+        # Initialize logger
         self.logger = get_logger()
         sys.stdout = self.LogRedirector(self)
         sys.stderr = self.LogRedirector(self)
 
+        # Initialize test interface
+        self.test_interface = TestInterface(self.root, self.logger, self.alert_manager)
+
         # Ensure directories exist
         self.verify_directories()
-
-        # Log initialization
         self.log_message("GUI initialized and ready")
-
-        # Update UI
-        self.root.update()
 
     class LogRedirector:
         def __init__(self, app):
             self.app = app
 
         def write(self, message):
-            if message.strip():  # Only log non-empty messages
+            if message.strip():
                 self.app.log_message(message.strip())
 
         def flush(self):
             pass
 
     def _create_gui(self):
-        """Create all GUI elements"""
-        # Add Update System button at the top
+        """Create main GUI elements"""
+        # Update System button
         self.update_button = tk.Button(
             self.root,
             text="Update System",
             command=self.update_system,
             width=20,
             bg='lightblue',
-            activebackground='skyblue'
+            activebackground='skyblue',
+            font=('Arial', 10)
         )
         self.update_button.pack(pady=5)
 
-        # Add Start and Stop buttons
+        # Motion Detection buttons
         self.start_button = tk.Button(
             self.root,
             text="Start Motion Detection",
             command=self.start_script,
             width=20,
             bg='lightgreen',
-            activebackground='palegreen'
+            activebackground='palegreen',
+            font=('Arial', 10)
         )
         self.start_button.pack(pady=5)
 
@@ -109,15 +97,15 @@ class OwlApp:
             state=tk.DISABLED,
             width=20,
             bg='salmon',
-            activebackground='lightcoral'
+            activebackground='lightcoral',
+            font=('Arial', 10)
         )
         self.stop_button.pack(pady=5)
 
-        # Add Alert Delay frame
+        # Alert Delay frame
         self.alert_delay_frame = tk.Frame(self.root)
         self.alert_delay_frame.pack(pady=5)
 
-        # Alert Delay toggle button
         self.alert_delay_button = tk.Checkbutton(
             self.alert_delay_frame,
             text="Alert Delay",
@@ -127,7 +115,6 @@ class OwlApp:
         )
         self.alert_delay_button.pack(side=tk.LEFT, padx=5)
 
-        # Alert Delay minutes entry
         self.alert_delay_entry = ttk.Entry(
             self.alert_delay_frame,
             textvariable=self.alert_delay_minutes,
@@ -135,87 +122,12 @@ class OwlApp:
         )
         self.alert_delay_entry.pack(side=tk.LEFT)
 
-        # Minutes label
         tk.Label(
             self.alert_delay_frame,
             text="minutes"
         ).pack(side=tk.LEFT, padx=5)
 
-# SPLIT HERE
-
-# Add Test Mode frame
-        self.test_mode_frame = tk.Frame(self.root)
-        self.test_mode_frame.pack(pady=5)
-
-        # Test Mode toggle button
-        self.test_mode_button = tk.Button(
-            self.test_mode_frame,
-            text="Enter Test Mode",
-            command=self.toggle_test_mode,
-            width=20,
-            bg='yellow',
-            activebackground='khaki'
-        )
-        self.test_mode_button.pack(side=tk.LEFT, padx=5)
-
-        # Test alert buttons frame (initially hidden)
-        self.test_buttons_frame = tk.Frame(self.test_mode_frame)
-        
-        # Style configuration for test buttons
-        button_style = {
-            "width": 15,
-            "relief": tk.RAISED,
-            "bd": 2,
-            "padx": 5,
-            "pady": 3
-        }
-
-        self.test_buttons = {
-            "Owl In Box": tk.Button(
-                self.test_buttons_frame,
-                text="Test Owl In Box",
-                command=lambda: self.trigger_test_alert("Owl In Box"),
-                bg='lightblue',
-                activebackground='skyblue',
-                **button_style
-            ),
-            "Owl On Box": tk.Button(
-                self.test_buttons_frame,
-                text="Test Owl On Box",
-                command=lambda: self.trigger_test_alert("Owl On Box"),
-                bg='lightgreen',
-                activebackground='palegreen',
-                **button_style
-            ),
-            "Owl In Area": tk.Button(
-                self.test_buttons_frame,
-                text="Test Owl In Area",
-                command=lambda: self.trigger_test_alert("Owl In Area"),
-                bg='lightyellow',
-                activebackground='khaki',
-                **button_style
-            )
-        }
-
-        for btn in self.test_buttons.values():
-            btn.pack(side=tk.LEFT, padx=5)
-            # Bind enter/leave events for hover effect
-            btn.bind('<Enter>', lambda e, b=btn: self._on_button_hover(b, True))
-            btn.bind('<Leave>', lambda e, b=btn: self._on_button_hover(b, False))
-            # Bind press/release events for click effect
-            btn.bind('<Button-1>', lambda e, b=btn: self._on_button_press(b))
-            btn.bind('<ButtonRelease-1>', lambda e, b=btn: self._on_button_release(b))
-
-        # Add alert status label
-        self.alert_status = tk.Label(
-            self.root,
-            text="",
-            fg='red',
-            font=('Arial', 14, 'bold')
-        )
-        self.alert_status.place(relx=0.7, rely=0.05)  # Top right position
-
-        # Add a log display
+        # Log display
         self.log_display = scrolledtext.ScrolledText(
             self.root,
             width=80,
@@ -223,26 +135,6 @@ class OwlApp:
             wrap=tk.WORD
         )
         self.log_display.pack(pady=10)
-
-    def _on_button_hover(self, button, entering):
-        """Handle button hover effects"""
-        if entering:
-            button.config(relief=tk.GROOVE)
-        else:
-            button.config(relief=tk.RAISED)
-
-    def _on_button_press(self, button):
-        """Handle button press effects"""
-        self.active_test_button = button
-        button.config(relief=tk.SUNKEN)
-        # Schedule button release after 200ms for visual feedback
-        self.root.after(200, lambda: self._on_button_release(button))
-
-    def _on_button_release(self, button):
-        """Handle button release effects"""
-        if button == self.active_test_button:
-            button.config(relief=tk.RAISED)
-            self.active_test_button = None
 
     def toggle_alert_delay(self):
         """Handle alert delay toggle"""
@@ -258,77 +150,12 @@ class OwlApp:
                 self.log_message(f"Alert delay enabled: {delay} minutes")
             else:
                 self.alert_delay_entry.config(state='disabled')
-                self.alert_manager.set_alert_delay(1)  # Minimum delay when disabled
+                self.alert_manager.set_alert_delay(1)
                 self.log_message("Alert delay disabled")
         except ValueError:
             messagebox.showerror("Error", "Please enter a valid number of minutes")
             self.alert_delay_minutes.set("30")
             self.alert_delay_enabled.set(True)
-
-    def toggle_test_mode(self):
-        """Toggle test mode on/off"""
-        self.test_mode = not self.test_mode
-        if self.test_mode:
-            self.test_mode_button.config(
-                text="Exit Test Mode",
-                bg='orange',
-                activebackground='darkorange'
-            )
-            self.test_buttons_frame.pack(side=tk.LEFT)
-            self.log_message("Test Mode Activated")
-        else:
-            self.test_mode_button.config(
-                text="Enter Test Mode",
-                bg='yellow',
-                activebackground='khaki'
-            )
-            self.test_buttons_frame.pack_forget()
-            self.alert_status.config(text="")
-            self.log_message("Test Mode Deactivated")
-
-    def trigger_test_alert(self, alert_type):
-        """
-        Trigger a test alert for the specified type.
-        
-        Args:
-            alert_type (str): Type of alert to test ("Owl In Box", "Owl On Box", "Owl In Area")
-        """
-        try:
-            self.log_message(f"Triggering test alert: {alert_type}")
-            self.alert_status.config(text=alert_type)
-
-            # Get camera name for this alert type
-            camera_name = next(
-                (name for name, type_ in CAMERA_MAPPINGS.items() 
-                 if type_ == alert_type),
-                "Test Camera"
-            )
-
-            # Create simulated detection result with explicit test flag
-            detection_result = {
-                "status": alert_type,
-                "pixel_change": 50.0,
-                "luminance_change": 40.0,
-                "snapshot_path": "",
-                "lighting_condition": "day",
-                "detection_info": {
-                    "confidence": 0.8,
-                    "is_test": True,
-                    "test_camera": camera_name
-                }
-            }
-
-            # Process test alert
-            alert_sent = self.alert_manager.process_detection(camera_name, detection_result)
-            
-            if alert_sent:
-                self.log_message(f"Test alert sent: {alert_type}")
-            else:
-                self.log_message(f"Test alert blocked by delay: {alert_type}")
-
-        except Exception as e:
-            self.log_message(f"Error triggering test alert: {e}")
-            messagebox.showerror("Test Error", f"Failed to trigger test alert: {e}")
 
     def verify_directories(self):
         """Verify all required directories exist"""
@@ -343,21 +170,15 @@ class OwlApp:
     def update_system(self):
         """Update the system from git repository"""
         if self.script_process:
-            messagebox.showwarning(
-                "Warning", 
-                "Please stop motion detection before updating."
-            )
+            messagebox.showwarning("Warning", "Please stop motion detection before updating.")
             return
 
         try:
             self.log_message("Resetting local repository and pulling latest updates...")
-
-            # Change to Git repository directory
             original_dir = os.getcwd()
             os.chdir(os.path.dirname(SCRIPTS_DIR))
 
             try:
-                # Perform a hard reset and clean
                 result_reset = subprocess.run(
                     ["git", "reset", "--hard"],
                     capture_output=True,
@@ -372,7 +193,6 @@ class OwlApp:
                 )
                 self.log_message(result_clean.stdout)
 
-                # Perform git pull
                 result_pull = subprocess.run(
                     ["git", "pull"],
                     capture_output=True,
@@ -385,11 +205,8 @@ class OwlApp:
                 else:
                     self.log_message(f"Git pull failed: {result_pull.stderr}")
                     messagebox.showerror("Update Failed", "Git pull failed. Check logs for details.")
-
             finally:
-                # Restore original directory
                 os.chdir(original_dir)
-
         except Exception as e:
             self.log_message(f"Error during update: {e}")
             messagebox.showerror("Update Error", f"An error occurred: {e}")
@@ -407,7 +224,6 @@ class OwlApp:
             self.log_message("Starting motion detection script...")
             try:
                 cmd = [sys.executable, self.main_script_path]
-
                 self.script_process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -433,7 +249,6 @@ class OwlApp:
                 self.start_button.config(state=tk.NORMAL)
                 self.stop_button.config(state=tk.DISABLED)
                 self.update_button.config(state=tk.NORMAL)
-                self.alert_status.config(text="")  # Clear alert status
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}")
 
@@ -462,10 +277,7 @@ if __name__ == "__main__":
         root = tk.Tk()
         logger = get_logger()
         logger.info("Tkinter root window created")
-
-        # Force a short delay to ensure window manager is ready
-        root.after(100)
-
+        root.after(100)  # Short delay for window manager
         app = OwlApp(root)
         logger.info(f"Final window geometry: {root.geometry()}")
         root.mainloop()
