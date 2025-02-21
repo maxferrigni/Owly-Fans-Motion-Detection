@@ -42,6 +42,7 @@ class OwlApp:
         self.test_mode = False
         self.alert_delay_enabled = tk.BooleanVar(value=True)  # Default to enabled
         self.alert_delay_minutes = tk.StringVar(value="30")  # Default 30 minutes
+        self.active_test_button = None  # Track currently pressed test button
 
         # Store the path of main.py
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
@@ -85,7 +86,8 @@ class OwlApp:
             text="Update System",
             command=self.update_system,
             width=20,
-            bg='lightblue'
+            bg='lightblue',
+            activebackground='skyblue'
         )
         self.update_button.pack(pady=5)
 
@@ -94,7 +96,9 @@ class OwlApp:
             self.root,
             text="Start Motion Detection",
             command=self.start_script,
-            width=20
+            width=20,
+            bg='lightgreen',
+            activebackground='palegreen'
         )
         self.start_button.pack(pady=5)
 
@@ -103,7 +107,9 @@ class OwlApp:
             text="Stop Motion Detection",
             command=self.stop_script,
             state=tk.DISABLED,
-            width=20
+            width=20,
+            bg='salmon',
+            activebackground='lightcoral'
         )
         self.stop_button.pack(pady=5)
 
@@ -135,7 +141,9 @@ class OwlApp:
             text="minutes"
         ).pack(side=tk.LEFT, padx=5)
 
-        # Add Test Mode frame
+# SPLIT HERE
+
+# Add Test Mode frame
         self.test_mode_frame = tk.Frame(self.root)
         self.test_mode_frame.pack(pady=5)
 
@@ -145,35 +153,58 @@ class OwlApp:
             text="Enter Test Mode",
             command=self.toggle_test_mode,
             width=20,
-            bg='yellow'
+            bg='yellow',
+            activebackground='khaki'
         )
         self.test_mode_button.pack(side=tk.LEFT, padx=5)
 
         # Test alert buttons frame (initially hidden)
         self.test_buttons_frame = tk.Frame(self.test_mode_frame)
+        
+        # Style configuration for test buttons
+        button_style = {
+            "width": 15,
+            "relief": tk.RAISED,
+            "bd": 2,
+            "padx": 5,
+            "pady": 3
+        }
+
         self.test_buttons = {
             "Owl In Box": tk.Button(
                 self.test_buttons_frame,
                 text="Test Owl In Box",
                 command=lambda: self.trigger_test_alert("Owl In Box"),
-                width=15
+                bg='lightblue',
+                activebackground='skyblue',
+                **button_style
             ),
             "Owl On Box": tk.Button(
                 self.test_buttons_frame,
                 text="Test Owl On Box",
                 command=lambda: self.trigger_test_alert("Owl On Box"),
-                width=15
+                bg='lightgreen',
+                activebackground='palegreen',
+                **button_style
             ),
             "Owl In Area": tk.Button(
                 self.test_buttons_frame,
                 text="Test Owl In Area",
                 command=lambda: self.trigger_test_alert("Owl In Area"),
-                width=15
+                bg='lightyellow',
+                activebackground='khaki',
+                **button_style
             )
         }
 
         for btn in self.test_buttons.values():
             btn.pack(side=tk.LEFT, padx=5)
+            # Bind enter/leave events for hover effect
+            btn.bind('<Enter>', lambda e, b=btn: self._on_button_hover(b, True))
+            btn.bind('<Leave>', lambda e, b=btn: self._on_button_hover(b, False))
+            # Bind press/release events for click effect
+            btn.bind('<Button-1>', lambda e, b=btn: self._on_button_press(b))
+            btn.bind('<ButtonRelease-1>', lambda e, b=btn: self._on_button_release(b))
 
         # Add alert status label
         self.alert_status = tk.Label(
@@ -192,6 +223,26 @@ class OwlApp:
             wrap=tk.WORD
         )
         self.log_display.pack(pady=10)
+
+    def _on_button_hover(self, button, entering):
+        """Handle button hover effects"""
+        if entering:
+            button.config(relief=tk.GROOVE)
+        else:
+            button.config(relief=tk.RAISED)
+
+    def _on_button_press(self, button):
+        """Handle button press effects"""
+        self.active_test_button = button
+        button.config(relief=tk.SUNKEN)
+        # Schedule button release after 200ms for visual feedback
+        self.root.after(200, lambda: self._on_button_release(button))
+
+    def _on_button_release(self, button):
+        """Handle button release effects"""
+        if button == self.active_test_button:
+            button.config(relief=tk.RAISED)
+            self.active_test_button = None
 
     def toggle_alert_delay(self):
         """Handle alert delay toggle"""
@@ -218,11 +269,19 @@ class OwlApp:
         """Toggle test mode on/off"""
         self.test_mode = not self.test_mode
         if self.test_mode:
-            self.test_mode_button.config(text="Exit Test Mode", bg='orange')
+            self.test_mode_button.config(
+                text="Exit Test Mode",
+                bg='orange',
+                activebackground='darkorange'
+            )
             self.test_buttons_frame.pack(side=tk.LEFT)
             self.log_message("Test Mode Activated")
         else:
-            self.test_mode_button.config(text="Enter Test Mode", bg='yellow')
+            self.test_mode_button.config(
+                text="Enter Test Mode",
+                bg='yellow',
+                activebackground='khaki'
+            )
             self.test_buttons_frame.pack_forget()
             self.alert_status.config(text="")
             self.log_message("Test Mode Deactivated")
