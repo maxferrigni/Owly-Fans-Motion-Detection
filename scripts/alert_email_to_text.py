@@ -36,6 +36,7 @@ CARRIER_EMAIL_GATEWAYS = {
     "cricket": "sms.mycricket.com",
     "metro": "mymetropcs.com",
     "googlefi": "msg.fi.google.com",
+    "spectrum": "charter.net",
 }
 
 def send_text_via_email(phone_number, carrier, message, recipient_name=None):
