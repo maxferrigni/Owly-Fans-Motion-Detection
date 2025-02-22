@@ -85,15 +85,24 @@ def get_last_alert_time(alert_type):
         query = supabase_client.table("owl_activity_log").select("created_at")
         
         if alert_type == "Owl In Box":
-            query = query.eq("owl_in_box", True)
+            query = supabase_client.table("alerts").select("*").filter("owl_in_box", "eq", True)
         elif alert_type == "Owl On Box":
-            query = query.eq("owl_on_box", True)
+            query = supabase_client.table("alerts").select("*").filter("owl_on_box", "eq", True)
         else:  # Owl In Area
-            query = query.eq("owl_in_area", True)
-            
-        query = query.eq("alert_sent", True).order("created_at", desc=True).limit(1)
-        
+            query = supabase_client.table("alerts").select("*").filter("owl_in_area", "eq", True)
+
+        # Ensure we're filtering only alerts that have been sent
+        query = query.filter("alert_sent", "eq", True)
+
+        # Order results by `created_at` descending and get the most recent one
+        query = query.order("created_at", desc()).limit(1)
+
+        # Execute the query and catch errors
         response = query.execute()
+
+        if "error" in response:
+            print(f"Supabase Query Error: {response['error']}")
+
         
         if response.data and len(response.data) > 0:
             return datetime.datetime.fromisoformat(response.data[0]['created_at'].replace('Z', '+00:00'))
