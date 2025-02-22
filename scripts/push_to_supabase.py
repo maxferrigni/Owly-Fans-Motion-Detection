@@ -51,7 +51,7 @@ def get_subscribers(notification_type=None, owl_location=None):
         
         # Filter based on notification type and valid contact info
         if notification_type == "sms":
-            query = supabase_client.table("subscriber").select("*").eq("text_alerts", True).neq("phone", None)
+            query = supabase_client.table("subscribers").select("*").eq("text_alerts", True).neq("phone", None)
         elif notification_type == "email":
             query = supabase_client.table("subscribers").select("*").filter("email_alerts", "eq", True).filter("email", "neq", None)
         
