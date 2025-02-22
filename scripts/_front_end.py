@@ -19,13 +19,14 @@ from utilities.constants import SCRIPTS_DIR, ensure_directories_exist
 from utilities.logging_utils import get_logger
 from utilities.alert_manager import AlertManager
 from test_interface import TestInterface
+from motion_detection_settings import MotionDetectionSettings
 
 class OwlApp:
     def __init__(self, root):
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("800x455+-1920+0")  # Increased width for better spacing
+        self.root.geometry("800x455+-1920+0")
         self.root.update_idletasks()
         self.root.resizable(False, False)
 
@@ -33,24 +34,35 @@ class OwlApp:
         self.script_process = None
         self.alert_delay_enabled = tk.BooleanVar(value=True)
         self.alert_delay_minutes = tk.StringVar(value="30")
-        self.local_saving_enabled = tk.BooleanVar(value=False)  # New local saving toggle
+        self.local_saving_enabled = tk.BooleanVar(value=False)
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
-        # Initialize alert manager
+        # Initialize managers
         self.alert_manager = AlertManager()
-
-        # Create GUI elements
-        self._create_gui()
-
-        # Initialize logger
         self.logger = get_logger()
+
+        # Create main container for better organization
+        self.main_container = ttk.Frame(self.root)
+        self.main_container.pack(fill="both", expand=True)
+
+        # Create left and right panels for layout
+        self.left_panel = ttk.Frame(self.main_container)
+        self.left_panel.pack(side=tk.LEFT, fill="both", padx=5)
+
+        self.right_panel = ttk.Frame(self.main_container)
+        self.right_panel.pack(side=tk.LEFT, fill="both", expand=True, padx=5)
+
+        # Initialize components
+        self._create_control_panel()
+        self._create_settings_panel()
+        self._create_test_panel()
+        self._create_log_panel()
+
+        # Initialize redirector
         sys.stdout = self.LogRedirector(self)
         sys.stderr = self.LogRedirector(self)
 
-        # Initialize test interface
-        self.test_interface = TestInterface(self.root, self.logger, self.alert_manager)
-
-        # Ensure directories exist
+        # Verify directories
         self.verify_directories()
         self.log_message("GUI initialized and ready")
 
@@ -65,95 +77,86 @@ class OwlApp:
         def flush(self):
             pass
 
-    def _create_gui(self):
-        """Create main GUI elements"""
+    def _create_control_panel(self):
+        """Create main control buttons and options"""
+        control_frame = ttk.LabelFrame(self.left_panel, text="System Controls")
+        control_frame.pack(fill="x", pady=5)
+
         # Update System button
-        self.update_button = tk.Button(
-            self.root,
+        ttk.Button(
+            control_frame,
             text="Update System",
             command=self.update_system,
-            width=20,
-            bg='lightblue',
-            activebackground='skyblue',
-            font=('Arial', 10)
-        )
-        self.update_button.pack(pady=5)
+            width=20
+        ).pack(pady=5)
 
         # Motion Detection buttons
-        self.start_button = tk.Button(
-            self.root,
+        ttk.Button(
+            control_frame,
             text="Start Motion Detection",
             command=self.start_script,
-            width=20,
-            bg='lightgreen',
-            activebackground='palegreen',
-            font=('Arial', 10)
-        )
-        self.start_button.pack(pady=5)
+            width=20
+        ).pack(pady=5)
 
-        self.stop_button = tk.Button(
-            self.root,
+        self.stop_button = ttk.Button(
+            control_frame,
             text="Stop Motion Detection",
             command=self.stop_script,
             state=tk.DISABLED,
-            width=20,
-            bg='salmon',
-            activebackground='lightcoral',
-            font=('Arial', 10)
+            width=20
         )
         self.stop_button.pack(pady=5)
 
         # Alert Delay frame
-        self.alert_delay_frame = tk.Frame(self.root)
-        self.alert_delay_frame.pack(pady=5)
+        delay_frame = ttk.Frame(control_frame)
+        delay_frame.pack(pady=5)
 
-        self.alert_delay_button = tk.Checkbutton(
-            self.alert_delay_frame,
+        ttk.Checkbutton(
+            delay_frame,
             text="Alert Delay",
             variable=self.alert_delay_enabled,
-            command=self.toggle_alert_delay,
-            width=10
-        )
-        self.alert_delay_button.pack(side=tk.LEFT, padx=5)
+            command=self.toggle_alert_delay
+        ).pack(side=tk.LEFT)
 
         self.alert_delay_entry = ttk.Entry(
-            self.alert_delay_frame,
+            delay_frame,
             textvariable=self.alert_delay_minutes,
             width=5
         )
-        self.alert_delay_entry.pack(side=tk.LEFT)
+        self.alert_delay_entry.pack(side=tk.LEFT, padx=5)
 
-        tk.Label(
-            self.alert_delay_frame,
-            text="minutes"
-        ).pack(side=tk.LEFT, padx=5)
+        ttk.Label(delay_frame, text="minutes").pack(side=tk.LEFT)
 
-        # Local Saving frame
-        self.local_saving_frame = tk.Frame(self.root)
-        self.local_saving_frame.pack(pady=5)
-
-        # Local saving toggle with custom colors and styling
-        self.local_saving_button = tk.Checkbutton(
-            self.local_saving_frame,
+        # Local Saving toggle
+        ttk.Checkbutton(
+            control_frame,
             text="Save Images Locally",
             variable=self.local_saving_enabled,
-            command=self.toggle_local_saving,
-            width=20,
-            bg='light gray',
-            activebackground='gray',
-            selectcolor='light green',
-            font=('Arial', 10)
-        )
-        self.local_saving_button.pack(pady=5)
+            command=self.toggle_local_saving
+        ).pack(pady=5)
 
-        # Log display
+    def _create_settings_panel(self):
+        """Create motion detection settings panel"""
+        self.settings = MotionDetectionSettings(self.right_panel, self.logger)
+
+    def _create_test_panel(self):
+        """Create test interface panel"""
+        test_frame = ttk.LabelFrame(self.left_panel, text="Testing")
+        test_frame.pack(fill="x", pady=5)
+        self.test_interface = TestInterface(test_frame, self.logger, self.alert_manager)
+
+    def _create_log_panel(self):
+        """Create logging display panel"""
+        log_frame = ttk.LabelFrame(self.right_panel, text="System Log")
+        log_frame.pack(fill="both", expand=True, pady=5)
+
         self.log_display = scrolledtext.ScrolledText(
-            self.root,
-            width=80,
-            height=15,
+            log_frame,
+            width=70,
+            height=10,
             wrap=tk.WORD
         )
-        self.log_display.pack(pady=10)
+        self.log_display.pack(fill="both", expand=True, padx=5, pady=5)
 
     def toggle_local_saving(self):
         """Handle local saving toggle"""
@@ -272,10 +275,13 @@ class OwlApp:
                     bufsize=1,
                     env=env
                 )
-                self.start_button.config(state=tk.DISABLED)
+
+                # Update button states
                 self.stop_button.config(state=tk.NORMAL)
-                self.update_button.config(state=tk.DISABLED)
+                
+                # Start log monitoring
                 threading.Thread(target=self.refresh_logs, daemon=True).start()
+
             except Exception as e:
                 self.log_message(f"Error starting script: {e}")
 
@@ -287,9 +293,7 @@ class OwlApp:
                 self.script_process.terminate()
                 self.script_process.wait(timeout=5)
                 self.script_process = None
-                self.start_button.config(state=tk.NORMAL)
                 self.stop_button.config(state=tk.DISABLED)
-                self.update_button.config(state=tk.NORMAL)
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}")
 
