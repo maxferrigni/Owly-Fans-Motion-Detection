@@ -51,7 +51,7 @@ def get_subscribers(notification_type=None, owl_location=None):
         
         # Filter based on notification type and valid contact info
         if notification_type == "sms":
-            query = query.eq("sms_alerts", True).not_.is_("phone", "null")
+            query = query.filter("sms_alerts", "eq", True).filter("phone", "neq", None)
         elif notification_type == "email":
             query = supabase_client.table("subscribers").select("*").filter("email_alerts", "eq", True).filter("email", "neq", None)
         
@@ -95,7 +95,7 @@ def get_last_alert_time(alert_type):
         query = query.filter("alert_sent", "eq", True)
 
         # Order results by `created_at` descending and get the most recent one
-        query = query.order("created_at", desc()).limit(1)
+        query = query.order("created_at", desc=True).limit(1)
 
         # Execute the query and catch errors
         response = query.execute()
