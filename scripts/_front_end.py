@@ -33,6 +33,7 @@ class OwlApp:
         self.script_process = None
         self.alert_delay_enabled = tk.BooleanVar(value=True)
         self.alert_delay_minutes = tk.StringVar(value="30")
+        self.local_saving_enabled = tk.BooleanVar(value=False)  # New local saving toggle
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         # Initialize alert manager
@@ -127,6 +128,24 @@ class OwlApp:
             text="minutes"
         ).pack(side=tk.LEFT, padx=5)
 
+        # Local Saving frame
+        self.local_saving_frame = tk.Frame(self.root)
+        self.local_saving_frame.pack(pady=5)
+
+        # Local saving toggle with custom colors and styling
+        self.local_saving_button = tk.Checkbutton(
+            self.local_saving_frame,
+            text="Save Images Locally",
+            variable=self.local_saving_enabled,
+            command=self.toggle_local_saving,
+            width=20,
+            bg='light gray',
+            activebackground='gray',
+            selectcolor='light green',
+            font=('Arial', 10)
+        )
+        self.local_saving_button.pack(pady=5)
+
         # Log display
         self.log_display = scrolledtext.ScrolledText(
             self.root,
@@ -135,6 +154,23 @@ class OwlApp:
             wrap=tk.WORD
         )
         self.log_display.pack(pady=10)
+
+    def toggle_local_saving(self):
+        """Handle local saving toggle"""
+        is_enabled = self.local_saving_enabled.get()
+        self.log_message(f"Local image saving {'enabled' if is_enabled else 'disabled'}")
+        
+        # Set environment variable for child processes
+        os.environ['OWL_LOCAL_SAVING'] = str(is_enabled)
+
+        if is_enabled:
+            # Ensure local directories exist
+            try:
+                ensure_directories_exist()
+            except Exception as e:
+                self.log_message(f"Error creating local directories: {e}")
+                messagebox.showerror("Error", f"Failed to create local directories: {e}")
+                self.local_saving_enabled.set(False)
 
     def toggle_alert_delay(self):
         """Handle alert delay toggle"""
@@ -223,6 +259,10 @@ class OwlApp:
         if not self.script_process:
             self.log_message("Starting motion detection script...")
             try:
+                # Pass local saving setting through environment variable
+                env = os.environ.copy()
+                env['OWL_LOCAL_SAVING'] = str(self.local_saving_enabled.get())
+                
                 cmd = [sys.executable, self.main_script_path]
                 self.script_process = subprocess.Popen(
                     cmd,
@@ -230,6 +270,7 @@ class OwlApp:
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    env=env
                 )
                 self.start_button.config(state=tk.DISABLED)
                 self.stop_button.config(state=tk.NORMAL)

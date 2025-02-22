@@ -192,6 +192,7 @@ def add_status_overlay(image, owl_detected, metrics, threshold):
 def create_comparison_image(base_image, new_image, camera_name, threshold, config):
     """
     Create a three-panel comparison image with clear owl detection status.
+    Saves locally only if enabled, always returns path for Supabase upload.
     
     Args:
         base_image (PIL.Image): Base reference image
@@ -201,9 +202,12 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         config (dict): Camera configuration
         
     Returns:
-        str: Path to saved comparison image
+        str: Path to comparison image (temp path if local saving disabled)
     """
     try:
+        # Check if local saving is enabled
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+        
         # Get image dimensions
         width, height = base_image.size
         
@@ -225,19 +229,31 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         comparison.paste(new_image, (width, 0))  # Middle panel
         comparison.paste(diff_with_overlay, (width * 2, 0))  # Right panel
         
-        # Save comparison image
-        os.makedirs(IMAGE_COMPARISONS_DIR, exist_ok=True)
-        comparison_path = os.path.join(
-            IMAGE_COMPARISONS_DIR,
-            f"{camera_name.lower().replace(' ', '_')}_comparison.jpg"
-        )
-        comparison.save(comparison_path, quality=95)
+        # Determine save path
+        filename = f"{camera_name.lower().replace(' ', '_')}_comparison.jpg"
         
+        if local_saving:
+            # Save in regular directory if local saving enabled
+            os.makedirs(IMAGE_COMPARISONS_DIR, exist_ok=True)
+            save_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
+            logger.info(f"Saving comparison image locally: {save_path}")
+        else:
+            # Create temp directory if it doesn't exist
+            temp_dir = os.path.join(IMAGE_COMPARISONS_DIR, 'temp')
+            os.makedirs(temp_dir, exist_ok=True)
+            save_path = os.path.join(temp_dir, f"temp_{filename}")
+            logger.debug(f"Creating temporary comparison image: {save_path}")
+        
+        # Save image
+        comparison.save(save_path, quality=95)
+        
+        # Log detection status
         logger.info(
             f"Created comparison image for {camera_name}. "
             f"Owl detected: {owl_detected}"
         )
-        return comparison_path
+        
+        return save_path
         
     except Exception as e:
         logger.error(f"Error creating comparison image: {e}")

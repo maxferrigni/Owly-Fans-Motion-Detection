@@ -72,7 +72,7 @@ def clear_base_images(lighting_condition=None):
 
 def save_base_image(image, camera_name, lighting_condition):
     """
-    Save base image locally and upload to Supabase.
+    Save base image locally (if enabled) and upload to Supabase.
     
     Args:
         image (PIL.Image): The base image to save
@@ -83,8 +83,9 @@ def save_base_image(image, camera_name, lighting_condition):
         tuple: (local_path, supabase_url)
     """
     try:
-        # Ensure base images directory exists
-        os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
+        # Check if local saving is enabled
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+        local_path = None
         
         # Generate timestamp
         timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
@@ -92,17 +93,36 @@ def save_base_image(image, camera_name, lighting_condition):
         # Generate filename
         filename = get_base_image_filename(camera_name, lighting_condition, timestamp)
         
-        # Save locally
-        local_path = os.path.join(BASE_IMAGES_DIR, filename)
-        if image.mode == "RGBA":
-            image = image.convert("RGB")
-        image.save(local_path)
-        logger.info(f"Saved base image locally: {local_path}")
+        # Save locally if enabled
+        if local_saving:
+            # Ensure base images directory exists
+            os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
+            
+            # Save locally
+            local_path = os.path.join(BASE_IMAGES_DIR, filename)
+            if image.mode == "RGBA":
+                image = image.convert("RGB")
+            image.save(local_path)
+            logger.info(f"Saved base image locally: {local_path}")
+        else:
+            logger.debug("Local saving disabled - skipping local save")
+            
+            # Create temporary file for Supabase upload
+            temp_path = os.path.join(BASE_IMAGES_DIR, f"temp_{filename}")
+            if image.mode == "RGBA":
+                image = image.convert("RGB")
+            image.save(temp_path)
+            local_path = temp_path
         
         # Upload to Supabase
         supabase_url = upload_base_image(local_path, camera_name, lighting_condition)
         
-        return local_path, supabase_url
+        # Clean up temporary file if local saving is disabled
+        if not local_saving and os.path.exists(local_path):
+            os.remove(local_path)
+            logger.debug(f"Removed temporary file: {local_path}")
+        
+        return local_path if local_saving else None, supabase_url
         
     except Exception as e:
         logger.error(f"Error saving base image: {e}")
@@ -129,7 +149,9 @@ def capture_base_images(lighting_condition=None, force_capture=False):
         logger.info(f"Using lighting condition: {lighting_condition}")
         
         # Clear existing base images for this lighting condition
-        clear_base_images(lighting_condition)
+        # Only if local saving is enabled
+        if os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
+            clear_base_images(lighting_condition)
         
         configs = load_config()
         results = []

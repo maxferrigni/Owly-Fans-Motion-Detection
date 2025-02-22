@@ -24,7 +24,7 @@ from utilities.time_utils import (
 from utilities.owl_detection_utils import detect_owl_in_box
 from utilities.image_comparison_utils import create_comparison_image
 from utilities.alert_manager import AlertManager
-from capture_base_images import capture_base_images
+from capture_base_images import capture_base_images, get_latest_base_image
 
 # Initialize logger and alert manager
 logger = get_logger()
@@ -61,6 +61,10 @@ def initialize_system(camera_configs):
         if not os.path.exists(BASE_IMAGES_DIR):
             logger.error("Base images directory not found")
             return False
+            
+        # Log local saving status
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+        logger.info(f"Local image saving is {'enabled' if local_saving else 'disabled'}")
             
         # Motion detection system initialized successfully
         logger.info("Motion detection system initialization complete")
@@ -116,51 +120,6 @@ def verify_base_images(lighting_condition):
         logger.error(f"Error verifying base images: {e}")
         return False
 
-def get_latest_base_image(camera_name, lighting_condition):
-    """
-    Get the most recent base image for the given camera and lighting condition.
-    
-    Args:
-        camera_name (str): Name of the camera
-        lighting_condition (str): Current lighting condition
-        
-    Returns:
-        PIL.Image: Base image for comparison
-    """
-    try:
-        # Generate the pattern for base images
-        base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
-        
-        # Find matching base image
-        matching_files = [f for f in os.listdir(BASE_IMAGES_DIR) 
-                         if f.startswith(base_pattern)]
-        
-        if not matching_files:
-            # If no base image exists, capture new ones
-            logger.info(f"No base image found for {camera_name}. Capturing new base images...")
-            capture_base_images(lighting_condition, force_capture=True)
-            
-            # Try to find the base image again
-            matching_files = [f for f in os.listdir(BASE_IMAGES_DIR) 
-                            if f.startswith(base_pattern)]
-            
-            if not matching_files:
-                raise FileNotFoundError(f"No base image found for {camera_name}")
-        
-        # Get most recent file
-        latest_file = max(matching_files, key=lambda f: os.path.getctime(
-            os.path.join(BASE_IMAGES_DIR, f)
-        ))
-        
-        base_image_path = os.path.join(BASE_IMAGES_DIR, latest_file)
-        logger.info(f"Using base image: {base_image_path}")
-        
-        return Image.open(base_image_path).convert("RGB")
-        
-    except Exception as e:
-        logger.error(f"Error finding base image: {e}")
-        raise
-
 def capture_real_image(roi):
     """Capture a screenshot of the specified region"""
     try:
@@ -211,13 +170,25 @@ def process_camera(camera_name, config, lighting_info=None):
             is_owl_present, detection_info = detect_owl_in_box(new_image, base_image, config)
             motion_detected = is_owl_present
             owl_info = detection_info
+            
+            # Generate comparison image
+            comparison_path = None
+            if motion_detected:
+                comparison_path = create_comparison_image(
+                    base_image, 
+                    new_image, 
+                    config["alert_type"],
+                    config["motion_detection"]["brightness_threshold"],
+                    config
+                )
         else:
             # Create comparison image and get metrics
             comparison_path = create_comparison_image(
                 base_image, 
                 new_image, 
                 camera_name=config["alert_type"],
-                threshold=config["luminance_threshold"] * threshold_multiplier
+                threshold=config["luminance_threshold"] * threshold_multiplier,
+                config=config
             )
             
             # Get metrics from comparison image
@@ -236,6 +207,17 @@ def process_camera(camera_name, config, lighting_info=None):
                 "luminance_change": np.mean(pixels_array),
                 "threshold_used": config["luminance_threshold"]
             }
+
+            # Clean up temporary comparison image if local saving is disabled
+            if (not os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true' and 
+                comparison_path and 
+                os.path.exists(comparison_path) and 
+                'temp' in comparison_path):
+                try:
+                    os.remove(comparison_path)
+                    logger.debug(f"Cleaned up temporary comparison image: {comparison_path}")
+                except Exception as e:
+                    logger.error(f"Error cleaning up temporary file: {e}")
         
         if motion_detected:
             logger.info(
@@ -247,7 +229,7 @@ def process_camera(camera_name, config, lighting_info=None):
             "status": config["alert_type"] if motion_detected else "No Motion",
             "pixel_change": owl_info.get("pixel_change", 0.0) * 100 if owl_info else 0.0,
             "luminance_change": owl_info.get("luminance_change", 0.0) if owl_info else 0.0,
-            "snapshot_path": get_comparison_image_path(camera_name) if motion_detected else "",
+            "snapshot_path": comparison_path if motion_detected else "",
             "lighting_condition": lighting_condition,
             "detection_info": owl_info
         }

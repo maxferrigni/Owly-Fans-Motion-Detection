@@ -23,6 +23,11 @@ BASE_IMAGES_DIR = os.path.join(LOCAL_FILES_DIR, "base_images")
 IMAGE_COMPARISONS_DIR = os.path.join(LOCAL_FILES_DIR, "image_comparisons")
 LOGS_DIR = os.path.join(LOCAL_FILES_DIR, "logs")
 
+# Temporary storage paths for non-local saving mode
+TEMP_DIR = os.path.join(LOCAL_FILES_DIR, "temp")
+TEMP_BASE_IMAGES_DIR = os.path.join(TEMP_DIR, "base_images")
+TEMP_COMPARISONS_DIR = os.path.join(TEMP_DIR, "comparisons")
+
 # Input config files
 INPUT_CONFIG_FILES = {
     "config": os.path.join(CONFIGS_DIR, "config.json"),
@@ -43,23 +48,47 @@ COMPARISON_IMAGE_PATHS = {
     "Owl In Area": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_area_comparison.jpg")
 }
 
+# Temporary comparison image paths
+TEMP_COMPARISON_PATHS = {
+    "Owl In Box": os.path.join(TEMP_COMPARISONS_DIR, "temp_owl_in_box_comparison.jpg"),
+    "Owl On Box": os.path.join(TEMP_COMPARISONS_DIR, "temp_owl_on_box_comparison.jpg"),
+    "Owl In Area": os.path.join(TEMP_COMPARISONS_DIR, "temp_owl_in_area_comparison.jpg")
+}
+
 # Supabase storage buckets
 SUPABASE_STORAGE = {
     "owl_detections": "owl_detections",
     "base_images": "base_images"
 }
 
-def get_comparison_image_path(camera_name):
-    """Get the comparison image path for a given camera"""
+def get_comparison_image_path(camera_name, temp=False):
+    """
+    Get the comparison image path for a given camera.
+    Uses temporary path if local saving is disabled.
+    """
     alert_type = CAMERA_MAPPINGS.get(camera_name)
     if not alert_type:
         raise ValueError(f"No camera mapping found for: {camera_name}")
     
-    path = COMPARISON_IMAGE_PATHS.get(alert_type)
+    # Determine if using temporary path
+    if temp or not os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
+        path = TEMP_COMPARISON_PATHS.get(alert_type)
+    else:
+        path = COMPARISON_IMAGE_PATHS.get(alert_type)
+    
     if not path:
         raise ValueError(f"No comparison image path found for alert type: {alert_type}")
     
     return path
+
+def get_base_image_path(camera_name, temp=False):
+    """
+    Get the base image directory path.
+    Uses temporary path if local saving is disabled.
+    """
+    if temp or not os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
+        return TEMP_BASE_IMAGES_DIR
+    return BASE_IMAGES_DIR
 
 def ensure_directories_exist():
     """Create all necessary directories if they don't exist"""
@@ -67,7 +96,10 @@ def ensure_directories_exist():
         LOCAL_FILES_DIR,
         BASE_IMAGES_DIR,
         IMAGE_COMPARISONS_DIR,
-        LOGS_DIR
+        LOGS_DIR,
+        TEMP_DIR,
+        TEMP_BASE_IMAGES_DIR,
+        TEMP_COMPARISONS_DIR
     ]
 
     for directory in directories:
@@ -77,6 +109,22 @@ def ensure_directories_exist():
         except Exception as e:
             logging.error(f"Failed to create directory {directory}: {e}")
             raise
+
+def cleanup_temp_files():
+    """Clean up temporary files if they exist"""
+    try:
+        # Only clean if local saving is disabled
+        if not os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
+            if os.path.exists(TEMP_DIR):
+                for root, dirs, files in os.walk(TEMP_DIR, topdown=False):
+                    for name in files:
+                        try:
+                            os.remove(os.path.join(root, name))
+                            logging.debug(f"Removed temporary file: {name}")
+                        except Exception as e:
+                            logging.error(f"Failed to remove temporary file {name}: {e}")
+    except Exception as e:
+        logging.error(f"Error during temporary file cleanup: {e}")
 
 def validate_config_files():
     """
@@ -136,7 +184,10 @@ def validate_system():
             return False
             
         # Validate comparison image paths
-        for alert_type, path in COMPARISON_IMAGE_PATHS.items():
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+        paths_to_check = COMPARISON_IMAGE_PATHS if local_saving else TEMP_COMPARISON_PATHS
+        
+        for alert_type, path in paths_to_check.items():
             parent_dir = os.path.dirname(path)
             if not os.path.exists(parent_dir):
                 logging.error(f"Comparison image directory missing: {parent_dir}")
@@ -156,3 +207,4 @@ def get_base_image_filename(camera_name, lighting_condition, timestamp):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     validate_system()
+    cleanup_temp_files()
