@@ -31,7 +31,11 @@ CARRIER_EMAIL_GATEWAYS = {
     "verizon": "vtext.com",
     "att": "txt.att.net",
     "tmobile": "tmomail.net",
-    "sprint": "messaging.sprintpcs.com"
+    "sprint": "messaging.sprintpcs.com",
+    "boost": "myboostmobile.com",
+    "cricket": "sms.mycricket.com",
+    "metro": "mymetropcs.com",
+    "googlefi": "msg.fi.google.com",
 }
 
 def send_text_via_email(phone_number, carrier, message, recipient_name=None):
