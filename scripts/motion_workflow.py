@@ -12,6 +12,7 @@ import numpy as np
 # Import utilities
 from utilities.constants import (
     BASE_IMAGES_DIR,
+    TEMP_BASE_IMAGES_DIR,
     get_comparison_image_path,
     CAMERA_MAPPINGS
 )
@@ -58,15 +59,15 @@ def initialize_system(camera_configs, is_test=False):
                 logger.error(f"Missing ROI configuration for {camera_name}")
                 return False
                 
-        # Only verify base images directory in real-time mode
-        if not is_test:
-            if not os.path.exists(BASE_IMAGES_DIR):
-                logger.error("Base images directory not found")
-                return False
-            
-        # Log local saving status
+        # Verify base images directory based on local saving setting
         local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
         logger.info(f"Local image saving is {'enabled' if local_saving else 'disabled'}")
+        
+        if not is_test:
+            check_dir = BASE_IMAGES_DIR if local_saving else TEMP_BASE_IMAGES_DIR
+            if not os.path.exists(check_dir):
+                os.makedirs(check_dir, exist_ok=True)
+                logger.info(f"Created base images directory: {check_dir}")
             
         logger.info("Motion detection system initialization complete")
         return True
@@ -76,36 +77,56 @@ def initialize_system(camera_configs, is_test=False):
         return False
 
 def verify_base_images(lighting_condition):
-    """Verify base images exist and are recent"""
+    """Verify that all necessary base images exist and are recent"""
     try:
         logger.info("Verifying base images...")
         
-        # Check for base images
-        base_images = os.listdir(BASE_IMAGES_DIR)
-        if not base_images:
-            logger.info("No base images found")
+        # Determine which directories to check based on local saving setting
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+        check_dirs = [TEMP_BASE_IMAGES_DIR]
+        if local_saving:
+            check_dirs.append(BASE_IMAGES_DIR)
+        
+        # Track found base images
+        found_images = {camera: False for camera in CAMERA_MAPPINGS.keys()}
+        
+        # Check all relevant directories
+        for directory in check_dirs:
+            if not os.path.exists(directory):
+                continue
+                
+            base_images = os.listdir(directory)
+            
+            # Check for each camera
+            for camera_name in CAMERA_MAPPINGS.keys():
+                if found_images[camera_name]:
+                    continue
+                    
+                base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
+                matching_files = [f for f in base_images if f.startswith(base_pattern)]
+                
+                if matching_files:
+                    # Get most recent file
+                    latest_file = max(matching_files, key=lambda f: os.path.getctime(
+                        os.path.join(directory, f)
+                    ))
+                    file_path = os.path.join(directory, latest_file)
+                    
+                    # Check age - using 2 minutes as threshold since these are temp files
+                    file_age = time.time() - os.path.getctime(file_path)
+                    if file_age > 120:  # 2 minutes in seconds
+                        logger.info(f"Base image for {camera_name} is too old")
+                        continue
+                        
+                    found_images[camera_name] = True
+        
+        # Check if all cameras have valid base images
+        all_valid = all(found_images.values())
+        if not all_valid:
+            missing_cameras = [cam for cam, found in found_images.items() if not found]
+            logger.info(f"Missing or outdated base images for: {', '.join(missing_cameras)}")
             return False
             
-        # Check for each camera
-        for camera_name in CAMERA_MAPPINGS.keys():
-            base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
-            matching_files = [f for f in base_images if f.startswith(base_pattern)]
-            
-            if not matching_files:
-                logger.info(f"No base image found for {camera_name}")
-                return False
-                
-            # Check age of most recent base image
-            latest_file = max(matching_files, key=lambda f: os.path.getctime(
-                os.path.join(BASE_IMAGES_DIR, f)
-            ))
-            file_age = time.time() - os.path.getctime(os.path.join(BASE_IMAGES_DIR, latest_file))
-            
-            # If base image is more than 24 hours old, consider it invalid
-            if file_age > 86400:  # 24 hours in seconds
-                logger.info(f"Base image for {camera_name} is too old")
-                return False
-                
         logger.info("Base image verification complete")
         return True
         
@@ -126,18 +147,7 @@ def capture_real_image(roi):
         raise
 
 def process_camera(camera_name, config, lighting_info=None, test_images=None):
-    """
-    Process motion detection for a specific camera.
-    
-    Args:
-        camera_name (str): Name of the camera
-        config (dict): Camera configuration
-        lighting_info (dict, optional): Current lighting information
-        test_images (dict, optional): Dictionary with test and base images for testing
-        
-    Returns:
-        dict: Detection results
-    """
+    """Process motion detection for a specific camera"""
     try:
         logger.info(f"Processing camera: {camera_name} {'(Test Mode)' if test_images else ''}")
         
@@ -257,16 +267,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
         }
 
 def process_cameras(camera_configs, test_images=None):
-    """
-    Process all cameras in batch for efficient motion detection.
-    
-    Args:
-        camera_configs (dict): Dictionary of camera configurations
-        test_images (dict, optional): Dictionary of test images for testing mode
-        
-    Returns:
-        list: List of detection results for each camera
-    """
+    """Process all cameras in batch for efficient motion detection"""
     try:
         # Get lighting information once for all cameras
         lighting_condition = get_current_lighting_condition()
