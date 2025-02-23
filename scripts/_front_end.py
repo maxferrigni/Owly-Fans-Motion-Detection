@@ -21,6 +21,71 @@ from utilities.alert_manager import AlertManager
 from test_interface import TestInterface
 from motion_detection_settings import MotionDetectionSettings
 
+class LogWindow(tk.Toplevel):
+    def __init__(self, parent, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
+        
+        # Configure window
+        self.title("Owl Monitor Log")
+        self.geometry("800x455")  # Match main window size
+        self.resizable(False, False)
+        
+        # Create log display
+        self.log_display = scrolledtext.ScrolledText(
+            self,
+            width=80,
+            height=25,
+            wrap=tk.WORD,
+            font=('Courier', 9)
+        )
+        self.log_display.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Bind close event
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Keep reference to parent
+        self.parent = parent
+        
+        # Position window
+        self.position_window()
+        
+        # Bind parent movement to reposition log window
+        parent.bind("<Configure>", self.follow_main_window)
+        
+    def position_window(self):
+        """Position log window next to main window"""
+        main_x = self.parent.winfo_x()
+        main_y = self.parent.winfo_y()
+        main_width = self.parent.winfo_width()
+        
+        # Position to the right of main window
+        self.geometry(f"+{main_x + main_width + 10}+{main_y}")
+        
+    def follow_main_window(self, event=None):
+        """Reposition log window when main window moves"""
+        if event.widget == self.parent:
+            self.position_window()
+            
+    def on_closing(self):
+        """Handle window closing"""
+        # Just hide the window instead of destroying
+        self.withdraw()
+        
+    def show(self):
+        """Show the log window"""
+        self.deiconify()
+        self.position_window()
+        
+    def log_message(self, message):
+        """Add message to log display"""
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            formatted_message = f"[{timestamp}] {message}"
+            self.log_display.insert(tk.END, f"{formatted_message}\n")
+            self.log_display.see(tk.END)
+        except Exception as e:
+            print(f"Error logging to separate window: {e}")
+
 class OwlApp:
     def __init__(self, root):
         # Initialize window
@@ -52,11 +117,14 @@ class OwlApp:
         self.right_panel = ttk.Frame(self.main_container)
         self.right_panel.pack(side=tk.LEFT, fill="both", expand=True, padx=5)
 
+        # Initialize log window
+        self.log_window = LogWindow(self.root)
+
         # Initialize components
         self._create_control_panel()
         self._create_settings_panel()
         self._create_test_panel()
-        self._create_log_panel()
+        self._create_control_buttons()
 
         # Initialize redirector
         sys.stdout = self.LogRedirector(self)
@@ -145,18 +213,24 @@ class OwlApp:
         test_frame.pack(fill="x", pady=5)
         self.test_interface = TestInterface(test_frame, self.logger, self.alert_manager)
 
-    def _create_log_panel(self):
-        """Create logging display panel"""
-        log_frame = ttk.LabelFrame(self.right_panel, text="System Log")
-        log_frame.pack(fill="both", expand=True, pady=5)
+    def _create_control_buttons(self):
+        """Create additional control buttons"""
+        button_frame = ttk.Frame(self.right_panel)
+        button_frame.pack(fill="x", pady=5)
+        
+        # Log window toggle button
+        ttk.Button(
+            button_frame,
+            text="Toggle Log Window",
+            command=self.toggle_log_window
+        ).pack(side=tk.RIGHT, padx=5)
 
-        self.log_display = scrolledtext.ScrolledText(
-            log_frame,
-            width=70,
-            height=10,
-            wrap=tk.WORD
-        )
-        self.log_display.pack(fill="both", expand=True, padx=5, pady=5)
+    def toggle_log_window(self):
+        """Toggle log window visibility"""
+        if self.log_window.winfo_viewable():
+            self.log_window.withdraw()
+        else:
+            self.log_window.show()
 
     def toggle_local_saving(self):
         """Handle local saving toggle"""
@@ -308,12 +382,10 @@ class OwlApp:
             self.log_message(f"Error reading logs: {e}")
 
     def log_message(self, message):
-        """Add a message to the log display"""
+        """Add a message to both log displays"""
         try:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            formatted_message = f"[{timestamp}] {message}"
-            self.log_display.insert(tk.END, f"{formatted_message}\n")
-            self.log_display.see(tk.END)
+            # Send to separate log window
+            self.log_window.log_message(message)
         except Exception as e:
             print(f"Error logging message: {e}")
 

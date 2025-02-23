@@ -33,18 +33,19 @@ alert_manager = AlertManager()
 # Set timezone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
 
-def initialize_system(camera_configs):
+def initialize_system(camera_configs, is_test=False):
     """
     Initialize the motion detection system.
     
     Args:
         camera_configs (dict): Dictionary of camera configurations
+        is_test (bool): Whether this is a test initialization
         
     Returns:
         bool: True if initialization successful
     """
     try:
-        logger.info("Initializing motion detection system...")
+        logger.info(f"Initializing motion detection system (Test Mode: {is_test})")
         
         # Verify camera configurations
         if not camera_configs:
@@ -57,16 +58,16 @@ def initialize_system(camera_configs):
                 logger.error(f"Missing ROI configuration for {camera_name}")
                 return False
                 
-        # Verify base images directory exists
-        if not os.path.exists(BASE_IMAGES_DIR):
-            logger.error("Base images directory not found")
-            return False
+        # Only verify base images directory in real-time mode
+        if not is_test:
+            if not os.path.exists(BASE_IMAGES_DIR):
+                logger.error("Base images directory not found")
+                return False
             
         # Log local saving status
         local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
         logger.info(f"Local image saving is {'enabled' if local_saving else 'disabled'}")
             
-        # Motion detection system initialized successfully
         logger.info("Motion detection system initialization complete")
         return True
         
@@ -75,15 +76,7 @@ def initialize_system(camera_configs):
         return False
 
 def verify_base_images(lighting_condition):
-    """
-    Verify that all necessary base images exist and are recent.
-    
-    Args:
-        lighting_condition (str): Current lighting condition
-        
-    Returns:
-        bool: True if all base images are valid
-    """
+    """Verify base images exist and are recent"""
     try:
         logger.info("Verifying base images...")
         
@@ -132,7 +125,7 @@ def capture_real_image(roi):
         logger.error(f"Error capturing screenshot: {e}")
         raise
 
-def process_camera(camera_name, config, lighting_info=None):
+def process_camera(camera_name, config, lighting_info=None, test_images=None):
     """
     Process motion detection for a specific camera.
     
@@ -140,12 +133,13 @@ def process_camera(camera_name, config, lighting_info=None):
         camera_name (str): Name of the camera
         config (dict): Camera configuration
         lighting_info (dict, optional): Current lighting information
+        test_images (dict, optional): Dictionary with test and base images for testing
         
     Returns:
         dict: Detection results
     """
     try:
-        logger.info(f"Processing camera: {camera_name}")
+        logger.info(f"Processing camera: {camera_name} {'(Test Mode)' if test_images else ''}")
         
         # Get or use provided lighting condition
         if lighting_info is None:
@@ -157,9 +151,15 @@ def process_camera(camera_name, config, lighting_info=None):
             
         logger.info(f"Current lighting condition: {lighting_condition}")
         
-        # Load base image and capture new image
-        base_image = get_latest_base_image(camera_name, lighting_condition)
-        new_image = capture_real_image(config["roi"])
+        # Get images either from test or capture
+        if test_images:
+            base_image = test_images['base']
+            new_image = test_images['test']
+            is_test = True
+        else:
+            base_image = get_latest_base_image(camera_name, lighting_condition)
+            new_image = capture_real_image(config["roi"])
+            is_test = False
         
         # Handle different camera types
         motion_detected = False
@@ -167,7 +167,12 @@ def process_camera(camera_name, config, lighting_info=None):
         
         if config["alert_type"] == "Owl In Box":
             # Use specialized owl detection for box camera
-            is_owl_present, detection_info = detect_owl_in_box(new_image, base_image, config)
+            is_owl_present, detection_info = detect_owl_in_box(
+                new_image, 
+                base_image, 
+                config,
+                is_test=is_test
+            )
             motion_detected = is_owl_present
             owl_info = detection_info
             
@@ -179,7 +184,8 @@ def process_camera(camera_name, config, lighting_info=None):
                     new_image, 
                     config["alert_type"],
                     config["motion_detection"]["brightness_threshold"],
-                    config
+                    config,
+                    is_test=is_test
                 )
         else:
             # Create comparison image and get metrics
@@ -188,7 +194,8 @@ def process_camera(camera_name, config, lighting_info=None):
                 new_image, 
                 camera_name=config["alert_type"],
                 threshold=config["luminance_threshold"] * threshold_multiplier,
-                config=config
+                config=config,
+                is_test=is_test
             )
             
             # Get metrics from comparison image
@@ -205,7 +212,8 @@ def process_camera(camera_name, config, lighting_info=None):
             owl_info = {
                 "pixel_change": changed_pixels / total_pixels,
                 "luminance_change": np.mean(pixels_array),
-                "threshold_used": config["luminance_threshold"]
+                "threshold_used": config["luminance_threshold"],
+                "is_test": is_test
             }
 
             # Clean up temporary comparison image if local saving is disabled
@@ -231,7 +239,8 @@ def process_camera(camera_name, config, lighting_info=None):
             "luminance_change": owl_info.get("luminance_change", 0.0) if owl_info else 0.0,
             "snapshot_path": comparison_path if motion_detected else "",
             "lighting_condition": lighting_condition,
-            "detection_info": owl_info
+            "detection_info": owl_info,
+            "is_test": is_test
         }
 
     except Exception as e:
@@ -243,15 +252,17 @@ def process_camera(camera_name, config, lighting_info=None):
             "luminance_change": 0.0,
             "snapshot_path": "",
             "lighting_condition": "unknown",
-            "detection_info": None
+            "detection_info": None,
+            "is_test": test_images is not None
         }
 
-def process_cameras(camera_configs):
+def process_cameras(camera_configs, test_images=None):
     """
     Process all cameras in batch for efficient motion detection.
     
     Args:
         camera_configs (dict): Dictionary of camera configurations
+        test_images (dict, optional): Dictionary of test images for testing mode
         
     Returns:
         list: List of detection results for each camera
@@ -268,20 +279,30 @@ def process_cameras(camera_configs):
         
         logger.info(f"Processing cameras under {lighting_condition} condition")
         
-        # Verify base images are valid
-        if not verify_base_images(lighting_condition):
-            logger.info("Base images need to be updated")
-            capture_base_images(lighting_condition, force_capture=True)
-            time.sleep(3)  # Allow system to stabilize after capture
+        # Only verify base images in real-time mode
+        if not test_images:
+            if not verify_base_images(lighting_condition):
+                logger.info("Base images need to be updated")
+                capture_base_images(lighting_condition, force_capture=True)
+                time.sleep(3)  # Allow system to stabilize after capture
         
         # Process each camera with shared lighting info
         results = []
         for camera_name, config in camera_configs.items():
             try:
-                result = process_camera(camera_name, config, lighting_info)
+                # Get test images for this camera if in test mode
+                camera_test_images = test_images.get(camera_name) if test_images else None
                 
-                # Process detection for alerts
-                alert_manager.process_detection(camera_name, result)
+                result = process_camera(
+                    camera_name, 
+                    config, 
+                    lighting_info,
+                    test_images=camera_test_images
+                )
+                
+                # Only process alerts for non-test detections
+                if not result.get("is_test", False):
+                    alert_manager.process_detection(camera_name, result)
                 
                 results.append(result)
             except Exception as e:
@@ -289,7 +310,8 @@ def process_cameras(camera_configs):
                 results.append({
                     "camera": camera_name,
                     "status": "Error",
-                    "error_message": str(e)
+                    "error_message": str(e),
+                    "is_test": test_images is not None
                 })
         
         return results

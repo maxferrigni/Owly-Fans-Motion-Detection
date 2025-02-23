@@ -7,10 +7,45 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import logging
 from utilities.logging_utils import get_logger
-from utilities.constants import IMAGE_COMPARISONS_DIR
+from utilities.constants import IMAGE_COMPARISONS_DIR, TEMP_COMPARISONS_DIR
 
 # Initialize logger
 logger = get_logger()
+
+def validate_comparison_images(base_image, new_image, expected_size=None):
+    """
+    Validate images for comparison.
+    
+    Args:
+        base_image (PIL.Image): Base reference image
+        new_image (PIL.Image): New image to compare
+        expected_size (tuple, optional): Expected dimensions (w, h)
+        
+    Returns:
+        tuple: (bool, str) - (is_valid, error_message)
+    """
+    try:
+        # Check image types
+        if not isinstance(base_image, Image.Image) or not isinstance(new_image, Image.Image):
+            return False, "Invalid image types provided"
+            
+        # Check image sizes match
+        if base_image.size != new_image.size:
+            return False, f"Image size mismatch: {base_image.size} vs {new_image.size}"
+            
+        # Check expected size if provided
+        if expected_size and base_image.size != expected_size:
+            return False, f"Images do not match expected size: {base_image.size} vs {expected_size}"
+            
+        # Check image modes
+        if base_image.mode not in ['RGB', 'L'] or new_image.mode not in ['RGB', 'L']:
+            return False, "Images must be in RGB or grayscale mode"
+            
+        return True, "Images validated successfully"
+        
+    except Exception as e:
+        logger.error(f"Error validating images: {e}")
+        return False, f"Validation error: {str(e)}"
 
 def analyze_shape(contour, total_area, config):
     """
@@ -63,7 +98,7 @@ def analyze_shape(contour, total_area, config):
         logger.error(f"Error analyzing shape: {e}")
         return False, {}
 
-def create_difference_image(base_image, new_image, threshold, config):
+def create_difference_image(base_image, new_image, threshold, config, is_test=False):
     """
     Create a difference visualization highlighting only detected owl shapes.
     
@@ -72,11 +107,17 @@ def create_difference_image(base_image, new_image, threshold, config):
         new_image (PIL.Image): New captured image
         threshold (int): Luminance threshold for change detection
         config (dict): Camera configuration with motion detection parameters
+        is_test (bool): Whether this is a test image comparison
     
     Returns:
         tuple: (PIL.Image, bool, dict) - Result image, owl detected flag, and metrics
     """
     try:
+        # Validate images
+        is_valid, message = validate_comparison_images(base_image, new_image)
+        if not is_valid:
+            raise ValueError(message)
+        
         # Convert PIL images to OpenCV format
         base_cv = cv2.cvtColor(np.array(base_image), cv2.COLOR_RGB2GRAY)
         new_cv = cv2.cvtColor(np.array(new_image), cv2.COLOR_RGB2GRAY)
@@ -86,6 +127,10 @@ def create_difference_image(base_image, new_image, threshold, config):
         
         # Apply Gaussian blur to reduce noise
         blurred_diff = cv2.GaussianBlur(diff, (5, 5), 0)
+        
+        # Adjust threshold for test mode
+        if is_test:
+            threshold = int(threshold * 0.9)  # Slightly more sensitive for test images
         
         # Create binary mask of changes
         _, binary_mask = cv2.threshold(blurred_diff, threshold, 255, cv2.THRESH_BINARY)
@@ -105,6 +150,7 @@ def create_difference_image(base_image, new_image, threshold, config):
             "owl_like_contours": 0,
             "largest_area_ratio": 0,
             "avg_luminance_change": np.mean(diff),
+            "is_test": is_test
         }
         
         # Analyze each contour
@@ -133,7 +179,7 @@ def create_difference_image(base_image, new_image, threshold, config):
         logger.error(f"Error creating difference image: {e}")
         raise
 
-def add_status_overlay(image, owl_detected, metrics, threshold):
+def add_status_overlay(image, owl_detected, metrics, threshold, is_test=False):
     """
     Add status and metrics overlay to difference image.
     
@@ -142,6 +188,7 @@ def add_status_overlay(image, owl_detected, metrics, threshold):
         owl_detected (bool): Whether an owl was detected
         metrics (dict): Detection metrics
         threshold (int): Threshold value used
+        is_test (bool): Whether this is a test image
         
     Returns:
         PIL.Image: Image with overlay added
@@ -153,6 +200,8 @@ def add_status_overlay(image, owl_detected, metrics, threshold):
         
         # Draw main status at top
         status_text = "OWL DETECTED" if owl_detected else "NO OWL DETECTED"
+        if is_test:
+            status_text = f"TEST MODE - {status_text}"
         status_color = "red" if owl_detected else "green"
         
         # Position text
@@ -163,20 +212,15 @@ def add_status_overlay(image, owl_detected, metrics, threshold):
         draw.text((x, y), status_text, fill=status_color)
         y += 30
         
-        # Add metrics if owl detected
-        if owl_detected:
-            metrics_text = [
-                f"Owl-like Shapes: {metrics['owl_like_contours']}",
-                f"Largest Area: {metrics['largest_area_ratio']*100:.1f}%",
-                f"Avg Luminance Change: {metrics['avg_luminance_change']:.1f}",
-                f"Threshold: {threshold}"
-            ]
-        else:
-            metrics_text = [
-                f"Total Contours: {metrics['total_contours']}",
-                f"Avg Luminance Change: {metrics['avg_luminance_change']:.1f}",
-                f"Threshold: {threshold}"
-            ]
+        # Add metrics
+        metrics_text = [
+            f"{'Test ' if is_test else ''}Analysis Metrics:",
+            f"Owl-like Shapes: {metrics['owl_like_contours']}",
+            f"Largest Area: {metrics['largest_area_ratio']*100:.1f}%",
+            f"Avg Luminance Change: {metrics['avg_luminance_change']:.1f}",
+            f"Threshold Used: {threshold}",
+            f"Total Contours: {metrics['total_contours']}"
+        ]
         
         # Draw metrics in yellow
         for text in metrics_text:
@@ -189,10 +233,9 @@ def add_status_overlay(image, owl_detected, metrics, threshold):
         logger.error(f"Error adding status overlay: {e}")
         raise
 
-def create_comparison_image(base_image, new_image, camera_name, threshold, config):
+def create_comparison_image(base_image, new_image, camera_name, threshold, config, is_test=False):
     """
     Create a three-panel comparison image with clear owl detection status.
-    Saves locally only if enabled, always returns path for Supabase upload.
     
     Args:
         base_image (PIL.Image): Base reference image
@@ -200,13 +243,16 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         camera_name (str): Name of the camera
         threshold (int): Luminance threshold for change detection
         config (dict): Camera configuration
+        is_test (bool): Whether this is a test image comparison
         
     Returns:
-        str: Path to comparison image (temp path if local saving disabled)
+        str: Path to saved comparison image
     """
     try:
-        # Check if local saving is enabled
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+        # Validate images
+        is_valid, message = validate_comparison_images(base_image, new_image)
+        if not is_valid:
+            raise ValueError(message)
         
         # Get image dimensions
         width, height = base_image.size
@@ -216,12 +262,20 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         
         # Process difference image and get detection results
         diff_image, owl_detected, metrics = create_difference_image(
-            base_image, new_image, threshold, config
+            base_image,
+            new_image,
+            threshold,
+            config,
+            is_test=is_test
         )
         
         # Add status overlay
         diff_with_overlay = add_status_overlay(
-            diff_image, owl_detected, metrics, threshold
+            diff_image,
+            owl_detected,
+            metrics,
+            threshold,
+            is_test=is_test
         )
         
         # Combine images
@@ -229,28 +283,32 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         comparison.paste(new_image, (width, 0))  # Middle panel
         comparison.paste(diff_with_overlay, (width * 2, 0))  # Right panel
         
-        # Determine save path
-        filename = f"{camera_name.lower().replace(' ', '_')}_comparison.jpg"
-        
-        if local_saving:
-            # Save in regular directory if local saving enabled
-            os.makedirs(IMAGE_COMPARISONS_DIR, exist_ok=True)
-            save_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
-            logger.info(f"Saving comparison image locally: {save_path}")
+        # Determine save path based on mode
+        if is_test:
+            # Use temp directory for test images
+            os.makedirs(TEMP_COMPARISONS_DIR, exist_ok=True)
+            filename = f"test_{camera_name.lower().replace(' ', '_')}_comparison.jpg"
+            save_path = os.path.join(TEMP_COMPARISONS_DIR, filename)
         else:
-            # Create temp directory if it doesn't exist
-            temp_dir = os.path.join(IMAGE_COMPARISONS_DIR, 'temp')
-            os.makedirs(temp_dir, exist_ok=True)
-            save_path = os.path.join(temp_dir, f"temp_{filename}")
-            logger.debug(f"Creating temporary comparison image: {save_path}")
+            # Use regular directory for real detections
+            local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+            if local_saving:
+                os.makedirs(IMAGE_COMPARISONS_DIR, exist_ok=True)
+                filename = f"{camera_name.lower().replace(' ', '_')}_comparison.jpg"
+                save_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
+            else:
+                os.makedirs(TEMP_COMPARISONS_DIR, exist_ok=True)
+                filename = f"temp_{camera_name.lower().replace(' ', '_')}_comparison.jpg"
+                save_path = os.path.join(TEMP_COMPARISONS_DIR, filename)
         
         # Save image
         comparison.save(save_path, quality=95)
         
-        # Log detection status
+        # Log result
         logger.info(
             f"Created comparison image for {camera_name}. "
-            f"Owl detected: {owl_detected}"
+            f"Owl detected: {owl_detected} "
+            f"{'(Test Mode)' if is_test else ''}"
         )
         
         return save_path
@@ -264,12 +322,7 @@ if __name__ == "__main__":
     try:
         import pyautogui
         
-        # Capture test images
-        test_roi = (0, 0, 640, 480)  # Example ROI
-        base = pyautogui.screenshot(region=test_roi)
-        new = pyautogui.screenshot(region=test_roi)
-        
-        # Test config
+        # Test configuration
         test_config = {
             "motion_detection": {
                 "min_circularity": 0.5,
@@ -279,12 +332,34 @@ if __name__ == "__main__":
             }
         }
         
-        # Create test comparison
-        comparison_path = create_comparison_image(
-            base, new, "Test Camera", threshold=30, config=test_config
-        )
+        # Test with real-time capture
+        test_roi = (0, 0, 640, 480)
+        base = pyautogui.screenshot(region=test_roi)
+        new = pyautogui.screenshot(region=test_roi)
         
-        print(f"Test comparison created: {comparison_path}")
+        # Test real-time comparison
+        comparison_path = create_comparison_image(
+            base, new, "Test Camera",
+            threshold=30,
+            config=test_config,
+            is_test=False
+        )
+        print(f"Real-time test comparison created: {comparison_path}")
+        
+        # Test with test images
+        test_base = Image.open("test_base.jpg")
+        test_new = Image.open("test_new.jpg")
+        
+        # Test comparison with test images
+        test_comparison_path = create_comparison_image(
+            test_base,
+            test_new,
+            "Test Camera",
+            threshold=30,
+            config=test_config,
+            is_test=True
+        )
+        print(f"Test image comparison created: {test_comparison_path}")
         
     except Exception as e:
         logger.error(f"Test failed: {e}")
