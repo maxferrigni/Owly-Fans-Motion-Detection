@@ -210,6 +210,23 @@ class ConfigurationManager:
             self.restore_backup()
             raise
 
+# Create global configuration manager instance
+config_manager = ConfigurationManager()
+
+def load_camera_config():
+    """
+    Load and validate the camera configuration from config.json.
+    Maintained for backward compatibility.
+    
+    Returns:
+        dict: Parsed configuration data
+        
+    Raises:
+        FileNotFoundError: If the config file is missing
+        json.JSONDecodeError: If the config file is invalid JSON
+    """
+    return config_manager.load_config()
+
 def load_sunrise_sunset_data():
     """Load and parse the sunrise/sunset data"""
     try:
@@ -258,13 +275,8 @@ def load_sunrise_sunset_data():
 def validate_config_files():
     """Validate all configuration files exist and are readable"""
     try:
-        # Create configuration manager
-        config_manager = ConfigurationManager()
-        
-        # Load and validate camera config
-        config_manager.load_config()
-        
-        # Load and validate sunrise/sunset data
+        # Test loading each configuration
+        config = load_camera_config()
         sunrise_sunset_data = load_sunrise_sunset_data()
         
         logger.info("All configuration files validated successfully")
@@ -273,9 +285,6 @@ def validate_config_files():
     except Exception as e:
         logger.error(f"Configuration validation failed: {e}")
         return False
-
-# Create global configuration manager instance
-config_manager = ConfigurationManager()
 
 if __name__ == "__main__":
     try:
