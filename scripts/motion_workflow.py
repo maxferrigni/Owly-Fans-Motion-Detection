@@ -8,13 +8,15 @@ from PIL import Image
 import pyautogui
 import pytz
 import numpy as np
+import shutil
 
 # Import utilities
 from utilities.constants import (
     BASE_IMAGES_DIR,
     TEMP_BASE_IMAGES_DIR,
     get_comparison_image_path,
-    CAMERA_MAPPINGS
+    CAMERA_MAPPINGS,
+    get_archive_comparison_path
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -60,7 +62,7 @@ def initialize_system(camera_configs, is_test=False):
                 return False
                 
         # Verify base images directory based on local saving setting
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true'  # Changed default to True
         logger.info(f"Local image saving is {'enabled' if local_saving else 'disabled'}")
         
         if not is_test:
@@ -82,7 +84,7 @@ def verify_base_images(lighting_condition):
         logger.info("Verifying base images...")
         
         # Determine which directories to check based on local saving setting
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true'  # Changed default to True
         check_dirs = [TEMP_BASE_IMAGES_DIR]
         if local_saving:
             check_dirs.append(BASE_IMAGES_DIR)
@@ -146,6 +148,28 @@ def capture_real_image(roi):
         logger.error(f"Error capturing screenshot: {e}")
         raise
 
+def save_to_archive(comparison_path, camera_name):
+    """
+    Save a copy of the comparison image to the archive directory.
+    
+    Args:
+        comparison_path (str): Path to the comparison image
+        camera_name (str): Name of the camera
+    """
+    try:
+        if os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true':  # Changed default to True
+            current_time = datetime.now(PACIFIC_TIME)
+            archive_path = get_archive_comparison_path(camera_name, current_time)
+            
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(archive_path), exist_ok=True)
+            
+            # Copy the comparison image to archive
+            shutil.copy2(comparison_path, archive_path)
+            logger.info(f"Archived comparison image to: {archive_path}")
+    except Exception as e:
+        logger.error(f"Error archiving comparison image: {e}")
+
 def process_camera(camera_name, config, lighting_info=None, test_images=None):
     """Process motion detection for a specific camera"""
     try:
@@ -174,7 +198,8 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
         # Handle different camera types
         motion_detected = False
         owl_info = None
-        
+        comparison_path = None
+
         if config["alert_type"] == "Owl In Box":
             # Use specialized owl detection for box camera
             is_owl_present, detection_info = detect_owl_in_box(
@@ -187,7 +212,6 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             owl_info = detection_info
             
             # Generate comparison image
-            comparison_path = None
             if motion_detected:
                 comparison_path = create_comparison_image(
                     base_image, 
@@ -226,16 +250,20 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 "is_test": is_test
             }
 
-            # Clean up temporary comparison image if local saving is disabled
-            if (not os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true' and 
-                comparison_path and 
-                os.path.exists(comparison_path) and 
-                'temp' in comparison_path):
-                try:
-                    os.remove(comparison_path)
-                    logger.debug(f"Cleaned up temporary comparison image: {comparison_path}")
-                except Exception as e:
-                    logger.error(f"Error cleaning up temporary file: {e}")
+        # If motion detected and we have a comparison image, save to archive
+        if motion_detected and comparison_path:
+            save_to_archive(comparison_path, camera_name)
+
+        # Clean up temporary comparison image if local saving is disabled
+        if (not os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true' and  # Changed default to True
+            comparison_path and 
+            os.path.exists(comparison_path) and 
+            'temp' in comparison_path):
+            try:
+                os.remove(comparison_path)
+                logger.debug(f"Cleaned up temporary comparison image: {comparison_path}")
+            except Exception as e:
+                logger.error(f"Error cleaning up temporary file: {e}")
         
         if motion_detected:
             logger.info(

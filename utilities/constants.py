@@ -28,6 +28,9 @@ TEMP_DIR = os.path.join(LOCAL_FILES_DIR, "temp")
 TEMP_BASE_IMAGES_DIR = os.path.join(TEMP_DIR, "base_images")
 TEMP_COMPARISONS_DIR = os.path.join(TEMP_DIR, "comparisons")
 
+# NEW: Archival storage path for saved comparisons
+ARCHIVE_DIR = os.path.join(LOCAL_FILES_DIR, "archived_detections")
+
 # Input config files
 INPUT_CONFIG_FILES = {
     "config": os.path.join(CONFIGS_DIR, "config.json"),
@@ -81,6 +84,31 @@ def get_comparison_image_path(camera_name, temp=False):
     
     return path
 
+# NEW: Function to generate archival path for comparison images
+def get_archive_comparison_path(camera_name, timestamp):
+    """
+    Generate path for archived comparison image with timestamp-based organization.
+    
+    Args:
+        camera_name (str): Name of the camera
+        timestamp (datetime): Timestamp of the detection
+        
+    Returns:
+        str: Full path for archived comparison image
+    """
+    # Create year/month/day directory structure
+    date_dir = os.path.join(
+        ARCHIVE_DIR,
+        timestamp.strftime("%Y"),
+        timestamp.strftime("%m"),
+        timestamp.strftime("%d")
+    )
+    
+    # Create filename with full timestamp
+    filename = f"{camera_name.lower().replace(' ', '_')}_{timestamp.strftime('%Y%m%d_%H%M%S')}_comparison.jpg"
+    
+    return os.path.join(date_dir, filename)
+
 def get_base_image_path(camera_name, temp=False):
     """
     Get the base image directory path.
@@ -99,7 +127,8 @@ def ensure_directories_exist():
         LOGS_DIR,
         TEMP_DIR,
         TEMP_BASE_IMAGES_DIR,
-        TEMP_COMPARISONS_DIR
+        TEMP_COMPARISONS_DIR,
+        ARCHIVE_DIR  # NEW: Added archive directory to creation list
     ]
 
     for directory in directories:

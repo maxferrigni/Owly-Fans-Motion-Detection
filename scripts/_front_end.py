@@ -99,7 +99,10 @@ class OwlApp:
         self.script_process = None
         self.alert_delay_enabled = tk.BooleanVar(value=True)
         self.alert_delay_minutes = tk.StringVar(value="30")
-        self.local_saving_enabled = tk.BooleanVar(value=False)
+        # Changed default to True for local saving
+        self.local_saving_enabled = tk.BooleanVar(value=True)
+        # NEW: Added capture interval variable with default 60 seconds
+        self.capture_interval = tk.StringVar(value="60")
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         # Initialize managers
@@ -194,6 +197,24 @@ class OwlApp:
         self.alert_delay_entry.pack(side=tk.LEFT, padx=5)
 
         ttk.Label(delay_frame, text="minutes").pack(side=tk.LEFT)
+
+        # NEW: Capture Interval frame
+        interval_frame = ttk.Frame(control_frame)
+        interval_frame.pack(pady=5)
+
+        ttk.Label(interval_frame, text="Capture Interval:").pack(side=tk.LEFT)
+
+        # Create combobox for interval selection
+        self.capture_interval_combo = ttk.Combobox(
+            interval_frame,
+            textvariable=self.capture_interval,
+            width=5,
+            state="readonly",
+            values=["1", "5", "15", "30", "60"]
+        )
+        self.capture_interval_combo.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(interval_frame, text="seconds").pack(side=tk.LEFT)
 
         # Local Saving toggle
         ttk.Checkbutton(
@@ -336,9 +357,10 @@ class OwlApp:
         if not self.script_process:
             self.log_message("Starting motion detection script...")
             try:
-                # Pass local saving setting through environment variable
+                # Pass configuration through environment variables
                 env = os.environ.copy()
                 env['OWL_LOCAL_SAVING'] = str(self.local_saving_enabled.get())
+                env['OWL_CAPTURE_INTERVAL'] = str(self.capture_interval.get())
                 
                 cmd = [sys.executable, self.main_script_path]
                 self.script_process = subprocess.Popen(
@@ -380,7 +402,7 @@ class OwlApp:
                     self.log_message(line.strip())
         except Exception as e:
             self.log_message(f"Error reading logs: {e}")
-
+            
     def log_message(self, message):
         """Add a message to both log displays"""
         try:
