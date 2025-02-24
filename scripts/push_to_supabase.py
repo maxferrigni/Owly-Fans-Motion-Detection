@@ -37,6 +37,15 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     raise
 
+def validate_detection_results(detection_results):
+    """Validate and clean detection results before upload."""
+    required_fields = ['camera', 'status']
+    for field in required_fields:
+        if not detection_results.get(field):
+            logger.error(f"Missing required field: {field}")
+            return False
+    return True
+
 def get_last_alert_time(alert_type):
     """
     Retrieve the last time a specific alert was sent from Supabase.
@@ -145,14 +154,23 @@ def update_alert_status(
     """
     try:
         # Update the alert entry with additional information
-        supabase_client.table('alerts').update({
-            'email_count': email_count,
-            'sms_count': sms_count,
-            'previous_alert_id': previous_alert_id,
-            'priority_override': priority_override
-        }).eq('id', alert_id).execute()
+        update_data = {}
+        
+        # Only include fields that have values
+        if email_count is not None:
+            update_data['email_count'] = email_count
+        if sms_count is not None:
+            update_data['sms_count'] = sms_count
+        if previous_alert_id is not None:
+            update_data['previous_alert_id'] = previous_alert_id
+        if priority_override is not None:
+            update_data['priority_override'] = priority_override
 
-        logger.info(f"Updated alert status for alert ID {alert_id}")
+        if update_data:
+            supabase_client.table('alerts').update(update_data).eq('id', alert_id).execute()
+            logger.info(f"Updated alert status for alert ID {alert_id}")
+        else:
+            logger.warning(f"No data provided to update alert ID {alert_id}")
 
     except Exception as e:
         logger.error(f"Error updating alert status: {e}")
@@ -170,45 +188,49 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         dict: The created log entry or None if failed
     """
     try:
+        # Validate detection results
+        if not validate_detection_results(detection_results):
+            logger.error("Invalid detection results structure")
+            return None
+
         # Create timestamp in UTC
         timestamp = datetime.datetime.now(datetime.timezone.utc)
 
-        # Format the log entry
+        # Format the log entry with required fields
         log_entry = {
             "timestamp": timestamp.isoformat(),
+            "camera_name": detection_results.get("camera"),
+            "alert_type": detection_results.get("status"),
             "lighting_condition": lighting_condition,
-            "base_image_age": base_image_age
+            "base_image_age": base_image_age,
+            "is_test": detection_results.get("is_test", False),
+            "pixel_change": float(detection_results.get("pixel_change", 0.0)),
+            "luminance_change": float(detection_results.get("luminance_change", 0.0)),
+            "motion_detected": bool(detection_results.get("motion_detected", False)),
+            "error_message": detection_results.get("error_message")
         }
 
-        # Add detection metrics if available
-        if isinstance(detection_results, dict):
-            log_entry.update({
-                "camera_name": detection_results.get("camera"),
-                "alert_type": detection_results.get("status"),
-                "pixel_change": detection_results.get("pixel_change", 0.0),
-                "luminance_change": detection_results.get("luminance_change", 0.0),
-                "is_test": detection_results.get("is_test", False),
-                "error_message": detection_results.get("error_message")
-            })
+        # Add optional image URLs if available
+        if "snapshot_path" in detection_results:
+            log_entry["image_url"] = detection_results["snapshot_path"]
+        if "comparison_path" in detection_results:
+            log_entry["comparison_url"] = detection_results["comparison_path"]
 
-            # Add detection images if available
-            if "snapshot_path" in detection_results:
-                log_entry["image_url"] = detection_results["snapshot_path"]
-            if "comparison_path" in detection_results:
-                log_entry["comparison_url"] = detection_results["comparison_path"]
+        # Log the entry we're about to send
+        logger.debug(f"Attempting to upload log entry: {log_entry}")
 
         # Insert the log entry into the activity_log table
         response = supabase_client.table('activity_log').insert(log_entry).execute()
         
         if hasattr(response, 'data') and response.data:
-            logger.info("Successfully uploaded log to Supabase")
+            logger.info(f"Successfully uploaded log for {log_entry['camera_name']}")
             return response.data[0]
         else:
-            logger.error("Failed to get response data from Supabase")
+            logger.error(f"Failed to get response data from Supabase for {log_entry['camera_name']}")
             return None
 
     except Exception as e:
-        logger.error(f"Failed to upload log to Supabase: {e}")
+        logger.error(f"Failed to upload log to Supabase: {str(e)}")
         return None
 
 def format_detection_results(detection_result):
@@ -222,29 +244,44 @@ def format_detection_results(detection_result):
         dict: Formatted log entry
     """
     try:
-        # Extract relevant information from the detection result
-        camera_name = detection_result.get("camera")
-        status = detection_result.get("status")
-        error_message = detection_result.get("error_message")
-        is_test = detection_result.get("is_test", False)
-        
-        # Create the log entry dictionary
-        log_entry = {
-            "camera": camera_name,
-            "status": status,
-            "error_message": error_message,
-            "is_test": is_test,
-            "pixel_change": detection_result.get("pixel_change", 0.0),
-            "luminance_change": detection_result.get("luminance_change", 0.0),
-            "snapshot_path": detection_result.get("snapshot_path", ""),
-            "comparison_path": detection_result.get("comparison_path", "")
+        # Required fields
+        formatted_entry = {
+            "camera": detection_result.get("camera"),
+            "status": detection_result.get("status", "Unknown"),
+            "is_test": detection_result.get("is_test", False),
+            "motion_detected": detection_result.get("motion_detected", False)
         }
 
-        return log_entry
+        # Optional metrics - ensure they're proper numeric types
+        metrics = {
+            "pixel_change": float(detection_result.get("pixel_change", 0.0)),
+            "luminance_change": float(detection_result.get("luminance_change", 0.0))
+        }
+        formatted_entry.update(metrics)
+
+        # Optional paths
+        if "snapshot_path" in detection_result:
+            formatted_entry["snapshot_path"] = detection_result["snapshot_path"]
+        if "comparison_path" in detection_result:
+            formatted_entry["comparison_path"] = detection_result["comparison_path"]
+
+        # Error handling
+        if "error_message" in detection_result:
+            formatted_entry["error_message"] = detection_result["error_message"]
+
+        # Log the formatted results
+        logger.debug(f"Formatted detection results: {formatted_entry}")
+
+        return formatted_entry
 
     except Exception as e:
-        logger.error(f"Error formatting log entry: {e}")
-        return {}
+        logger.error(f"Error formatting detection results: {e}")
+        return {
+            "camera": detection_result.get("camera", "Unknown"),
+            "status": "Error",
+            "error_message": str(e),
+            "is_test": detection_result.get("is_test", False)
+        }
 
 if __name__ == "__main__":
     # Test the functionality
@@ -270,6 +307,7 @@ if __name__ == "__main__":
             "camera": "Test Camera",
             "status": "Owl In Box",
             "is_test": True,
+            "motion_detected": False,
             "pixel_change": 25.5,
             "luminance_change": 30.2
         }
