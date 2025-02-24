@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 # Import utilities
 from utilities.logging_utils import get_logger
 
+# Import from database_utils
+from utilities.database_utils import get_subscribers
+
 # Initialize logger
 logger = get_logger()
 
@@ -34,9 +37,6 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     raise
 
-# Import the get_subscribers function from database_utils.py
-from utilities.database_utils import get_subscribers
-
 def get_last_alert_time(alert_type):
     """
     Retrieve the last time a specific alert was sent from Supabase.
@@ -58,7 +58,7 @@ def get_last_alert_time(alert_type):
 
         # If an alert is found, return the last_alert_time
         if last_alert:
-            return last_alert['last_alert_time']
+            return last_alert[0]['last_alert_time']
         else:
             return None
 
@@ -117,8 +117,8 @@ def create_alert_entry(alert_type, camera_name=None, activity_log_id=None):
         }).execute().data
 
         if new_alert:
-            logger.info(f"Created new alert entry for {alert_type} (ID: {new_alert['id']})")
-            return new_alert
+            logger.info(f"Created new alert entry for {alert_type} (ID: {new_alert[0]['id']})")
+            return new_alert[0]
         else:
             return None
 
@@ -157,28 +157,67 @@ def update_alert_status(
     except Exception as e:
         logger.error(f"Error updating alert status: {e}")
 
-def push_log_to_supabase(log_entry):  # Add the new arguments here
+def push_log_to_supabase(detection_results, lighting_condition=None, base_image_age=None):
     """
     Push a log entry to the Supabase database.
-
+    
     Args:
-        log_entry (dict): Dictionary containing the log data
+        detection_results (dict): Dictionary containing detection results
+        lighting_condition (str, optional): Current lighting condition
+        base_image_age (int, optional): Age of base image in seconds
+        
+    Returns:
+        dict: The created log entry or None if failed
     """
     try:
+        # Create timestamp in UTC
+        timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+        # Format the log entry
+        log_entry = {
+            "timestamp": timestamp.isoformat(),
+            "lighting_condition": lighting_condition,
+            "base_image_age": base_image_age
+        }
+
+        # Add detection metrics if available
+        if isinstance(detection_results, dict):
+            log_entry.update({
+                "camera_name": detection_results.get("camera"),
+                "alert_type": detection_results.get("status"),
+                "pixel_change": detection_results.get("pixel_change", 0.0),
+                "luminance_change": detection_results.get("luminance_change", 0.0),
+                "is_test": detection_results.get("is_test", False),
+                "error_message": detection_results.get("error_message")
+            })
+
+            # Add detection images if available
+            if "snapshot_path" in detection_results:
+                log_entry["image_url"] = detection_results["snapshot_path"]
+            if "comparison_path" in detection_results:
+                log_entry["comparison_url"] = detection_results["comparison_path"]
+
         # Insert the log entry into the activity_log table
-        supabase_client.table('activity_log').insert(log_entry).execute()
-        logger.info("Successfully uploaded log to Supabase")
+        response = supabase_client.table('activity_log').insert(log_entry).execute()
+        
+        if hasattr(response, 'data') and response.data:
+            logger.info("Successfully uploaded log to Supabase")
+            return response.data[0]
+        else:
+            logger.error("Failed to get response data from Supabase")
+            return None
 
     except Exception as e:
         logger.error(f"Failed to upload log to Supabase: {e}")
+        return None
 
 def format_detection_results(detection_result):
     """
     Format detection results into a dictionary suitable for logging to Supabase.
-
+    
     Args:
         detection_result (dict): Dictionary containing detection results
-
+        
     Returns:
         dict: Formatted log entry
     """
@@ -187,21 +226,19 @@ def format_detection_results(detection_result):
         camera_name = detection_result.get("camera")
         status = detection_result.get("status")
         error_message = detection_result.get("error_message")
-        is_test = detection_result.get("is_test")
-        lighting_condition = detection_result.get("lighting_condition")
+        is_test = detection_result.get("is_test", False)
         
         # Create the log entry dictionary
         log_entry = {
-            "camera_name": camera_name,
-            "alert_type": status,
-            "lighting_condition": lighting_condition,
+            "camera": camera_name,
+            "status": status,
+            "error_message": error_message,
             "is_test": is_test,
-            "time": datetime.datetime.now(datetime.timezone.utc).isoformat()
+            "pixel_change": detection_result.get("pixel_change", 0.0),
+            "luminance_change": detection_result.get("luminance_change", 0.0),
+            "snapshot_path": detection_result.get("snapshot_path", ""),
+            "comparison_path": detection_result.get("comparison_path", "")
         }
-
-        # Add optional fields if available
-        if error_message:
-            log_entry["error_message"] = error_message
 
         return log_entry
 
@@ -228,15 +265,28 @@ if __name__ == "__main__":
         else:
             logger.info("No previous Owl In Box alerts found")
 
-        # Test log upload with alert tracking
-        sample_log = format_detection_results({
+        # Test log upload with test data
+        test_detection = {
             "camera": "Test Camera",
             "status": "Owl In Box",
-            "lighting_condition": "day",
-            "is_test": True
-        })
+            "is_test": True,
+            "pixel_change": 25.5,
+            "luminance_change": 30.2
+        }
 
-        push_log_to_supabase(sample_log)
+        # Test the new log push function
+        log_entry = push_log_to_supabase(
+            test_detection,
+            lighting_condition="day",
+            base_image_age=300
+        )
+
+        if log_entry:
+            logger.info("Test log entry created successfully")
+            logger.info(f"Log entry ID: {log_entry.get('id')}")
+        else:
+            logger.error("Failed to create test log entry")
+
         logger.info("Supabase logging test complete")
 
     except Exception as e:

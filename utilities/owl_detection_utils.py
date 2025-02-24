@@ -16,16 +16,16 @@ def validate_images(new_image, base_image, expected_roi=None, is_test=False):
             return False, "Invalid image types provided"
 
         # Size checks
-        if new_image.size!= base_image.size:
+        if new_image.size != base_image.size:
             return False, f"Image size mismatch: {new_image.size} vs {base_image.size}"
 
         # ROI validation if provided
         if expected_roi:
-            expected_width = abs(expected_roi - expected_roi)
-            expected_height = abs(expected_roi - expected_roi)
+            expected_width = abs(expected_roi[2] - expected_roi[0])
+            expected_height = abs(expected_roi[3] - expected_roi[1])
             expected_size = (expected_width, expected_height)
 
-            if new_image.size!= expected_size:
+            if new_image.size != expected_size:
                 return False, f"Image does not match ROI dimensions: {new_image.size} vs {expected_size}"
 
         # Additional validation for test images
@@ -49,11 +49,11 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
     Detect the presence of an owl in the new image compared to the base image.
 
     Args:
-        new_image (PIL.Image): New image to check for owl.
-        base_image (PIL.Image): Base reference image.
-        config (dict): Configuration dictionary.
-        is_test (bool): Whether this is a test image.
-        sensitivity (float): Owl detection sensitivity.
+        new_image (PIL.Image): New image to check for owl
+        base_image (PIL.Image): Base reference image
+        config (dict): Configuration dictionary
+        is_test (bool): Whether this is a test image
+        sensitivity (float): Owl detection sensitivity
 
     Returns:
         tuple: (bool, dict) - (is_owl_present, detection_info)
@@ -77,21 +77,32 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
         # Log image sizes
         logger.info(f"Image sizes - New: {new_array.shape}, Base: {base_array.shape}")
 
+        # Calculate center point for image division
+        width = new_array.shape[1]  # Shape is (height, width)
+        center_x = width // 2
+
         # Split the image into left and right compartments
-        center_x = new_array.shape // 2
-        left_new = new_array[:,:center_x]
+        left_new = new_array[:, :center_x]
         right_new = new_array[:, center_x:]
-        left_base = base_array[:,:center_x]
+        left_base = base_array[:, :center_x]
         right_base = base_array[:, center_x:]
 
         # Calculate absolute differences between new and base images
         left_diff = cv2.absdiff(left_new, left_base)
         right_diff = cv2.absdiff(right_new, right_base)
 
+        # Create full difference array for overall metrics
+        full_diff = cv2.absdiff(new_array, base_array)
+
         # Threshold the differences to highlight significant changes
         threshold = config["motion_detection"]["brightness_threshold"]
         _, left_thresh = cv2.threshold(left_diff, threshold, 255, cv2.THRESH_BINARY)
         _, right_thresh = cv2.threshold(right_diff, threshold, 255, cv2.THRESH_BINARY)
+
+        # Apply noise reduction
+        kernel = np.ones((3,3), np.uint8)
+        left_thresh = cv2.morphologyEx(left_thresh, cv2.MORPH_OPEN, kernel)
+        right_thresh = cv2.morphologyEx(right_thresh, cv2.MORPH_OPEN, kernel)
 
         # Find contours of the shapes in the thresholded images
         left_contours, _ = cv2.findContours(
@@ -103,21 +114,28 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
 
         # Combine contours from both compartments
         all_contours = left_contours + right_contours
+        total_area = new_array.shape[0] * new_array.shape[1]  # Total image area
         contour_data = []
 
         # Analyze contours to identify potential owl candidates
         for contour in all_contours:
-            area_ratio = cv2.contourArea(contour) / (new_array.shape * new_array.shape)
-            circularity = (4 * np.pi * cv2.contourArea(contour)) / (cv2.arcLength(contour, True) ** 2) if cv2.arcLength(contour, True) > 0 else 0
+            area = cv2.contourArea(contour)
+            area_ratio = area / total_area
+            perimeter = cv2.arcLength(contour, True)
+            
+            # Calculate shape characteristics
+            circularity = (4 * np.pi * area) / (perimeter * perimeter) if perimeter > 0 else 0
             x, y, w, h = cv2.boundingRect(contour)
             aspect_ratio = float(w) / h if h > 0 else 0
             
             # Calculate brightness difference
             mask = np.zeros(new_array.shape, dtype=np.uint8)
             cv2.drawContours(mask, [contour], -1, 255, -1)
-            brightness_diff = cv2.mean(new_array, mask=mask) - cv2.mean(base_array, mask=mask)
+            new_mean = cv2.mean(new_array, mask=mask)[0]
+            base_mean = cv2.mean(base_array, mask=mask)[0]
+            brightness_diff = abs(new_mean - base_mean)
 
-            # Log only when a contour meets the criteria
+            # Log only when a contour meets minimum criteria
             if (
                 circularity >= config["motion_detection"]["min_circularity"] and
                 config["motion_detection"]["min_aspect_ratio"] <= aspect_ratio <= config["motion_detection"]["max_aspect_ratio"] and
@@ -133,49 +151,71 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
                     "area_ratio": area_ratio,
                     "circularity": circularity,
                     "aspect_ratio": aspect_ratio,
-                    "brightness_diff": brightness_diff
+                    "brightness_diff": brightness_diff,
+                    "position": (x, y),
+                    "size": (w, h)
                 })
 
-        # Determine owl presence based on detected contours
+        # Calculate overall image metrics
+        mean_diff = np.mean(full_diff)
+        std_diff = np.std(full_diff)
+        significant_pixels = np.sum(full_diff > threshold) / total_area
+
+        # Determine owl presence based on detected contours and metrics
         is_owl_present = len(contour_data) > 0
         owl_candidates = [c for c in contour_data if c["area_ratio"] >= config["motion_detection"]["min_area_ratio"]]
 
-        # Calculate confidence based on number of candidates and their area ratios
-        confidence = sum(c["area_ratio"] for c in owl_candidates)
+        # Calculate confidence based on number of candidates and their characteristics
+        if owl_candidates:
+            max_area_ratio = max(c["area_ratio"] for c in owl_candidates)
+            max_brightness = max(c["brightness_diff"] for c in owl_candidates)
+            confidence = (max_area_ratio + (max_brightness / 255)) / 2
+        else:
+            confidence = 0.0
         
         # Prepare detection metrics
         diff_metrics = {
-            "mean_difference": np.mean(left_diff) if left_diff.any() else 0.0,
-            "significant_pixels": np.mean(left_thresh) / 255 if left_thresh.any() else 0.0,
-            "threshold": threshold
+            "mean_difference": mean_diff,
+            "std_difference": std_diff,
+            "significant_pixels": significant_pixels,
+            "threshold_used": threshold
         }
         
         # Prepare detection info
         detection_info = {
+            "is_owl_present": is_owl_present,
             "confidence": confidence,
             "owl_candidates": owl_candidates,
-            "largest_candidate": owl_candidates if owl_candidates else None,
+            "largest_candidate": max(owl_candidates, key=lambda x: x["area_ratio"]) if owl_candidates else None,
             "is_test": is_test,
             "sensitivity_used": sensitivity,
-            "diff_metrics": diff_metrics
+            "diff_metrics": diff_metrics,
+            "pixel_change": significant_pixels * 100,  # Convert to percentage
+            "luminance_change": mean_diff
         }
 
-        logger.info(f"Owl detection completed - Owl Present: {is_owl_present}, "
-                   f"Candidates: {len(owl_candidates)}, "
-                   f"Total Shapes: {len(contour_data)}")
+        logger.info(
+            f"Owl detection completed - Owl Present: {is_owl_present}, "
+            f"Candidates: {len(owl_candidates)}, "
+            f"Confidence: {confidence:.2f}, "
+            f"Total Shapes: {len(contour_data)}"
+        )
 
         return is_owl_present, detection_info
 
     except Exception as e:
         logger.error(f"Error in owl detection: {e}")
-        return False, {"error": str(e), "is_test": is_test}
+        return False, {
+            "error": str(e),
+            "is_test": is_test,
+            "pixel_change": 0.0,
+            "luminance_change": 0.0
+        }
 
 if __name__ == "__main__":
     # Test the detection
     try:
-        test_new = Image.open("test_new.jpg")
-        test_base = Image.open("test_base.jpg")
-
+        # Create test configuration
         test_config = {
             "motion_detection": {
                 "min_circularity": 0.5,
@@ -189,16 +229,24 @@ if __name__ == "__main__":
             "interval_seconds": 3
         }
 
-        # Test with is_test=True
-        result, info = detect_owl_in_box(
-            test_new,
-            test_base,
-            test_config,
-            is_test=True
-        )
+        # Load test images if available
+        try:
+            test_new = Image.open("test_new.jpg")
+            test_base = Image.open("test_base.jpg")
 
-        print(f"Test detection result: {result}")
-        print(f"Detection info: {info}")
+            # Test with is_test=True
+            result, info = detect_owl_in_box(
+                test_new,
+                test_base,
+                test_config,
+                is_test=True
+            )
+
+            logger.info(f"Test detection result: {result}")
+            logger.info(f"Detection info: {info}")
+
+        except FileNotFoundError:
+            logger.warning("Test images not found. Create test_new.jpg and test_base.jpg to run tests.")
 
     except Exception as e:
         logger.error(f"Owl detection test failed: {e}")

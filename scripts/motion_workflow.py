@@ -29,7 +29,7 @@ from utilities.alert_manager import AlertManager
 from capture_base_images import capture_base_images, get_latest_base_image
 
 # Import from push_to_supabase
-from push_to_supabase import push_log_to_supabase  # Changed to push_to_supabase
+from push_to_supabase import push_log_to_supabase, format_detection_results
 
 # Initialize logger and alert manager
 logger = get_logger()
@@ -83,61 +83,6 @@ def capture_real_image(roi):
         logger.error(f"Error capturing screenshot: {e}")
         raise
 
-def format_detection_metrics(detection_info, config, camera_type):
-    """Format detection metrics for database logging"""
-    metrics = {
-        "detected": False,
-        "pixel_change": 0.0,
-        "luminance_change": 0.0,
-        "threshold_percentage": config.get("threshold_percentage", 0.0),
-        "threshold_luminance": config.get("luminance_threshold", 0.0),
-        "interval_seconds": config.get("interval_seconds", 0),
-        "shapes_count": 0,
-        "largest_shape_circularity": 0.0,
-        "largest_shape_aspect_ratio": 0.0,
-        "largest_shape_area_ratio": 0.0,
-        "largest_shape_brightness_diff": 0.0,
-        "image_url": "",
-        "comparison_url": ""
-    }
-
-    if not detection_info:
-        return metrics
-
-    # Update with actual detection info
-    if camera_type == "Owl In Box":
-        metrics.update({
-            "detected": detection_info.get("is_owl_present", False),
-            "shapes_count": len(detection_info.get("owl_candidates",)),
-            "pixel_change": detection_info.get("diff_metrics", {}).get("significant_pixels", 0.0) * 100,
-            "luminance_change": detection_info.get("diff_metrics", {}).get("mean_difference", 0.0)
-        })
-        
-        # Get largest shape metrics if any were detected
-        if detection_info.get("owl_candidates"):
-            largest = max(detection_info["owl_candidates"], 
-                        key=lambda x: x.get("area_ratio", 0))
-            metrics.update({
-                "largest_shape_circularity": largest.get("circularity", 0.0),
-                "largest_shape_aspect_ratio": largest.get("aspect_ratio", 0.0),
-                "largest_shape_area_ratio": largest.get("area_ratio", 0.0),
-                "largest_shape_brightness_diff": largest.get("brightness_diff", 0.0)
-            })
-    else:
-        metrics.update({
-            "detected": detection_info.get("motion_detected", False),
-            "pixel_change": detection_info.get("pixel_change", 0.0),
-            "luminance_change": detection_info.get("luminance_change", 0.0)
-        })
-
-    # Add image URLs if available
-    if detection_info.get("snapshot_path"):
-        metrics["image_url"] = detection_info["snapshot_path"]
-    if detection_info.get("comparison_path"):
-        metrics["comparison_url"] = detection_info["comparison_path"]
-
-    return metrics
-
 def process_camera(camera_name, config, lighting_info=None, test_images=None):
     """Process motion detection for a specific camera"""
     try:
@@ -153,29 +98,32 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             
         logger.info(f"Current lighting condition: {lighting_condition}")
         
-        # Get base image age
+        # Get base image path and age
         base_image_age = 0
-        try:
-            base_timestamp = os.path.getctime(get_latest_base_image(camera_name, lighting_condition))
-            base_image_age = int(time.time() - base_timestamp)
-        except Exception as e:
-            logger.warning(f"Could not determine base image age: {e}")
-        
-        # Get images either from test or capture
         if test_images:
             base_image = test_images['base']
             new_image = test_images['test']
             is_test = True
         else:
-            base_image = get_latest_base_image(camera_name, lighting_condition)
+            # Get base image path first
+            base_image_path = get_latest_base_image(camera_name, lighting_condition)
+            logger.info(f"Using base image: {base_image_path}")
+            
+            # Calculate base image age from the file
+            try:
+                base_image_age = int(time.time() - os.path.getctime(base_image_path))
+            except Exception as e:
+                logger.warning(f"Could not determine base image age: {e}")
+            
+            # Load the base image
+            base_image = Image.open(base_image_path).convert("RGB")
             new_image = capture_real_image(config["roi"])
             is_test = False
 
         # Initialize detection results
         detection_results = {
-            "Owl In Box": {},
-            "Owl On Box": {},
-            "Owl In Area": {}
+            "camera": camera_name,
+            "is_test": is_test
         }
         
         # Get camera type
@@ -199,7 +147,9 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                     config=config,
                     is_test=is_test
                 )
-                detection_info["comparison_path"] = comparison_path
+                if detection_info:
+                    detection_info["comparison_path"] = comparison_path
+                detection_results["status"] = "Owl In Box"
         else:
             comparison_path = create_comparison_image(
                 base_image, 
@@ -215,37 +165,38 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                     "motion_detected": True,
                     "comparison_path": comparison_path
                 }
+                detection_results["status"] = alert_type
 
         # Format metrics for database
-        metrics = format_detection_metrics(detection_info, config, alert_type)
-        detection_results[alert_type] = metrics
+        if detection_info:
+            detection_results.update({
+                "pixel_change": detection_info.get("pixel_change", 0.0),
+                "luminance_change": detection_info.get("luminance_change", 0.0),
+                "comparison_path": detection_info.get("comparison_path", ""),
+                "motion_detected": detection_info.get("motion_detected", False)
+            })
 
         # Push to activity log
-        log_entry = push_log_to_supabase(
-            detection_results,
-            lighting_condition,
-            base_image_age
-        )
+        formatted_results = format_detection_results(detection_results)
+        log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
 
-        if log_entry and metrics["detected"] and not is_test:
+        if log_entry and detection_info and detection_info.get("motion_detected", False) and not is_test:
             # Process alert if motion was detected
             alert_manager.process_detection(
                 camera_name,
-                {
-                    "status": alert_type,
-                    "pixel_change": metrics["pixel_change"],
-                    "luminance_change": metrics["luminance_change"]
-                },
-                log_entry["id"]
+                detection_results,
+                log_entry.get("id")
             )
 
-        return detection_results[alert_type]
+        return detection_results
 
     except Exception as e:
         logger.error(f"Error processing {camera_name}: {e}")
         return {
+            "camera": camera_name,
             "status": "Error",
-            "error_message": str(e)
+            "error_message": str(e),
+            "is_test": is_test if 'is_test' in locals() else False
         }
 
 def process_cameras(camera_configs, test_images=None):
@@ -270,7 +221,7 @@ def process_cameras(camera_configs, test_images=None):
                 time.sleep(3)  # Allow system to stabilize after capture
         
         # Process each camera with shared lighting info
-        results = [] # Initialize results list here
+        results = []
         for camera_name, config in camera_configs.items():
             try:
                 camera_test_images = test_images.get(camera_name) if test_images else None
@@ -307,7 +258,7 @@ if __name__ == "__main__":
         if initialize_system(test_configs, is_test=True):
             # Run test detection cycle
             results = process_cameras(test_configs)
-            print("Test Results:", results)
+            logger.info("Test Results:", results)
     except Exception as e:
         logger.error(f"Motion detection test failed: {e}")
         raise
