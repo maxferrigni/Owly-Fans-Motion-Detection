@@ -30,8 +30,13 @@ TEMP_DIR = os.path.join(LOCAL_FILES_DIR, "temp")
 TEMP_BASE_IMAGES_DIR = os.path.join(TEMP_DIR, "base_images")
 TEMP_COMPARISONS_DIR = os.path.join(TEMP_DIR, "comparisons")
 
-# NEW: Archival storage path for saved comparisons
+# Historical storage paths
 ARCHIVE_DIR = os.path.join(LOCAL_FILES_DIR, "archived_detections")
+HISTORY_DIR = os.path.join(LOCAL_FILES_DIR, "historical_images")
+
+# Create a more organized structure for archive paths
+ARCHIVE_BASE_IMAGES_DIR = os.path.join(ARCHIVE_DIR, "base_images")
+ARCHIVE_COMPARISONS_DIR = os.path.join(ARCHIVE_DIR, "comparisons")
 
 # Input config files
 INPUT_CONFIG_FILES = {
@@ -285,3 +290,35 @@ def validate_system():
         logging.basicConfig(level=logging.INFO)
     validate_system()
     cleanup_temp_files()
+
+def get_historical_image_path(camera_name, alert_type, timestamp):
+    """
+    Get path for storing historical images with proper organization.
+    
+    Args:
+        camera_name (str): Name of the camera
+        alert_type (str): Type of detection alert
+        timestamp (datetime): Timestamp of detection
+        
+    Returns:
+        str: Path for storing the historical image
+    """
+    # Format alert type and camera name
+    alert_type_clean = alert_type.lower().replace(" ", "_")
+    camera_name_clean = camera_name.lower().replace(" ", "_")
+    
+    # Create date-based folder structure (YYYY/MM/DD)
+    date_path = os.path.join(
+        HISTORY_DIR,
+        timestamp.strftime("%Y"),
+        timestamp.strftime("%m"),
+        timestamp.strftime("%d")
+    )
+    
+    # Ensure directory exists
+    os.makedirs(date_path, exist_ok=True)
+    
+    # Create filename with timestamp
+    filename = f"{camera_name_clean}_{alert_type_clean}_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
+    
+    return os.path.join(date_path, filename)

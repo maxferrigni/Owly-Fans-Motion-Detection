@@ -137,7 +137,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             
             logger.debug(f"Processing as {alert_type} type camera")
             
-            # Process based on camera type
+# Process based on camera type
             if alert_type == "Owl In Box":
                 is_owl_present, detection_info = detect_owl_in_box(
                     new_image, 
@@ -146,25 +146,30 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                     is_test=is_test
                 )
                 
+                # Always create comparison image regardless of owl detection result
+                logger.debug("Creating comparison image for Owl In Box camera")
+                comparison_path = create_comparison_image(
+                    base_image, 
+                    new_image,
+                    camera_name=camera_name,  # Use actual camera name instead of alert type
+                    threshold=config["luminance_threshold"] * threshold_multiplier,
+                    config=config,
+                    is_test=is_test,
+                    timestamp=timestamp
+                )
+                
                 if is_owl_present and detection_info:
-                    logger.debug("Owl detected in box, creating comparison image")
-                    # Generate comparison path with timestamp for proper archiving
-                    comparison_path = create_comparison_image(
-                        base_image, 
-                        new_image,
-                        camera_name=camera_name,  # Use actual camera name instead of alert type
-                        threshold=config["luminance_threshold"] * threshold_multiplier,
-                        config=config,
-                        is_test=is_test,
-                        timestamp=timestamp
-                    )
-                    
                     detection_results.update({
                         "status": "Owl In Box",
                         "motion_detected": True,
                         "comparison_path": comparison_path,
                         "pixel_change": float(detection_info.get("pixel_change", 0.0)),
                         "luminance_change": float(detection_info.get("luminance_change", 0.0))
+                    })
+                else:
+                    # Still update with comparison path even if no owl detected
+                    detection_results.update({
+                        "comparison_path": comparison_path
                     })
             else:
                 # For non-owl box cameras
@@ -266,6 +271,13 @@ def process_cameras(camera_configs, test_images=None):
                     "timestamp": datetime.now(PACIFIC_TIME).isoformat()
                 })
         
+        # Archive old comparison images
+        try:
+            # Archive images older than 7 days
+            archive_old_comparison_images(days_threshold=7)
+        except Exception as e:
+            logger.error(f"Error archiving old comparison images: {e}")
+        
         return results
 
     except Exception as e:
@@ -296,25 +308,41 @@ def archive_old_comparison_images(days_threshold=7):
         cutoff_time = time.time() - (days_threshold * 86400)
         
         # Get all files in the comparison directory
-        comparison_files = os.listdir(IMAGE_COMPARISONS_DIR)
+        comparison_files = [f for f in os.listdir(IMAGE_COMPARISONS_DIR) 
+                          if os.path.isfile(os.path.join(IMAGE_COMPARISONS_DIR, f)) and 
+                          f.endswith('.jpg')]
+        
+        if not comparison_files:
+            logger.debug("No comparison files found to archive")
+            return
+            
         archived_count = 0
         
         for filename in comparison_files:
             file_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
             
-            # Check if it's a file and not a directory
-            if os.path.isfile(file_path):
-                # Check if file is older than threshold
-                file_time = os.path.getctime(file_path)
-                if file_time < cutoff_time:
-                    # Move to archive directory
-                    archive_path = os.path.join(ARCHIVE_DIR, filename)
-                    shutil.move(file_path, archive_path)
-                    archived_count += 1
+            # Check if file is older than threshold
+            file_time = os.path.getctime(file_path)
+            if file_time < cutoff_time:
+                # Move to archive directory
+                archive_path = os.path.join(ARCHIVE_DIR, filename)
+                
+                # If file already exists in archive, add timestamp to make unique
+                if os.path.exists(archive_path):
+                    base, ext = os.path.splitext(filename)
+                    unique_filename = f"{base}_{int(time.time())}{ext}"
+                    archive_path = os.path.join(ARCHIVE_DIR, unique_filename)
+                
+                # Copy file to archive then delete original
+                shutil.copy2(file_path, archive_path)
+                os.remove(file_path)
+                
+                logger.debug(f"Archived: {filename}")
+                archived_count += 1
         
         if archived_count > 0:
             logger.info(f"Archived {archived_count} comparison images older than {days_threshold} days")
-            
+        
     except Exception as e:
         logger.error(f"Error archiving old comparison images: {e}")
 
