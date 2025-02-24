@@ -79,16 +79,30 @@ def check_alert_eligibility(alert_type, cooldown_minutes):
     try:
         last_alert_time = get_last_alert_time(alert_type)
         if last_alert_time:
-            last_alert_time = datetime.datetime.fromisoformat(last_alert_time)
+            # Ensure the timestamp has timezone information
+            if 'Z' in last_alert_time or '+' in last_alert_time:
+                # ISO format with timezone
+                last_alert_time = datetime.datetime.fromisoformat(last_alert_time.replace('Z', '+00:00'))
+            else:
+                # Assume UTC if no timezone info
+                last_alert_time = datetime.datetime.fromisoformat(last_alert_time)
+                last_alert_time = last_alert_time.replace(tzinfo=datetime.timezone.utc)
+            
+            # Always use timezone-aware now
+            now = datetime.datetime.now(datetime.timezone.utc)
             
             # Calculate time difference and check against cooldown
-            time_diff = datetime.datetime.now(datetime.timezone.utc) - last_alert_time
+            time_diff = now - last_alert_time
             if time_diff < datetime.timedelta(minutes=cooldown_minutes):
                 return False, {'last_alert_time': last_alert_time}
             else:
                 return True, {'last_alert_time': last_alert_time}
         else:
             return True, None
+
+    except Exception as e:
+        logger.error(f"Error checking alert eligibility: {e}")
+        return False, None
 
     except Exception as e:
         logger.error(f"Error checking alert eligibility: {e}")

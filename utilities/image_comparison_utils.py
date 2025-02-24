@@ -281,13 +281,36 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         comparison.paste(new_image, (width, 0))
         comparison.paste(diff_with_overlay, (width * 2, 0))
         
+# Get alert type from camera name using CAMERA_MAPPINGS
+        from utilities.constants import CAMERA_MAPPINGS
+        
+        # Get the alert type based on camera name or use the camera name if not found
+        alert_type = None
+        for cam_name, alert in CAMERA_MAPPINGS.items():
+            if cam_name.lower() == camera_name.lower():
+                alert_type = alert
+                break
+                
+        if not alert_type:
+            # Fallback if camera name not found in mapping
+            alert_type = camera_name
+            
+        # Convert to safe filename format
+        alert_type_clean = alert_type.lower().replace(' ', '_')
+        
         # Save comparison image
         if is_test:
             save_dir = TEMP_COMPARISONS_DIR
-            filename = f"test_{camera_name.lower().replace(' ', '_')}_comparison.jpg"
+            filename = f"test_{alert_type_clean}_comparison.jpg"
         else:
             save_dir = IMAGE_COMPARISONS_DIR if os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true' else TEMP_COMPARISONS_DIR
-            filename = f"{'temp_' if save_dir == TEMP_COMPARISONS_DIR else ''}{camera_name.lower().replace(' ', '_')}_comparison.jpg"
+            
+            if timestamp:
+                # Use timestamp for filename
+                ts_str = timestamp.strftime('%Y%m%d_%H%M%S')
+                filename = f"{alert_type_clean}_{ts_str}_comparison.jpg"
+            else:
+                filename = f"{'temp_' if save_dir == TEMP_COMPARISONS_DIR else ''}{alert_type_clean}_comparison.jpg"
         
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(save_dir, filename)
