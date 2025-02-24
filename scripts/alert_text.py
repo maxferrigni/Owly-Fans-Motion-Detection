@@ -8,7 +8,9 @@ import time
 
 # Import utilities
 from utilities.logging_utils import get_logger
-from push_to_supabase import get_subscribers
+
+# Corrected import: from database_utils
+from utilities.database_utils import get_subscribers
 
 # Initialize logger
 logger = get_logger()
@@ -44,74 +46,45 @@ def send_text_alert(camera_name, alert_type):
         alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
     """
     try:
-        # Get subscribers who want SMS notifications for this alert type
-        subscribers = get_subscribers(
-            notification_type="sms",
-            owl_location=alert_type.lower().replace(" ", "_")
-        )
-
-        if not subscribers:
-            logger.warning("No SMS subscribers found for this alert type")
-            return
-
-        # Create message based on alert type
+        # Determine the message based on camera name and alert type
         if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
-            message = "ALERT: Owl detected in the Upper Patio area! Check www.owly-fans.com"
+            message = ("Motion has been detected in the Upper Patio area. "
+                       "Please check the camera feed at www.owly-fans.com")
+        elif camera_name == "Bindy Patio Camera" and alert_type == "Owl On Box":
+            message = ("Motion has been detected on the Owl Box. "
+                       "Please check the camera feed at www.owly-fans.com")
+        elif camera_name == "Wyze Internal Camera" and alert_type == "Owl In Box":
+            message = ("Motion has been detected in the Owl Box. "
+                       "Please check the camera feed at www.owly-fans.com")
         else:
-            message = f"ALERT: {alert_type} detected at {camera_name}! Check www.owly-fans.com"
+            message = f"Motion has been detected by {camera_name}! Check www.owly-fans.com"
+
+        # Get SMS subscribers
+        subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
 
         logger.info(f"Sending SMS alerts to {len(subscribers)} subscribers")
-        
-        # Send to each subscriber with rate limiting
+
+        # Send to each subscriber
         for subscriber in subscribers:
-            if subscriber.get('phone'):
-                send_single_text(message, subscriber['phone'], subscriber['name'])
-                time.sleep(1)  # Rate limiting between messages
-            else:
-                logger.warning(f"No phone number for subscriber: {subscriber.get('name', 'Unknown')}")
+            try:
+                # Create and send the SMS message
+                message_obj = twilio_client.messages.create(
+                    body=message,
+                    from_=TWILIO_PHONE_NUMBER,
+                    to=subscriber['phone']
+                )
+
+                logger.info(f"Text alert sent to {subscriber['phone']}: {message_obj.sid}")
+
+            except Exception as e:
+                logger.error(f"Failed to send text alert to {subscriber['phone']}: {e}")
 
     except Exception as e:
         logger.error(f"Error sending SMS alerts: {e}")
 
-def send_single_text(message, phone_number, recipient_name=None):
-    """
-    Send a single SMS message to a recipient.
-    
-    Args:
-        message (str): Message content
-        phone_number (str): Recipient's phone number
-        recipient_name (str, optional): Recipient's name for personalization
-    """
-    try:
-        # Validate phone number format
-        if not is_valid_phone_number(phone_number):
-            logger.error(f"Invalid phone number format: {phone_number}")
-            return
-
-        # Format phone number consistently
-        formatted_phone = format_phone_number(phone_number)
-        if not formatted_phone:
-            logger.error(f"Could not format phone number: {phone_number}")
-            return
-
-        # Personalize message if name is available
-        if recipient_name:
-            message = f"Hi {recipient_name}, {message}"
-
-        # Send message via Twilio
-        twilio_client.messages.create(
-            body=message,
-            from_=TWILIO_PHONE_NUMBER,
-            to=formatted_phone
-        )
-        logger.info(f"SMS sent successfully to {formatted_phone}")
-
-    except Exception as e:
-        logger.error(f"Failed to send SMS to {phone_number}: {e}")
-
 def is_valid_phone_number(phone_number):
     """
-    Validate phone number format.
+    Check if a phone number is valid.
     
     Args:
         phone_number (str): Phone number to validate
@@ -119,14 +92,10 @@ def is_valid_phone_number(phone_number):
     Returns:
         bool: True if valid, False otherwise
     """
-    # Remove any non-numeric characters
-    cleaned = ''.join(filter(str.isdigit, phone_number))
-    
-    # Check if it's a valid US number (10 digits)
-    if len(cleaned) == 10:
-        return True
-    # Check if it's a valid US number with country code (11 digits starting with 1)
-    elif len(cleaned) == 11 and cleaned.startswith('1'):
+    # Check length (10 digits for US numbers, 11 digits starting with 1)
+    if len(phone_number) == 10:
+        return True  # Assuming US numbers (10 digits starting with 1)
+    elif len(phone_number) == 11 and phone_number.startswith('1'):
         return True
     return False
 
@@ -170,7 +139,8 @@ if __name__ == "__main__":
         # Test case 2: Owl In Area alert
         send_text_alert("Upper Patio Camera", "Owl In Area")
         
-        logger.info("SMS tests complete")
+        logger.info("SMS test complete")
+        
     except Exception as e:
         logger.error(f"SMS test failed: {e}")
         raise

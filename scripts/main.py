@@ -19,8 +19,10 @@ from utilities.time_utils import get_current_lighting_condition
 
 # Local imports
 from motion_workflow import process_cameras, initialize_system
-from push_to_supabase import push_log_to_supabase, format_log_entry
-from capture_base_images import capture_base_images
+from push_to_supabase import push_log_to_supabase
+
+# Import from database_utils
+from utilities.database_utils import format_detection_results  
 
 # Set up logging
 logger = get_logger()
@@ -47,70 +49,23 @@ def setup_system():
         
     except Exception as e:
         logger.error(f"Error during system setup: {e}")
-        return None
-
-def format_detection_results(camera_results):
-    """Format camera detection results for Supabase logging."""
-    return format_log_entry(
-        owl_in_box=(camera_results.get("status") == "Owl In Box"),
-        pixel_change_owl_in_box=(camera_results.get("pixel_change", 0.0) 
-                                if camera_results.get("status") == "Owl In Box" else 0.0),
-        luminance_change_owl_in_box=(camera_results.get("luminance_change", 0.0) 
-                                    if camera_results.get("status") == "Owl In Box" else 0.0),
-        owl_in_box_url=(camera_results.get("snapshot_path", "") 
-                       if camera_results.get("status") == "Owl In Box" else ""),
-        owl_in_box_image_comparison_url="",
-        
-        owl_on_box=(camera_results.get("status") == "Owl On Box"),
-        pixel_change_owl_on_box=(camera_results.get("pixel_change", 0.0) 
-                                if camera_results.get("status") == "Owl On Box" else 0.0),
-        luminance_change_owl_on_box=(camera_results.get("luminance_change", 0.0) 
-                                    if camera_results.get("status") == "Owl On Box" else 0.0),
-        owl_on_box_image_url=(camera_results.get("snapshot_path", "") 
-                             if camera_results.get("status") == "Owl On Box" else ""),
-        owl_on_box_image_comparison_url="",
-        
-        owl_in_area=(camera_results.get("status") == "Owl In Area"),
-        pixel_change_owl_in_area=(camera_results.get("pixel_change", 0.0) 
-                                 if camera_results.get("status") == "Owl In Area" else 0.0),
-        luminance_change_owl_in_area=(camera_results.get("luminance_change", 0.0) 
-                                     if camera_results.get("status") == "Owl In Area" else 0.0),
-        owl_in_area_image_url=(camera_results.get("snapshot_path", "") 
-                              if camera_results.get("status") == "Owl In Area" else ""),
-        owl_in_area_image_comparison_url=""
-    )
+        sys.exit(1)
 
 def motion_detection():
-    """Perform motion detection for all configured cameras and push logs to Supabase."""
+    """Main motion detection function"""
     try:
-        # Initial system setup
+        # Initialize system and load camera configurations
         CAMERA_CONFIGS = setup_system()
-        if not CAMERA_CONFIGS:
-            logger.error("Failed to set up system")
-            sys.exit(1)
-            
-        logger.info("System setup complete")
-        
-        # Initial delay for system stabilization
-        logger.info("Waiting for system stabilization...")
-        time.sleep(5)
         
         # Initialize motion detection system
         if not initialize_system(CAMERA_CONFIGS):
-            logger.error("System initialization failed")
+            logger.error("Failed to initialize motion detection system")
             sys.exit(1)
             
-        logger.info("System initialization complete")
-        
-        # Get current lighting condition and force new base images
-        lighting_condition = get_current_lighting_condition()
-        logger.info(f"Current lighting condition: {lighting_condition}")
-        
+        # Capture initial base images
         logger.info("Capturing initial base images...")
-        results = capture_base_images(lighting_condition, force_capture=True)
-        
-        # Verify base image capture
-        if not all(result.get('status') == 'success' for result in results if 'status' in result):
+        initial_condition = get_current_lighting_condition()
+        if not capture_base_images(initial_condition, force_capture=True):
             logger.error("Failed to capture initial base images")
             sys.exit(1)
             

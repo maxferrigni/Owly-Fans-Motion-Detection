@@ -9,7 +9,9 @@ from dotenv import load_dotenv
 
 # Import utilities
 from utilities.logging_utils import get_logger
-from push_to_supabase import get_subscribers
+
+# Corrected import: from database_utils
+from utilities.database_utils import get_subscribers
 
 # Initialize logger
 logger = get_logger()
@@ -44,60 +46,40 @@ def send_text_via_email(phone_number, carrier, message, recipient_name=None):
     Send SMS via email-to-text gateway.
     
     Args:
-        phone_number (str): Recipient's phone number
-        carrier (str): Carrier name (lowercase)
-        message (str): Message content
+        phone_number (str): Phone number to send to
+        carrier (str): Cell phone carrier (lowercase)
+        message (str): Text message to send
         recipient_name (str, optional): Recipient's name for personalization
     """
     try:
+        # Check if carrier is supported
         if carrier not in CARRIER_EMAIL_GATEWAYS:
             logger.error(f"Unsupported carrier: {carrier}")
-            return False
+            return
 
-        # Clean phone number (remove any non-digits)
-        clean_number = ''.join(filter(str.isdigit, phone_number))
-        if not clean_number:
-            logger.error(f"Invalid phone number format: {phone_number}")
-            return False
+        # Construct the email address for the gateway
+        to_email = f"{phone_number}@{CARRIER_EMAIL_GATEWAYS[carrier]}"
 
-        # Construct email address for SMS gateway
-        gateway = CARRIER_EMAIL_GATEWAYS[carrier]
-        to_email = f"{clean_number}@{gateway}"
-
-        # Set up the email server
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        
-        try:
+        # Create and send the email
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            
-            # Create message
+
             msg = MIMEMultipart()
             msg["From"] = EMAIL_ADDRESS
             msg["To"] = to_email
-            msg["Subject"] = "Owl Alert"  # Keep subject short for SMS
+            msg["Subject"] = ""  # No subject for SMS
 
-            # Personalize message if name provided
+            # Personalize message if name is available
             if recipient_name:
-                message = f"Hi {recipient_name}, {message}"
+                message = f"Dear {recipient_name},\\n\\n{message}"
 
             msg.attach(MIMEText(message, "plain"))
-
-            # Send the message
             server.send_message(msg)
-            logger.info(f"Text alert sent via email gateway to {phone_number} ({carrier})")
-            return True
 
-        except Exception as e:
-            logger.error(f"Failed to send text via email to {phone_number}: {e}")
-            return False
-            
-        finally:
-            server.quit()
+            logger.info(f"Text alert sent via email gateway to {to_email}")
 
     except Exception as e:
-        logger.error(f"Error in send_text_via_email: {e}")
-        return False
+        logger.error(f"Error sending text alert to {phone_number} ({carrier}): {e}")
 
 def send_text_alert(camera_name, alert_type):
     """
@@ -108,21 +90,21 @@ def send_text_alert(camera_name, alert_type):
         alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
     """
     try:
-        # Get subscribers who want SMS notifications for this alert type
-        subscribers = get_subscribers(
-            notification_type="sms",
-            owl_location=alert_type.lower().replace(" ", "_")
-        )
-
-        if not subscribers:
-            logger.warning("No SMS subscribers found for this alert type")
-            return
-
-        # Create message based on alert type
+        # Determine the message based on camera name and alert type
         if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
-            message = "ALERT: Owl detected in the Upper Patio area! Check www.owly-fans.com"
+            message = ("Motion has been detected in the Upper Patio area. "
+                       "Please check the camera feed at www.owly-fans.com")
+        elif camera_name == "Bindy Patio Camera" and alert_type == "Owl On Box":
+            message = ("Motion has been detected on the Owl Box. "
+                       "Please check the camera feed at www.owly-fans.com")
+        elif camera_name == "Wyze Internal Camera" and alert_type == "Owl In Box":
+            message = ("Motion has been detected in the Owl Box. "
+                       "Please check the camera feed at www.owly-fans.com")
         else:
-            message = f"ALERT: {alert_type} detected at {camera_name}! Check www.owly-fans.com"
+            message = f"Motion has been detected by {camera_name}! Check www.owly-fans.com"
+
+        # Get SMS subscribers
+        subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
 
         logger.info(f"Sending SMS alerts to {len(subscribers)} subscribers")
         
@@ -151,7 +133,7 @@ if __name__ == "__main__":
         # Test subscribers from database
         subscribers = get_subscribers(notification_type="sms")
         if subscribers:
-            test_sub = subscribers[0]
+            test_sub = subscribers
             send_text_via_email(
                 test_sub['phone'],
                 test_sub['carrier'].lower(),

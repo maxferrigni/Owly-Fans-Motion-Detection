@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Import utilities
 from utilities.logging_utils import get_logger
 
-# Update: Import get_subscribers from database_utils.py
+# Import from database_utils
 from utilities.database_utils import get_subscribers
 
 # Initialize logger
