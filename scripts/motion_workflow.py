@@ -113,10 +113,8 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 logger.info(f"Using base image: {base_image_path}")
                 
                 # Calculate base image age from the file
-                try:
-                    base_image_age = int(time.time() - os.path.getctime(base_image_path))
-                except Exception as e:
-                    logger.warning(f"Could not determine base image age: {e}")
+                base_image_age = int(time.time() - os.path.getctime(base_image_path))
+                logger.debug(f"Base image age: {base_image_age} seconds")
                 
                 # Load the images
                 base_image = Image.open(base_image_path).convert("RGB")
@@ -126,11 +124,14 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             # Initialize detection results
             detection_results = {
                 "camera": camera_name,
-                "is_test": is_test
+                "is_test": is_test,
+                "status": None,  # Will be set based on detection
+                "motion_detected": False  # Default to False
             }
             
             # Get camera type
             alert_type = CAMERA_MAPPINGS[camera_name]
+            logger.debug(f"Processing as {alert_type} type camera")
             
             # Process based on camera type
             detection_info = None
@@ -141,7 +142,9 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                     config,
                     is_test=is_test
                 )
+                
                 if is_owl_present:
+                    logger.debug("Owl detected in box, creating comparison image")
                     comparison_path = create_comparison_image(
                         base_image, 
                         new_image,
@@ -152,7 +155,11 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                     )
                     if detection_info:
                         detection_info["comparison_path"] = comparison_path
-                    detection_results["status"] = "Owl In Box"
+                    detection_results.update({
+                        "status": "Owl In Box",
+                        "motion_detected": True,
+                        "comparison_path": comparison_path
+                    })
             else:
                 comparison_path = create_comparison_image(
                     base_image, 
@@ -168,22 +175,36 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                         "motion_detected": True,
                         "comparison_path": comparison_path
                     }
-                    detection_results["status"] = alert_type
+                    detection_results.update({
+                        "status": alert_type,
+                        "motion_detected": True,
+                        "comparison_path": comparison_path
+                    })
+                else:
+                    detection_results.update({
+                        "status": alert_type,
+                        "motion_detected": False
+                    })
 
-            # Format metrics for database
+            # Add metrics if available
             if detection_info:
-                detection_results.update({
-                    "pixel_change": detection_info.get("pixel_change", 0.0),
-                    "luminance_change": detection_info.get("luminance_change", 0.0),
-                    "comparison_path": detection_info.get("comparison_path", ""),
-                    "motion_detected": detection_info.get("motion_detected", False)
-                })
+                metrics = {
+                    "pixel_change": float(detection_info.get("pixel_change", 0.0)),
+                    "luminance_change": float(detection_info.get("luminance_change", 0.0))
+                }
+                detection_results.update(metrics)
+                logger.debug(f"Detection metrics: {metrics}")
 
-            # Push to activity log
+            logger.debug(f"Final detection results before formatting: {detection_results}")
+
+            # Format and push to activity log
             formatted_results = format_detection_results(detection_results)
+            logger.debug(f"Formatted results: {formatted_results}")
+            
             log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
+            logger.debug(f"Supabase log entry result: {log_entry}")
 
-            if log_entry and detection_info and detection_info.get("motion_detected", False) and not is_test:
+            if log_entry and detection_results.get("motion_detected", False) and not is_test:
                 # Process alert if motion was detected
                 alert_manager.process_detection(
                     camera_name,
@@ -206,7 +227,8 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             "camera": camera_name,
             "status": "Error",
             "error_message": str(e),
-            "is_test": is_test if 'is_test' in locals() else False
+            "is_test": is_test if 'is_test' in locals() else False,
+            "motion_detected": False
         }
 
 def process_cameras(camera_configs, test_images=None):
@@ -247,7 +269,8 @@ def process_cameras(camera_configs, test_images=None):
                 results.append({
                     "camera": camera_name,
                     "status": "Error",
-                    "error_message": str(e)
+                    "error_message": str(e),
+                    "motion_detected": False
                 })
         
         return results
