@@ -237,7 +237,7 @@ def add_status_overlay(image, metrics, threshold, is_test=False):
         logger.error(f"Error adding status overlay: {e}")
         raise
 
-def create_comparison_image(base_image, new_image, camera_name, threshold, config, is_test=False):
+def create_comparison_image(base_image, new_image, camera_name, threshold, config, is_test=False, timestamp=None):
     """Create enhanced three-panel comparison image."""
     try:
         # Validate images
