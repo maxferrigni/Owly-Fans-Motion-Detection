@@ -121,20 +121,20 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 new_image = capture_real_image(config["roi"])
                 is_test = False
 
-            # Initialize detection results
+            # Get camera type and initialize detection results
+            alert_type = CAMERA_MAPPINGS[camera_name]
             detection_results = {
                 "camera": camera_name,
                 "is_test": is_test,
-                "status": None,  # Will be set based on detection
-                "motion_detected": False  # Default to False
+                "status": alert_type,  # Set default status to camera type
+                "motion_detected": False,
+                "pixel_change": 0.0,
+                "luminance_change": 0.0
             }
             
-            # Get camera type
-            alert_type = CAMERA_MAPPINGS[camera_name]
             logger.debug(f"Processing as {alert_type} type camera")
             
             # Process based on camera type
-            detection_info = None
             if alert_type == "Owl In Box":
                 is_owl_present, detection_info = detect_owl_in_box(
                     new_image, 
@@ -143,7 +143,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                     is_test=is_test
                 )
                 
-                if is_owl_present:
+                if is_owl_present and detection_info:
                     logger.debug("Owl detected in box, creating comparison image")
                     comparison_path = create_comparison_image(
                         base_image, 
@@ -153,14 +153,16 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                         config=config,
                         is_test=is_test
                     )
-                    if detection_info:
-                        detection_info["comparison_path"] = comparison_path
+                    
                     detection_results.update({
                         "status": "Owl In Box",
                         "motion_detected": True,
-                        "comparison_path": comparison_path
+                        "comparison_path": comparison_path,
+                        "pixel_change": float(detection_info.get("pixel_change", 0.0)),
+                        "luminance_change": float(detection_info.get("luminance_change", 0.0))
                     })
             else:
+                # For non-owl box cameras
                 comparison_path = create_comparison_image(
                     base_image, 
                     new_image,
@@ -171,29 +173,11 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 )
                 
                 if comparison_path:
-                    detection_info = {
-                        "motion_detected": True,
-                        "comparison_path": comparison_path
-                    }
                     detection_results.update({
                         "status": alert_type,
                         "motion_detected": True,
                         "comparison_path": comparison_path
                     })
-                else:
-                    detection_results.update({
-                        "status": alert_type,
-                        "motion_detected": False
-                    })
-
-            # Add metrics if available
-            if detection_info:
-                metrics = {
-                    "pixel_change": float(detection_info.get("pixel_change", 0.0)),
-                    "luminance_change": float(detection_info.get("luminance_change", 0.0))
-                }
-                detection_results.update(metrics)
-                logger.debug(f"Detection metrics: {metrics}")
 
             logger.debug(f"Final detection results before formatting: {detection_results}")
 
@@ -223,13 +207,16 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
 
     except Exception as e:
         logger.error(f"Error processing {camera_name}: {e}")
-        return {
+        error_results = {
             "camera": camera_name,
-            "status": "Error",
+            "status": "Error",  # Ensure status is set in error case
             "error_message": str(e),
             "is_test": is_test if 'is_test' in locals() else False,
-            "motion_detected": False
+            "motion_detected": False,
+            "pixel_change": 0.0,
+            "luminance_change": 0.0
         }
+        return error_results
 
 def process_cameras(camera_configs, test_images=None):
     """Process all cameras in batch for efficient motion detection"""

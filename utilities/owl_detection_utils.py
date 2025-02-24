@@ -49,11 +49,11 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
     Detect the presence of an owl in the new image compared to the base image.
 
     Args:
-        new_image (PIL.Image): New image to check for owl
-        base_image (PIL.Image): Base reference image
-        config (dict): Configuration dictionary
-        is_test (bool): Whether this is a test image
-        sensitivity (float): Owl detection sensitivity
+        new_image (PIL.Image): New image to check for owl.
+        base_image (PIL.Image): Base reference image.
+        config (dict): Configuration dictionary.
+        is_test (bool): Whether this is a test image.
+        sensitivity (float): Owl detection sensitivity.
 
     Returns:
         tuple: (bool, dict) - (is_owl_present, detection_info)
@@ -65,7 +65,12 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
         )
         if not is_valid:
             logger.error(f"Image validation failed: {validation_message}")
-            return False, {"error": validation_message}
+            return False, {
+                "error": validation_message,
+                "pixel_change": 0.0,
+                "luminance_change": 0.0,
+                "is_test": is_test
+            }
 
         logger.info(f"Starting owl detection process (Test Mode: {is_test})")
         logger.info("Starting image preparation for owl detection")
@@ -181,7 +186,7 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             "threshold_used": threshold
         }
         
-        # Prepare detection info
+        # Prepare detection info with required fields for motion_workflow.py
         detection_info = {
             "is_owl_present": is_owl_present,
             "confidence": confidence,
@@ -191,7 +196,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             "sensitivity_used": sensitivity,
             "diff_metrics": diff_metrics,
             "pixel_change": significant_pixels * 100,  # Convert to percentage
-            "luminance_change": mean_diff
+            "luminance_change": mean_diff,
+            "motion_detected": is_owl_present  # Add motion_detected field
         }
 
         logger.info(
@@ -209,7 +215,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             "error": str(e),
             "is_test": is_test,
             "pixel_change": 0.0,
-            "luminance_change": 0.0
+            "luminance_change": 0.0,
+            "motion_detected": False
         }
 
 if __name__ == "__main__":
