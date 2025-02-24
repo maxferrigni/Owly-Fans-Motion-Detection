@@ -1,4 +1,4 @@
-# File: motion_workflow.py
+# File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions
 
 import os
@@ -29,7 +29,7 @@ from utilities.alert_manager import AlertManager
 from capture_base_images import capture_base_images, get_latest_base_image
 
 # Import from push_to_supabase
-from push_to_supabase import push_log_to_supabase
+from push_to_supabase import push_log_to_supabase  # Changed to push_to_supabase
 
 # Initialize logger and alert manager
 logger = get_logger()
@@ -270,7 +270,7 @@ def process_cameras(camera_configs, test_images=None):
                 time.sleep(3)  # Allow system to stabilize after capture
         
         # Process each camera with shared lighting info
-        results =  [] # Initialize results list here
+        results = [] # Initialize results list here
         for camera_name, config in camera_configs.items():
             try:
                 camera_test_images = test_images.get(camera_name) if test_images else None

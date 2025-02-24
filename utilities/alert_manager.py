@@ -8,13 +8,15 @@ from utilities.logging_utils import get_logger
 from alert_email import send_email_alert
 from alert_email_to_text import send_text_alert
 
-# Import from database_utils
-from utilities.database_utils import (
+# Import from push_to_supabase
+from push_to_supabase import (
     check_alert_eligibility,
     create_alert_entry,
-    update_alert_status,
-    get_subscribers
+    update_alert_status
 )
+
+# Import from database_utils
+from utilities.database_utils import get_subscribers
 
 logger = get_logger()
 

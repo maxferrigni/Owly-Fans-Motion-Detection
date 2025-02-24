@@ -22,8 +22,8 @@ from motion_workflow import process_cameras, initialize_system
 from push_to_supabase import push_log_to_supabase
 from capture_base_images import capture_base_images
 
-# Corrected import
-from push_to_supabase import format_detection_results
+# Import from push_to_supabase
+from push_to_supabase import format_detection_results  # Changed to push_to_supabase
 
 # Set up logging
 logger = get_logger()
