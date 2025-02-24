@@ -26,9 +26,9 @@ from utilities.time_utils import (
 from utilities.owl_detection_utils import detect_owl_in_box
 from utilities.image_comparison_utils import create_comparison_image
 from utilities.alert_manager import AlertManager
-
-# Import from database_utils instead of push_to_supabase
-from utilities.database_utils import push_log_to_supabase
+from capture_base_images import capture_base_images, get_latest_base_image
+# Import from push_to_supabase instead of database_utils
+from push_to_supabase import push_log_to_supabase  
 
 # Initialize logger and alert manager
 logger = get_logger()
@@ -220,7 +220,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
         detection_results[alert_type] = metrics
 
         # Push to activity log
-        log_entry = push_activity_log(
+        log_entry = push_log_to_supabase(
             detection_results,
             lighting_condition,
             base_image_age
@@ -269,7 +269,7 @@ def process_cameras(camera_configs, test_images=None):
                 time.sleep(3)  # Allow system to stabilize after capture
         
         # Process each camera with shared lighting info
-        results = [] # Initialize results list here
+        results =  []# Initialize results list here
         for camera_name, config in camera_configs.items():
             try:
                 camera_test_images = test_images.get(camera_name) if test_images else None
