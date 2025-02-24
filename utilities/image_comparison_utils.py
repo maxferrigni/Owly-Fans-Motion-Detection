@@ -1,5 +1,5 @@
 # File: utilities/image_comparison_utils.py
-# Purpose: Generate and handle three-panel comparison images with clear owl detection results
+# Purpose: Generate and handle three-panel comparison images with enhanced metrics
 
 import os
 import cv2
@@ -13,17 +13,7 @@ from utilities.constants import IMAGE_COMPARISONS_DIR, TEMP_COMPARISONS_DIR
 logger = get_logger()
 
 def validate_comparison_images(base_image, new_image, expected_size=None):
-    """
-    Validate images for comparison.
-    
-    Args:
-        base_image (PIL.Image): Base reference image
-        new_image (PIL.Image): New image to compare
-        expected_size (tuple, optional): Expected dimensions (w, h)
-        
-    Returns:
-        tuple: (bool, str) - (is_valid, error_message)
-    """
+    """Validate images for comparison."""
     try:
         # Check image types
         if not isinstance(base_image, Image.Image) or not isinstance(new_image, Image.Image):
@@ -47,78 +37,102 @@ def validate_comparison_images(base_image, new_image, expected_size=None):
         logger.error(f"Error validating images: {e}")
         return False, f"Validation error: {str(e)}"
 
-def analyze_shape(contour, total_area, config):
-    """
-    Analyze if a contour matches owl shape characteristics.
-    
-    Args:
-        contour: OpenCV contour
-        total_area: Total image area
-        config: Camera configuration with motion parameters
-        
-    Returns:
-        tuple: (is_owl_shape, metrics_dict)
-    """
+def analyze_change_metrics(diff_image, threshold, config):
+    """Analyze pixel and luminance changes in difference image."""
     try:
-        # Get motion detection parameters
-        motion_config = config.get("motion_detection", {})
-        min_circularity = motion_config.get("min_circularity", 0.5)
-        min_aspect_ratio = motion_config.get("min_aspect_ratio", 0.5)
-        max_aspect_ratio = motion_config.get("max_aspect_ratio", 2.0)
-        min_area_ratio = motion_config.get("min_area_ratio", 0.2)
-
-        # Calculate shape metrics
-        area = cv2.contourArea(contour)
-        perimeter = cv2.arcLength(contour, True)
-        x, y, w, h = cv2.boundingRect(contour)
+        # Convert to numpy array for calculations
+        diff_array = np.array(diff_image.convert('L'))
+        total_pixels = diff_array.size
         
-        # Calculate shape characteristics
-        circularity = 4 * np.pi * area / (perimeter * perimeter) if perimeter > 0 else 0
-        aspect_ratio = float(w) / h if h > 0 else 0
-        area_ratio = area / total_area
+        # Calculate pixel change metrics
+        changed_pixels = np.sum(diff_array > threshold)
+        pixel_change_ratio = changed_pixels / total_pixels
         
-        metrics = {
-            "area": area,
-            "circularity": circularity,
-            "aspect_ratio": aspect_ratio,
-            "area_ratio": area_ratio,
-            "bounds": (x, y, w, h)
+        # Calculate luminance metrics
+        mean_luminance = np.mean(diff_array)
+        max_luminance = np.max(diff_array)
+        std_luminance = np.std(diff_array)
+        
+        # Calculate region-specific metrics
+        height, width = diff_array.shape
+        regions = {
+            'top': diff_array[:height//3, :],
+            'middle': diff_array[height//3:2*height//3, :],
+            'bottom': diff_array[2*height//3:, :]
         }
         
-        # Check if matches owl characteristics
-        is_owl_shape = (
-            circularity > min_circularity and
-            min_aspect_ratio < aspect_ratio < max_aspect_ratio and
-            area_ratio > min_area_ratio
-        )
+        region_metrics = {}
+        for region_name, region_data in regions.items():
+            region_metrics[region_name] = {
+                'mean_luminance': np.mean(region_data),
+                'pixel_change_ratio': np.sum(region_data > threshold) / region_data.size
+            }
         
-        return is_owl_shape, metrics
+        return {
+            'pixel_change_ratio': pixel_change_ratio,
+            'mean_luminance': mean_luminance,
+            'max_luminance': max_luminance,
+            'std_luminance': std_luminance,
+            'region_metrics': region_metrics,
+            'threshold_used': threshold
+        }
         
     except Exception as e:
-        logger.error(f"Error analyzing shape: {e}")
-        return False, {}
+        logger.error(f"Error analyzing change metrics: {e}")
+        raise
 
-def create_difference_image(base_image, new_image, threshold, config, is_test=False):
-    """
-    Create a difference visualization highlighting only detected owl shapes.
-    
-    Args:
-        base_image (PIL.Image): Base reference image
-        new_image (PIL.Image): New captured image
-        threshold (int): Luminance threshold for change detection
-        config (dict): Camera configuration with motion detection parameters
-        is_test (bool): Whether this is a test image comparison
-    
-    Returns:
-        tuple: (PIL.Image, bool, dict) - Result image, owl detected flag, and metrics
-    """
+def analyze_motion_characteristics(binary_mask, config):
+    """Analyze motion characteristics in binary mask."""
     try:
-        # Validate images
-        is_valid, message = validate_comparison_images(base_image, new_image)
-        if not is_valid:
-            raise ValueError(message)
+        # Find contours
+        contours, _ = cv2.findContours(
+            binary_mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
+        )
         
-        # Convert PIL images to OpenCV format
+        total_area = binary_mask.shape[0] * binary_mask.shape[1]
+        motion_data = []
+        
+        for contour in contours:
+            # Calculate basic metrics
+            area = cv2.contourArea(contour)
+            perimeter = cv2.arcLength(contour, True)
+            x, y, w, h = cv2.boundingRect(contour)
+            
+            # Calculate shape characteristics
+            circularity = 4 * np.pi * area / (perimeter * perimeter) if perimeter > 0 else 0
+            aspect_ratio = float(w) / h if h > 0 else 0
+            area_ratio = area / total_area
+            extent = area / (w * h) if w * h > 0 else 0
+            
+            motion_data.append({
+                'area': area,
+                'area_ratio': area_ratio,
+                'circularity': circularity,
+                'aspect_ratio': aspect_ratio,
+                'extent': extent,
+                'position': (x, y),
+                'size': (w, h)
+            })
+        
+        # Sort by area ratio
+        motion_data.sort(key=lambda x: x['area_ratio'], reverse=True)
+        
+        return {
+            'total_regions': len(contours),
+            'regions': motion_data,
+            'largest_region': motion_data[0] if motion_data else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error analyzing motion characteristics: {e}")
+        raise
+
+def create_difference_visualization(base_image, new_image, threshold, config):
+    """Create enhanced difference visualization."""
+    try:
+        # Convert to OpenCV format
         base_cv = cv2.cvtColor(np.array(base_image), cv2.COLOR_RGB2GRAY)
         new_cv = cv2.cvtColor(np.array(new_image), cv2.COLOR_RGB2GRAY)
         
@@ -128,104 +142,94 @@ def create_difference_image(base_image, new_image, threshold, config, is_test=Fa
         # Apply Gaussian blur to reduce noise
         blurred_diff = cv2.GaussianBlur(diff, (5, 5), 0)
         
-        # Adjust threshold for test mode
-        if is_test:
-            threshold = int(threshold * 0.9)  # Slightly more sensitive for test images
+        # Create binary mask
+        _, binary_mask = cv2.threshold(
+            blurred_diff,
+            threshold,
+            255,
+            cv2.THRESH_BINARY
+        )
         
-        # Create binary mask of changes
-        _, binary_mask = cv2.threshold(blurred_diff, threshold, 255, cv2.THRESH_BINARY)
+        # Create visualization
+        diff_color = cv2.cvtColor(diff, cv2.COLOR_GRAY2BGR)
+        height, width = diff.shape
         
-        # Find contours
-        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Draw detection regions
+        contours, _ = cv2.findContours(
+            binary_mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
+        )
         
-        # Create visualization image
-        result_image = new_image.copy()
-        result_cv = cv2.cvtColor(np.array(result_image), cv2.COLOR_RGB2BGR)
+        # Sort contours by area
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
         
-        # Initialize metrics
-        total_area = base_cv.shape[0] * base_cv.shape[1]
-        owl_detected = False
-        detection_metrics = {
-            "total_contours": len(contours),
-            "owl_like_contours": 0,
-            "largest_area_ratio": 0,
-            "avg_luminance_change": np.mean(diff),
-            "is_test": is_test
-        }
-        
-        # Analyze each contour
-        for contour in contours:
-            is_owl, metrics = analyze_shape(contour, total_area, config)
+        # Draw contours with different colors based on size
+        for i, contour in enumerate(contours):
+            color = (0, 0, 255) if i == 0 else (0, 255, 0)
+            cv2.drawContours(diff_color, [contour], -1, color, 2)
             
-            if is_owl:
-                owl_detected = True
-                detection_metrics["owl_like_contours"] += 1
-                detection_metrics["largest_area_ratio"] = max(
-                    detection_metrics["largest_area_ratio"],
-                    metrics["area_ratio"]
-                )
+            # Add bounding box and metrics for largest contour
+            if i == 0:
+                x, y, w, h = cv2.boundingRect(contour)
+                cv2.rectangle(diff_color, (x, y), (x + w, y + h), (255, 0, 0), 2)
                 
-                # Draw owl contour and bounding box
-                x, y, w, h = metrics["bounds"]
-                cv2.rectangle(result_cv, (x, y), (x + w, y + h), (0, 0, 255), 2)
-                cv2.drawContours(result_cv, [contour], -1, (0, 0, 255), 2)
+                # Calculate metrics for annotation
+                area = cv2.contourArea(contour)
+                area_ratio = area / (height * width)
+                cv2.putText(
+                    diff_color,
+                    f"Area: {area_ratio:.2%}",
+                    (x, y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    1
+                )
         
-        # Convert back to PIL
-        result_pil = Image.fromarray(cv2.cvtColor(result_cv, cv2.COLOR_BGR2RGB))
-        
-        return result_pil, owl_detected, detection_metrics
+        return Image.fromarray(diff_color), binary_mask
         
     except Exception as e:
-        logger.error(f"Error creating difference image: {e}")
+        logger.error(f"Error creating difference visualization: {e}")
         raise
 
-def add_status_overlay(image, owl_detected, metrics, threshold, is_test=False):
-    """
-    Add status and metrics overlay to difference image.
-    
-    Args:
-        image (PIL.Image): Image to add overlay to
-        owl_detected (bool): Whether an owl was detected
-        metrics (dict): Detection metrics
-        threshold (int): Threshold value used
-        is_test (bool): Whether this is a test image
-        
-    Returns:
-        PIL.Image: Image with overlay added
-    """
+def add_status_overlay(image, metrics, threshold, is_test=False):
+    """Add enhanced status and metrics overlay."""
     try:
         # Create copy to avoid modifying original
         img_with_text = image.copy()
         draw = ImageDraw.Draw(img_with_text)
         
-        # Draw main status at top
-        status_text = "OWL DETECTED" if owl_detected else "NO OWL DETECTED"
+        # Determine detection status
+        significant_motion = metrics['pixel_change_ratio'] > 0.05  # 5% threshold
+        status_text = "MOTION DETECTED" if significant_motion else "NO SIGNIFICANT MOTION"
         if is_test:
             status_text = f"TEST MODE - {status_text}"
-        status_color = "red" if owl_detected else "green"
         
         # Position text
-        x = 10
-        y = 10
+        x, y = 10, 10
+        line_height = 20
         
-        # Draw status with larger text
-        draw.text((x, y), status_text, fill=status_color)
-        y += 30
+        # Draw status
+        draw.text((x, y), status_text, fill="red" if significant_motion else "green")
+        y += line_height * 2
         
-        # Add metrics
+        # Draw detailed metrics
         metrics_text = [
-            f"{'Test ' if is_test else ''}Analysis Metrics:",
-            f"Owl-like Shapes: {metrics['owl_like_contours']}",
-            f"Largest Area: {metrics['largest_area_ratio']*100:.1f}%",
-            f"Avg Luminance Change: {metrics['avg_luminance_change']:.1f}",
-            f"Threshold Used: {threshold}",
-            f"Total Contours: {metrics['total_contours']}"
+            f"Pixel Change: {metrics['pixel_change_ratio']*100:.1f}%",
+            f"Mean Luminance: {metrics['mean_luminance']:.1f}",
+            f"Max Luminance: {metrics['max_luminance']:.1f}",
+            f"Threshold: {metrics['threshold_used']}",
+            "",
+            "Region Analysis:",
+            f"Top: {metrics['region_metrics']['top']['mean_luminance']:.1f}",
+            f"Middle: {metrics['region_metrics']['middle']['mean_luminance']:.1f}",
+            f"Bottom: {metrics['region_metrics']['bottom']['mean_luminance']:.1f}"
         ]
         
-        # Draw metrics in yellow
         for text in metrics_text:
-            draw.text((x, y), text, fill='yellow')
-            y += 20
+            draw.text((x, y), text, fill="yellow")
+            y += line_height
             
         return img_with_text
         
@@ -234,20 +238,7 @@ def add_status_overlay(image, owl_detected, metrics, threshold, is_test=False):
         raise
 
 def create_comparison_image(base_image, new_image, camera_name, threshold, config, is_test=False):
-    """
-    Create a three-panel comparison image with clear owl detection status.
-    
-    Args:
-        base_image (PIL.Image): Base reference image
-        new_image (PIL.Image): New captured image
-        camera_name (str): Name of the camera
-        threshold (int): Luminance threshold for change detection
-        config (dict): Camera configuration
-        is_test (bool): Whether this is a test image comparison
-        
-    Returns:
-        str: Path to saved comparison image
-    """
+    """Create enhanced three-panel comparison image."""
     try:
         # Validate images
         is_valid, message = validate_comparison_images(base_image, new_image)
@@ -257,57 +248,54 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         # Get image dimensions
         width, height = base_image.size
         
-        # Create new image with space for three panels
-        comparison = Image.new('RGB', (width * 3, height))
-        
-        # Process difference image and get detection results
-        diff_image, owl_detected, metrics = create_difference_image(
+        # Create visualization
+        diff_image, binary_mask = create_difference_visualization(
             base_image,
             new_image,
             threshold,
-            config,
-            is_test=is_test
+            config
         )
         
-        # Add status overlay
+        # Analyze metrics
+        change_metrics = analyze_change_metrics(diff_image, threshold, config)
+        motion_chars = analyze_motion_characteristics(binary_mask, config)
+        
+        # Add metrics to change_metrics
+        change_metrics.update({
+            'motion_characteristics': motion_chars,
+            'camera_name': camera_name,
+            'is_test': is_test
+        })
+        
+        # Add overlay
         diff_with_overlay = add_status_overlay(
             diff_image,
-            owl_detected,
-            metrics,
+            change_metrics,
             threshold,
             is_test=is_test
         )
         
-        # Combine images
-        comparison.paste(base_image, (0, 0))  # Left panel
-        comparison.paste(new_image, (width, 0))  # Middle panel
-        comparison.paste(diff_with_overlay, (width * 2, 0))  # Right panel
+        # Create comparison image
+        comparison = Image.new('RGB', (width * 3, height))
+        comparison.paste(base_image, (0, 0))
+        comparison.paste(new_image, (width, 0))
+        comparison.paste(diff_with_overlay, (width * 2, 0))
         
-        # Determine save path based on mode
+        # Save comparison image
         if is_test:
-            # Use temp directory for test images
-            os.makedirs(TEMP_COMPARISONS_DIR, exist_ok=True)
+            save_dir = TEMP_COMPARISONS_DIR
             filename = f"test_{camera_name.lower().replace(' ', '_')}_comparison.jpg"
-            save_path = os.path.join(TEMP_COMPARISONS_DIR, filename)
         else:
-            # Use regular directory for real detections
-            local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
-            if local_saving:
-                os.makedirs(IMAGE_COMPARISONS_DIR, exist_ok=True)
-                filename = f"{camera_name.lower().replace(' ', '_')}_comparison.jpg"
-                save_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
-            else:
-                os.makedirs(TEMP_COMPARISONS_DIR, exist_ok=True)
-                filename = f"temp_{camera_name.lower().replace(' ', '_')}_comparison.jpg"
-                save_path = os.path.join(TEMP_COMPARISONS_DIR, filename)
+            save_dir = IMAGE_COMPARISONS_DIR if os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true' else TEMP_COMPARISONS_DIR
+            filename = f"{'temp_' if save_dir == TEMP_COMPARISONS_DIR else ''}{camera_name.lower().replace(' ', '_')}_comparison.jpg"
         
-        # Save image
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, filename)
         comparison.save(save_path, quality=95)
         
-        # Log result
         logger.info(
             f"Created comparison image for {camera_name}. "
-            f"Owl detected: {owl_detected} "
+            f"Motion detected: {change_metrics['pixel_change_ratio'] > 0.05} "
             f"{'(Test Mode)' if is_test else ''}"
         )
         
@@ -328,38 +316,27 @@ if __name__ == "__main__":
                 "min_circularity": 0.5,
                 "min_aspect_ratio": 0.5,
                 "max_aspect_ratio": 2.0,
-                "min_area_ratio": 0.2
+                "min_area_ratio": 0.2,
+                "brightness_threshold": 20
             }
         }
         
-        # Test with real-time capture
+        # Capture test images
         test_roi = (0, 0, 640, 480)
         base = pyautogui.screenshot(region=test_roi)
         new = pyautogui.screenshot(region=test_roi)
         
-        # Test real-time comparison
+        # Test comparison
         comparison_path = create_comparison_image(
-            base, new, "Test Camera",
-            threshold=30,
-            config=test_config,
-            is_test=False
-        )
-        print(f"Real-time test comparison created: {comparison_path}")
-        
-        # Test with test images
-        test_base = Image.open("test_base.jpg")
-        test_new = Image.open("test_new.jpg")
-        
-        # Test comparison with test images
-        test_comparison_path = create_comparison_image(
-            test_base,
-            test_new,
+            base,
+            new,
             "Test Camera",
             threshold=30,
             config=test_config,
             is_test=True
         )
-        print(f"Test image comparison created: {test_comparison_path}")
+        
+        print(f"Test comparison created: {comparison_path}")
         
     except Exception as e:
         logger.error(f"Test failed: {e}")

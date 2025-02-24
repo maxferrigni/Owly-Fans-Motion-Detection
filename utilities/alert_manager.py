@@ -7,7 +7,12 @@ import time
 from utilities.logging_utils import get_logger
 from alert_email import send_email_alert
 from alert_email_to_text import send_text_alert
-from push_to_supabase import get_last_alert_time
+from push_to_supabase import (
+    check_alert_eligibility,
+    create_alert_entry,
+    update_alert_status,
+    get_subscribers
+)
 
 logger = get_logger()
 
@@ -19,30 +24,6 @@ class AlertManager:
             "Owl On Box": 2,
             "Owl In Area": 1
         }
-
-        # Cooldown periods for each alert type (in minutes)
-        self.COOLDOWN_PERIODS = {
-            "Owl In Box": 30,    # 30 minutes between box alerts
-            "Owl On Box": 45,    # 45 minutes between on-box alerts
-            "Owl In Area": 60    # 60 minutes between area alerts
-        }
-
-        # Track last alert times locally
-        self.last_alert_times = {
-            "Owl In Box": None,
-            "Owl On Box": None,
-            "Owl In Area": None
-        }
-
-        # Track current alert states
-        self.current_states = {
-            "Owl In Box": False,
-            "Owl On Box": False,
-            "Owl In Area": False
-        }
-
-        # Track active alerts for suppression logic
-        self.active_alerts = {}
 
         # Default alert delay in minutes
         self.alert_delay = 30
@@ -59,146 +40,205 @@ class AlertManager:
         except ValueError:
             logger.error(f"Invalid alert delay value: {minutes}")
 
-    def _can_send_alert(self, alert_type):
+    def _check_alert_hierarchy(self, alert_type, current_priority):
         """
-        Check if enough time has passed since the last alert, checking both
-        local state and Supabase history.
-        """
-        now = datetime.now(pytz.timezone('America/Los_Angeles'))
-
-        # Check local cooldown first
-        if self.last_alert_times[alert_type] is not None:
-            local_time_since = now - self.last_alert_times[alert_type]
-            if local_time_since < timedelta(minutes=self.alert_delay):
-                logger.info(f"Alert for {alert_type} blocked by local cooldown")
-                return False
-
-        # Check Supabase history
-        last_alert = get_last_alert_time(alert_type)
-        if last_alert is not None:
-            # Convert UTC time from Supabase to local time for comparison
-            last_alert_local = last_alert.astimezone(pytz.timezone('America/Los_Angeles'))
-            time_since_last = now - last_alert_local
-            if time_since_last < timedelta(minutes=self.alert_delay):
-                logger.info(f"Alert for {alert_type} blocked by database cooldown")
-                return False
-
-        return True
-
-    def _should_suppress_alert(self, alert_type):
-        """
-        Determines if an alert should be suppressed based on alert hierarchy.
-        If a higher-priority alert has already been sent recently, suppress lower-priority alerts.
-        """
-        SUPPRESSION_WINDOW = 300  # 5 minutes
-        priority = self.ALERT_HIERARCHY.get(alert_type, 0)
-        current_time = time.time()
-
-        # Check for any active higher-priority alerts
-        for other_type, timestamp in self.active_alerts.items():
-            if self.ALERT_HIERARCHY.get(other_type, 0) > priority:
-                time_diff = current_time - timestamp
-                if time_diff < SUPPRESSION_WINDOW:
-                    logger.info(f"Suppressing {alert_type} alert due to recent {other_type} alert")
-                    return True
-
-        return False
-
-    def _send_alert(self, camera_name, alert_type):
-        """
-        Send alert if cooldown period has passed.
-        Returns whether alert was actually sent.
-        """
-        if self._can_send_alert(alert_type):
-            logger.info(f"Sending alert for {alert_type}")
+        Check if any higher priority alerts are active.
+        
+        Args:
+            alert_type (str): Type of alert being checked
+            current_priority (int): Priority of current alert
             
-            # Send both email and text notifications
-            send_email_alert(camera_name, alert_type)
-            send_text_alert(camera_name, alert_type)
+        Returns:
+            tuple: (bool, dict) - (should_suppress, suppression_info)
+        """
+        try:
+            # Get recent alerts of higher priority
+            for other_type, priority in self.ALERT_HIERARCHY.items():
+                if priority > current_priority:
+                    is_eligible, last_alert = check_alert_eligibility(other_type)
+                    
+                    if last_alert and not is_eligible:
+                        return True, {
+                            "suppressed_by_type": other_type,
+                            "suppressed_by_id": last_alert['id'],
+                            "reason": f"Suppressed by recent {other_type} alert"
+                        }
             
-            # Update tracking
-            self.last_alert_times[alert_type] = datetime.now(pytz.timezone('America/Los_Angeles'))
-            self.active_alerts[alert_type] = time.time()
+            return False, None
             
-            return True
-            
-        return False
+        except Exception as e:
+            logger.error(f"Error checking alert hierarchy: {e}")
+            return True, {
+                "reason": f"Error checking hierarchy: {str(e)}"
+            }
 
-    def process_detection(self, camera_name, detection_result):
+    def _send_notifications(self, camera_name, alert_type):
+        """
+        Send email and SMS notifications.
+        
+        Args:
+            camera_name (str): Name of the camera
+            alert_type (str): Type of alert
+            
+        Returns:
+            tuple: (email_count, sms_count) - Number of notifications sent
+        """
+        try:
+            # Get email subscribers
+            email_subscribers = get_subscribers(notification_type="email")
+            email_count = 0
+            if email_subscribers:
+                send_email_alert(camera_name, alert_type)
+                email_count = len(email_subscribers)
+                logger.info(f"Sent {email_count} email notifications")
+
+            # Get SMS subscribers
+            sms_subscribers = get_subscribers(
+                notification_type="sms",
+                owl_location=alert_type.lower().replace(" ", "_")
+            )
+            sms_count = 0
+            if sms_subscribers:
+                send_text_alert(camera_name, alert_type)
+                sms_count = len(sms_subscribers)
+                logger.info(f"Sent {sms_count} SMS notifications")
+
+            return email_count, sms_count
+
+        except Exception as e:
+            logger.error(f"Error sending notifications: {e}")
+            return 0, 0
+
+    def process_detection(self, camera_name, detection_result, activity_log_id):
         """
         Process a new detection result and send alerts if appropriate.
-        Returns whether an alert was sent.
         
         Args:
             camera_name (str): Name of the camera
             detection_result (dict): Detection result including status and metrics
+            activity_log_id (int): ID of the owl_activity_log entry
             
         Returns:
             bool: Whether an alert was sent
         """
-        alert_type = detection_result.get("status")
-        is_test = detection_result.get("detection_info", {}).get("is_test", False)
-        alert_sent = False
-        
-        if alert_type not in self.ALERT_HIERARCHY:
-            return alert_sent
+        try:
+            alert_type = detection_result.get("status")
+            if alert_type not in self.ALERT_HIERARCHY:
+                return False
 
-        # Update current state
-        is_detected = detection_result.get("status") == alert_type
-        old_state = self.current_states[alert_type]
-        self.current_states[alert_type] = is_detected
+            # Check if detection is positive
+            is_detected = detection_result.get("status") == alert_type
+            if not is_detected:
+                return False
 
-        if is_detected:
             logger.info(f"{alert_type} detected by {camera_name}")
             logger.info(f"Pixel change: {detection_result.get('pixel_change', 0):.2f}%")
             logger.info(f"Luminance change: {detection_result.get('luminance_change', 0):.2f}")
 
-        # Handle test mode differently
-        if is_test:
-            if self._can_send_alert(alert_type):
-                logger.info(f"Sending test alert for {alert_type}")
-                alert_sent = self._send_alert(camera_name, alert_type)
-            return alert_sent
+            # Create alert entry
+            alert_entry = create_alert_entry(
+                owl_activity_log_id=activity_log_id,
+                alert_type=alert_type,
+                base_cooldown_minutes=self.alert_delay
+            )
 
-        # For real alerts, enforce hierarchy
-        if not old_state and is_detected:  # New detection
-            if not self._should_suppress_alert(alert_type):
-                if alert_type == "Owl In Box":
-                    # If owl is in box, only send that alert
-                    alert_sent = self._send_alert(camera_name, "Owl In Box")
-                elif alert_type == "Owl On Box" and not self._is_higher_alert_active("Owl In Box"):
-                    # If owl is on box and not in box, only send on box alert
-                    alert_sent = self._send_alert(camera_name, "Owl On Box")
-                elif (alert_type == "Owl In Area" and 
-                      not self._is_higher_alert_active("Owl On Box") and 
-                      not self._is_higher_alert_active("Owl In Box")):
-                    # If owl is in area and not on/in box, send area alert
-                    alert_sent = self._send_alert(camera_name, "Owl In Area")
+            if not alert_entry:
+                logger.error("Failed to create alert entry")
+                return False
 
-        return alert_sent
+            # Check basic eligibility
+            is_eligible, last_alert = check_alert_eligibility(alert_type)
+            
+            # Check hierarchy suppression
+            current_priority = self.ALERT_HIERARCHY[alert_type]
+            should_suppress, suppression_info = self._check_alert_hierarchy(
+                alert_type,
+                current_priority
+            )
 
-    def _is_higher_alert_active(self, alert_type):
-        """Check if any higher priority alerts are currently active."""
-        priority = self.ALERT_HIERARCHY.get(alert_type, 0)
-        current_time = time.time()
-        
-        for other_type, timestamp in self.active_alerts.items():
-            if (self.ALERT_HIERARCHY.get(other_type, 0) > priority and 
-                current_time - timestamp < 300):  # 5 minute window
-                return True
-        return False
+            if should_suppress:
+                # Update alert as suppressed
+                update_alert_status(
+                    alert_id=alert_entry['id'],
+                    suppressed=True,
+                    suppression_reason=suppression_info['reason'],
+                    suppressed_by_id=suppression_info.get('suppressed_by_id'),
+                    previous_alert_id=last_alert['id'] if last_alert else None
+                )
+                return False
+
+            # Handle priority override
+            priority_override = False
+            if not is_eligible and last_alert:
+                last_alert_type = last_alert['alert_type']
+                last_priority = self.ALERT_HIERARCHY[last_alert_type]
+                
+                if current_priority > last_priority:
+                    priority_override = True
+                    logger.info(f"Priority override: {alert_type} overriding {last_alert_type}")
+                else:
+                    # Update alert as suppressed by cooldown
+                    update_alert_status(
+                        alert_id=alert_entry['id'],
+                        suppressed=True,
+                        suppression_reason="In cooldown period",
+                        previous_alert_id=last_alert['id']
+                    )
+                    return False
+
+            # Send notifications
+            email_count, sms_count = self._send_notifications(camera_name, alert_type)
+
+            # Update alert status
+            update_alert_status(
+                alert_id=alert_entry['id'],
+                email_count=email_count,
+                sms_count=sms_count,
+                previous_alert_id=last_alert['id'] if last_alert else None,
+                priority_override=priority_override
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error processing detection: {e}")
+            return False
 
     def get_alert_status(self):
         """Get current alert status for logging/debugging"""
         return {
-            "current_states": self.current_states.copy(),
-            "last_alert_times": {
-                k: v.isoformat() if v else None 
-                for k, v in self.last_alert_times.items()
-            },
-            "active_alerts": {
-                k: time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(v))
-                for k, v in self.active_alerts.items()
-            },
-            "alert_delay": self.alert_delay
+            "alert_delay": self.alert_delay,
+            "alert_hierarchy": self.ALERT_HIERARCHY.copy()
         }
+
+
+if __name__ == "__main__":
+    # Test the alert manager
+    try:
+        logger.info("Testing alert manager...")
+        alert_manager = AlertManager()
+
+        # Test detection processing
+        test_detection = {
+            "status": "Owl In Box",
+            "pixel_change": 25.5,
+            "luminance_change": 30.2,
+            "detection_info": {
+                "confidence": 0.85,
+                "is_test": True
+            }
+        }
+
+        # Process test detection
+        result = alert_manager.process_detection(
+            camera_name="Test Camera",
+            detection_result=test_detection,
+            activity_log_id=1  # Test ID
+        )
+
+        logger.info(f"Test detection processed: Alert sent = {result}")
+        logger.info("Alert manager test complete")
+
+    except Exception as e:
+        logger.error(f"Alert manager test failed: {e}")
+        raise

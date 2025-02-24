@@ -8,7 +8,6 @@ from PIL import Image
 import pyautogui
 import pytz
 import numpy as np
-import shutil
 
 # Import utilities
 from utilities.constants import (
@@ -28,6 +27,7 @@ from utilities.owl_detection_utils import detect_owl_in_box
 from utilities.image_comparison_utils import create_comparison_image
 from utilities.alert_manager import AlertManager
 from capture_base_images import capture_base_images, get_latest_base_image
+from push_to_supabase import push_activity_log
 
 # Initialize logger and alert manager
 logger = get_logger()
@@ -37,16 +37,7 @@ alert_manager = AlertManager()
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
 
 def initialize_system(camera_configs, is_test=False):
-    """
-    Initialize the motion detection system.
-    
-    Args:
-        camera_configs (dict): Dictionary of camera configurations
-        is_test (bool): Whether this is a test initialization
-        
-    Returns:
-        bool: True if initialization successful
-    """
+    """Initialize the motion detection system."""
     try:
         logger.info(f"Initializing motion detection system (Test Mode: {is_test})")
         
@@ -62,7 +53,7 @@ def initialize_system(camera_configs, is_test=False):
                 return False
                 
         # Verify base images directory based on local saving setting
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true'  # Changed default to True
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true'
         logger.info(f"Local image saving is {'enabled' if local_saving else 'disabled'}")
         
         if not is_test:
@@ -78,64 +69,6 @@ def initialize_system(camera_configs, is_test=False):
         logger.error(f"Error during motion detection system initialization: {e}")
         return False
 
-def verify_base_images(lighting_condition):
-    """Verify that all necessary base images exist and are recent"""
-    try:
-        logger.info("Verifying base images...")
-        
-        # Determine which directories to check based on local saving setting
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true'  # Changed default to True
-        check_dirs = [TEMP_BASE_IMAGES_DIR]
-        if local_saving:
-            check_dirs.append(BASE_IMAGES_DIR)
-        
-        # Track found base images
-        found_images = {camera: False for camera in CAMERA_MAPPINGS.keys()}
-        
-        # Check all relevant directories
-        for directory in check_dirs:
-            if not os.path.exists(directory):
-                continue
-                
-            base_images = os.listdir(directory)
-            
-            # Check for each camera
-            for camera_name in CAMERA_MAPPINGS.keys():
-                if found_images[camera_name]:
-                    continue
-                    
-                base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
-                matching_files = [f for f in base_images if f.startswith(base_pattern)]
-                
-                if matching_files:
-                    # Get most recent file
-                    latest_file = max(matching_files, key=lambda f: os.path.getctime(
-                        os.path.join(directory, f)
-                    ))
-                    file_path = os.path.join(directory, latest_file)
-                    
-                    # Check age - using 2 minutes as threshold since these are temp files
-                    file_age = time.time() - os.path.getctime(file_path)
-                    if file_age > 120:  # 2 minutes in seconds
-                        logger.info(f"Base image for {camera_name} is too old")
-                        continue
-                        
-                    found_images[camera_name] = True
-        
-        # Check if all cameras have valid base images
-        all_valid = all(found_images.values())
-        if not all_valid:
-            missing_cameras = [cam for cam, found in found_images.items() if not found]
-            logger.info(f"Missing or outdated base images for: {', '.join(missing_cameras)}")
-            return False
-            
-        logger.info("Base image verification complete")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error verifying base images: {e}")
-        return False
-
 def capture_real_image(roi):
     """Capture a screenshot of the specified region"""
     try:
@@ -148,27 +81,60 @@ def capture_real_image(roi):
         logger.error(f"Error capturing screenshot: {e}")
         raise
 
-def save_to_archive(comparison_path, camera_name):
-    """
-    Save a copy of the comparison image to the archive directory.
-    
-    Args:
-        comparison_path (str): Path to the comparison image
-        camera_name (str): Name of the camera
-    """
-    try:
-        if os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true':  # Changed default to True
-            current_time = datetime.now(PACIFIC_TIME)
-            archive_path = get_archive_comparison_path(camera_name, current_time)
-            
-            # Ensure the directory exists
-            os.makedirs(os.path.dirname(archive_path), exist_ok=True)
-            
-            # Copy the comparison image to archive
-            shutil.copy2(comparison_path, archive_path)
-            logger.info(f"Archived comparison image to: {archive_path}")
-    except Exception as e:
-        logger.error(f"Error archiving comparison image: {e}")
+def format_detection_metrics(detection_info, config, camera_type):
+    """Format detection metrics for database logging"""
+    metrics = {
+        "detected": False,
+        "pixel_change": 0.0,
+        "luminance_change": 0.0,
+        "threshold_percentage": config.get("threshold_percentage", 0.0),
+        "threshold_luminance": config.get("luminance_threshold", 0.0),
+        "interval_seconds": config.get("interval_seconds", 0),
+        "shapes_count": 0,
+        "largest_shape_circularity": 0.0,
+        "largest_shape_aspect_ratio": 0.0,
+        "largest_shape_area_ratio": 0.0,
+        "largest_shape_brightness_diff": 0.0,
+        "image_url": "",
+        "comparison_url": ""
+    }
+
+    if not detection_info:
+        return metrics
+
+    # Update with actual detection info
+    if camera_type == "Owl In Box":
+        metrics.update({
+            "detected": detection_info.get("is_owl_present", False),
+            "shapes_count": len(detection_info.get("owl_candidates", [])),
+            "pixel_change": detection_info.get("diff_metrics", {}).get("significant_pixels", 0.0) * 100,
+            "luminance_change": detection_info.get("diff_metrics", {}).get("mean_difference", 0.0)
+        })
+        
+        # Get largest shape metrics if any were detected
+        if detection_info.get("owl_candidates"):
+            largest = max(detection_info["owl_candidates"], 
+                        key=lambda x: x.get("area_ratio", 0))
+            metrics.update({
+                "largest_shape_circularity": largest.get("circularity", 0.0),
+                "largest_shape_aspect_ratio": largest.get("aspect_ratio", 0.0),
+                "largest_shape_area_ratio": largest.get("area_ratio", 0.0),
+                "largest_shape_brightness_diff": largest.get("brightness_diff", 0.0)
+            })
+    else:
+        metrics.update({
+            "detected": detection_info.get("motion_detected", False),
+            "pixel_change": detection_info.get("pixel_change", 0.0),
+            "luminance_change": detection_info.get("luminance_change", 0.0)
+        })
+
+    # Add image URLs if available
+    if detection_info.get("snapshot_path"):
+        metrics["image_url"] = detection_info["snapshot_path"]
+    if detection_info.get("comparison_path"):
+        metrics["comparison_url"] = detection_info["comparison_path"]
+
+    return metrics
 
 def process_camera(camera_name, config, lighting_info=None, test_images=None):
     """Process motion detection for a specific camera"""
@@ -185,6 +151,14 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             
         logger.info(f"Current lighting condition: {lighting_condition}")
         
+        # Get base image age
+        base_image_age = 0
+        try:
+            base_timestamp = os.path.getctime(get_latest_base_image(camera_name, lighting_condition))
+            base_image_age = int(time.time() - base_timestamp)
+        except Exception as e:
+            logger.warning(f"Could not determine base image age: {e}")
+        
         # Get images either from test or capture
         if test_images:
             base_image = test_images['base']
@@ -194,104 +168,82 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             base_image = get_latest_base_image(camera_name, lighting_condition)
             new_image = capture_real_image(config["roi"])
             is_test = False
-        
-        # Handle different camera types
-        motion_detected = False
-        owl_info = None
-        comparison_path = None
 
-        if config["alert_type"] == "Owl In Box":
-            # Use specialized owl detection for box camera
+        # Initialize detection results
+        detection_results = {
+            "Owl In Box": {},
+            "Owl On Box": {},
+            "Owl In Area": {}
+        }
+        
+        # Get camera type
+        alert_type = CAMERA_MAPPINGS[camera_name]
+        
+        # Process based on camera type
+        detection_info = None
+        if alert_type == "Owl In Box":
             is_owl_present, detection_info = detect_owl_in_box(
                 new_image, 
-                base_image, 
+                base_image,
                 config,
                 is_test=is_test
             )
-            motion_detected = is_owl_present
-            owl_info = detection_info
-            
-            # Generate comparison image
-            if motion_detected:
+            if is_owl_present:
                 comparison_path = create_comparison_image(
                     base_image, 
-                    new_image, 
-                    config["alert_type"],
-                    config["motion_detection"]["brightness_threshold"],
-                    config,
+                    new_image,
+                    camera_name=alert_type,
+                    threshold=config["luminance_threshold"] * threshold_multiplier,
+                    config=config,
                     is_test=is_test
                 )
+                detection_info["comparison_path"] = comparison_path
         else:
-            # Create comparison image and get metrics
             comparison_path = create_comparison_image(
                 base_image, 
-                new_image, 
-                camera_name=config["alert_type"],
+                new_image,
+                camera_name=alert_type,
                 threshold=config["luminance_threshold"] * threshold_multiplier,
                 config=config,
                 is_test=is_test
             )
             
-            # Get metrics from comparison image
-            diff_image = Image.open(comparison_path)
-            width = diff_image.size[0] // 3  # Get the size of one panel
-            diff_panel = diff_image.crop((width * 2, 0, width * 3, diff_image.height))
-            
-            # Process metrics
-            pixels_array = np.array(diff_panel.convert('L'))
-            changed_pixels = np.sum(pixels_array > config["luminance_threshold"])
-            total_pixels = pixels_array.size
-            
-            motion_detected = (changed_pixels / total_pixels) > config["threshold_percentage"]
-            owl_info = {
-                "pixel_change": changed_pixels / total_pixels,
-                "luminance_change": np.mean(pixels_array),
-                "threshold_used": config["luminance_threshold"],
-                "is_test": is_test
-            }
+            if comparison_path:
+                detection_info = {
+                    "motion_detected": True,
+                    "comparison_path": comparison_path
+                }
 
-        # If motion detected and we have a comparison image, save to archive
-        if motion_detected and comparison_path:
-            save_to_archive(comparison_path, camera_name)
+        # Format metrics for database
+        metrics = format_detection_metrics(detection_info, config, alert_type)
+        detection_results[alert_type] = metrics
 
-        # Clean up temporary comparison image if local saving is disabled
-        if (not os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true' and  # Changed default to True
-            comparison_path and 
-            os.path.exists(comparison_path) and 
-            'temp' in comparison_path):
-            try:
-                os.remove(comparison_path)
-                logger.debug(f"Cleaned up temporary comparison image: {comparison_path}")
-            except Exception as e:
-                logger.error(f"Error cleaning up temporary file: {e}")
-        
-        if motion_detected:
-            logger.info(
-                f"Motion detected for {camera_name} "
-                f"during {lighting_condition} condition"
+        # Push to activity log
+        log_entry = push_activity_log(
+            detection_results,
+            lighting_condition,
+            base_image_age
+        )
+
+        if log_entry and metrics["detected"] and not is_test:
+            # Process alert if motion was detected
+            alert_manager.process_detection(
+                camera_name,
+                {
+                    "status": alert_type,
+                    "pixel_change": metrics["pixel_change"],
+                    "luminance_change": metrics["luminance_change"]
+                },
+                log_entry["id"]
             )
-            
-        return {
-            "status": config["alert_type"] if motion_detected else "No Motion",
-            "pixel_change": owl_info.get("pixel_change", 0.0) * 100 if owl_info else 0.0,
-            "luminance_change": owl_info.get("luminance_change", 0.0) if owl_info else 0.0,
-            "snapshot_path": comparison_path if motion_detected else "",
-            "lighting_condition": lighting_condition,
-            "detection_info": owl_info,
-            "is_test": is_test
-        }
+
+        return detection_results[alert_type]
 
     except Exception as e:
         logger.error(f"Error processing {camera_name}: {e}")
         return {
             "status": "Error",
-            "error_message": str(e),
-            "pixel_change": 0.0,
-            "luminance_change": 0.0,
-            "snapshot_path": "",
-            "lighting_condition": "unknown",
-            "detection_info": None,
-            "is_test": test_images is not None
+            "error_message": str(e)
         }
 
 def process_cameras(camera_configs, test_images=None):
@@ -310,41 +262,50 @@ def process_cameras(camera_configs, test_images=None):
         
         # Only verify base images in real-time mode
         if not test_images:
-            if not verify_base_images(lighting_condition):
-                logger.info("Base images need to be updated")
+            if should_capture_base_image():
+                logger.info("Time to capture new base images")
                 capture_base_images(lighting_condition, force_capture=True)
-                time.sleep(3)  # Allow system to stabilize after capture
+                time.sleep(3)  # Allow system to stabilize
         
         # Process each camera with shared lighting info
         results = []
         for camera_name, config in camera_configs.items():
             try:
-                # Get test images for this camera if in test mode
                 camera_test_images = test_images.get(camera_name) if test_images else None
-                
                 result = process_camera(
                     camera_name, 
                     config, 
                     lighting_info,
                     test_images=camera_test_images
                 )
-                
-                # Only process alerts for non-test detections
-                if not result.get("is_test", False):
-                    alert_manager.process_detection(camera_name, result)
-                
                 results.append(result)
             except Exception as e:
                 logger.error(f"Error processing camera {camera_name}: {e}")
                 results.append({
                     "camera": camera_name,
                     "status": "Error",
-                    "error_message": str(e),
-                    "is_test": test_images is not None
+                    "error_message": str(e)
                 })
         
         return results
 
     except Exception as e:
         logger.error(f"Error in camera processing cycle: {e}")
+        raise
+
+if __name__ == "__main__":
+    # Test the motion detection
+    try:
+        from utilities.configs_loader import load_camera_config
+        
+        # Load test configuration
+        test_configs = load_camera_config()
+        
+        # Initialize system
+        if initialize_system(test_configs, is_test=True):
+            # Run test detection cycle
+            results = process_cameras(test_configs)
+            print("Test Results:", results)
+    except Exception as e:
+        logger.error(f"Motion detection test failed: {e}")
         raise
