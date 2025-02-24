@@ -87,13 +87,14 @@ class AlertManager:
                     return True
         return False
 
-    def _send_alert(self, camera_name, alert_type):
+    def _send_alert(self, camera_name, alert_type, activity_log_id=None):
         """
         Send alerts based on alert type and cooldown period.
         
         Args:
             camera_name (str): Name of the camera that triggered the alert
             alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
+            activity_log_id (int, optional): ID of the corresponding activity log entry
 
         Returns:
             bool: True if alert was sent, False otherwise
@@ -106,7 +107,7 @@ class AlertManager:
 
             if is_eligible:
                 # Create a new alert entry in the database
-                alert_entry = create_alert_entry(alert_type, camera_name)
+                alert_entry = create_alert_entry(alert_type, camera_name, activity_log_id)
 
                 if alert_entry:
                     # Send email and SMS alerts
@@ -143,7 +144,7 @@ class AlertManager:
         Args:
             camera_name (str): Name of the camera that triggered the detection
             detection_result (dict): Dictionary containing detection results
-            activity_log_id (int, optional): ID of the corresponding activity log entry
+            activity_log_id (int, optional): ID of the corresponding owl_activity_log entry
 
         Returns:
             bool: True if an alert was sent, False otherwise
@@ -156,9 +157,9 @@ class AlertManager:
             logger.warning(f"Invalid alert type: {alert_type}")
             return False
 
-        # Check if the alert type is already active
-        if alert_type in self.active_alerts:
-            logger.info(f"Alert type {alert_type} is already active")
+        # Check if motion was detected
+        if not detection_result.get("motion_detected", False):
+            logger.debug(f"No motion detected for {alert_type}, skipping alert")
             return False
 
         # Check alert hierarchy
@@ -173,15 +174,15 @@ class AlertManager:
                 # Determine which alert to send based on hierarchy
                 if alert_type == "Owl In Box":
                     # Always send owl in box alert
-                    alert_sent = self._send_alert(camera_name, "Owl In Box")
+                    alert_sent = self._send_alert(camera_name, "Owl In Box", activity_log_id)
                 elif alert_type == "Owl On Box" and not self._is_higher_alert_active("Owl In Box"):
                     # Send owl on box alert if no active owl in box alert
-                    alert_sent = self._send_alert(camera_name, "Owl On Box")
+                    alert_sent = self._send_alert(camera_name, "Owl On Box", activity_log_id)
                 elif (alert_type == "Owl In Area" and 
                       not self._is_higher_alert_active("Owl On Box") and 
                       not self._is_higher_alert_active("Owl In Box")):
                     # If owl is in area and not on/in box, send area alert
-                    alert_sent = self._send_alert(camera_name, "Owl In Area")
+                    alert_sent = self._send_alert(camera_name, "Owl In Area", activity_log_id)
 
         return alert_sent
 
@@ -222,12 +223,9 @@ if __name__ == "__main__":
         # Test detection processing
         test_detection = {
             "status": "Owl In Box",
+            "motion_detected": True,
             "pixel_change": 25.5,
-            "luminance_change": 30.2,
-            "detection_info": {
-                "confidence": 0.85,
-                "is_test": True
-            }
+            "luminance_change": 30.2
         }
 
         # Process test detection
