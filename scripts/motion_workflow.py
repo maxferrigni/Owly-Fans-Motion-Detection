@@ -87,58 +87,73 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
     """Process motion detection for a specific camera"""
     try:
         logger.info(f"Processing camera: {camera_name} {'(Test Mode)' if test_images else ''}")
+        base_image = None
+        new_image = None
         
-        # Get or use provided lighting condition
-        if lighting_info is None:
-            lighting_condition = get_current_lighting_condition()
-            threshold_multiplier = get_luminance_threshold_multiplier()
-        else:
-            lighting_condition = lighting_info['condition']
-            threshold_multiplier = lighting_info['threshold_multiplier']
+        try:
+            # Get or use provided lighting condition
+            if lighting_info is None:
+                lighting_condition = get_current_lighting_condition()
+                threshold_multiplier = get_luminance_threshold_multiplier()
+            else:
+                lighting_condition = lighting_info['condition']
+                threshold_multiplier = lighting_info['threshold_multiplier']
+                
+            logger.info(f"Current lighting condition: {lighting_condition}")
             
-        logger.info(f"Current lighting condition: {lighting_condition}")
-        
-        # Get base image path and age
-        base_image_age = 0
-        if test_images:
-            base_image = test_images['base']
-            new_image = test_images['test']
-            is_test = True
-        else:
-            # Get base image path first
-            base_image_path = get_latest_base_image(camera_name, lighting_condition)
-            logger.info(f"Using base image: {base_image_path}")
-            
-            # Calculate base image age from the file
-            try:
-                base_image_age = int(time.time() - os.path.getctime(base_image_path))
-            except Exception as e:
-                logger.warning(f"Could not determine base image age: {e}")
-            
-            # Load the base image
-            base_image = Image.open(base_image_path).convert("RGB")
-            new_image = capture_real_image(config["roi"])
-            is_test = False
+            # Get base image path and age
+            base_image_age = 0
+            if test_images:
+                base_image = test_images['base']
+                new_image = test_images['test']
+                is_test = True
+            else:
+                # Get base image path first
+                base_image_path = get_latest_base_image(camera_name, lighting_condition)
+                logger.info(f"Using base image: {base_image_path}")
+                
+                # Calculate base image age from the file
+                try:
+                    base_image_age = int(time.time() - os.path.getctime(base_image_path))
+                except Exception as e:
+                    logger.warning(f"Could not determine base image age: {e}")
+                
+                # Load the images
+                base_image = Image.open(base_image_path).convert("RGB")
+                new_image = capture_real_image(config["roi"])
+                is_test = False
 
-        # Initialize detection results
-        detection_results = {
-            "camera": camera_name,
-            "is_test": is_test
-        }
-        
-        # Get camera type
-        alert_type = CAMERA_MAPPINGS[camera_name]
-        
-        # Process based on camera type
-        detection_info = None
-        if alert_type == "Owl In Box":
-            is_owl_present, detection_info = detect_owl_in_box(
-                new_image, 
-                base_image,
-                config,
-                is_test=is_test
-            )
-            if is_owl_present:
+            # Initialize detection results
+            detection_results = {
+                "camera": camera_name,
+                "is_test": is_test
+            }
+            
+            # Get camera type
+            alert_type = CAMERA_MAPPINGS[camera_name]
+            
+            # Process based on camera type
+            detection_info = None
+            if alert_type == "Owl In Box":
+                is_owl_present, detection_info = detect_owl_in_box(
+                    new_image, 
+                    base_image,
+                    config,
+                    is_test=is_test
+                )
+                if is_owl_present:
+                    comparison_path = create_comparison_image(
+                        base_image, 
+                        new_image,
+                        camera_name=alert_type,
+                        threshold=config["luminance_threshold"] * threshold_multiplier,
+                        config=config,
+                        is_test=is_test
+                    )
+                    if detection_info:
+                        detection_info["comparison_path"] = comparison_path
+                    detection_results["status"] = "Owl In Box"
+            else:
                 comparison_path = create_comparison_image(
                     base_image, 
                     new_image,
@@ -147,48 +162,43 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                     config=config,
                     is_test=is_test
                 )
-                if detection_info:
-                    detection_info["comparison_path"] = comparison_path
-                detection_results["status"] = "Owl In Box"
-        else:
-            comparison_path = create_comparison_image(
-                base_image, 
-                new_image,
-                camera_name=alert_type,
-                threshold=config["luminance_threshold"] * threshold_multiplier,
-                config=config,
-                is_test=is_test
-            )
-            
-            if comparison_path:
-                detection_info = {
-                    "motion_detected": True,
-                    "comparison_path": comparison_path
-                }
-                detection_results["status"] = alert_type
+                
+                if comparison_path:
+                    detection_info = {
+                        "motion_detected": True,
+                        "comparison_path": comparison_path
+                    }
+                    detection_results["status"] = alert_type
 
-        # Format metrics for database
-        if detection_info:
-            detection_results.update({
-                "pixel_change": detection_info.get("pixel_change", 0.0),
-                "luminance_change": detection_info.get("luminance_change", 0.0),
-                "comparison_path": detection_info.get("comparison_path", ""),
-                "motion_detected": detection_info.get("motion_detected", False)
-            })
+            # Format metrics for database
+            if detection_info:
+                detection_results.update({
+                    "pixel_change": detection_info.get("pixel_change", 0.0),
+                    "luminance_change": detection_info.get("luminance_change", 0.0),
+                    "comparison_path": detection_info.get("comparison_path", ""),
+                    "motion_detected": detection_info.get("motion_detected", False)
+                })
 
-        # Push to activity log
-        formatted_results = format_detection_results(detection_results)
-        log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
+            # Push to activity log
+            formatted_results = format_detection_results(detection_results)
+            log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
 
-        if log_entry and detection_info and detection_info.get("motion_detected", False) and not is_test:
-            # Process alert if motion was detected
-            alert_manager.process_detection(
-                camera_name,
-                detection_results,
-                log_entry.get("id")
-            )
+            if log_entry and detection_info and detection_info.get("motion_detected", False) and not is_test:
+                # Process alert if motion was detected
+                alert_manager.process_detection(
+                    camera_name,
+                    detection_results,
+                    log_entry.get("id")
+                )
 
-        return detection_results
+            return detection_results
+
+        finally:
+            # Clean up image objects
+            if base_image and hasattr(base_image, 'close'):
+                base_image.close()
+            if new_image and hasattr(new_image, 'close'):
+                new_image.close()
 
     except Exception as e:
         logger.error(f"Error processing {camera_name}: {e}")
@@ -258,7 +268,7 @@ if __name__ == "__main__":
         if initialize_system(test_configs, is_test=True):
             # Run test detection cycle
             results = process_cameras(test_configs)
-            logger.info("Test Results:", results)
+            logger.info(f"Test Results: {results}")
     except Exception as e:
         logger.error(f"Motion detection test failed: {e}")
         raise

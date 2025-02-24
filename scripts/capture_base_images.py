@@ -73,14 +73,14 @@ def clear_base_images(lighting_condition=None):
 
 def get_latest_base_image(camera_name, lighting_condition):
     """
-    Get the most recent base image for a camera and lighting condition.
+    Get the most recent base image path for a camera and lighting condition.
     
     Args:
         camera_name (str): Name of the camera
         lighting_condition (str): Current lighting condition
         
     Returns:
-        PIL.Image: Most recent base image
+        str: Path to the most recent base image
         
     Raises:
         FileNotFoundError: If no matching base image is found
@@ -113,7 +113,7 @@ def get_latest_base_image(camera_name, lighting_condition):
                 image_path = os.path.join(directory, latest_file)
                 logger.info(f"Using base image: {image_path}")
                 
-                return Image.open(image_path).convert("RGB")
+                return image_path
         
         raise FileNotFoundError(
             f"No base image found for {camera_name} under {lighting_condition} condition"
