@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 import pytz
 import shutil
+import time
 
 # Import utilities
 from utilities.constants import (
@@ -17,7 +18,11 @@ from utilities.constants import (
     TEMP_BASE_IMAGES_DIR
 )
 from utilities.logging_utils import get_logger
-from utilities.time_utils import get_current_lighting_condition
+from utilities.time_utils import (
+    get_current_lighting_condition,
+    is_lighting_condition_stable,
+    record_base_image_capture
+)
 from upload_images_to_supabase import upload_base_image
 
 # Initialize logger
@@ -49,27 +54,27 @@ def capture_real_image(roi):
         raise ValueError(f"Invalid ROI dimensions: {roi}")
     return pyautogui.screenshot(region=(x, y, width, height))
 
-def clear_base_images(lighting_condition=None):
+def clear_old_base_images(camera_name, lighting_condition):
     """
-    Clear existing base images.
+    Clear existing base images for a specific camera and lighting condition.
     
     Args:
-        lighting_condition (str, optional): If provided, only clear images for this condition
+        camera_name (str): Name of the camera
+        lighting_condition (str): Lighting condition to clear
     """
     try:
         if not os.path.exists(BASE_IMAGES_DIR):
             return
 
+        base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
+        
         for filename in os.listdir(BASE_IMAGES_DIR):
-            if lighting_condition:
-                if lighting_condition in filename:
-                    os.remove(os.path.join(BASE_IMAGES_DIR, filename))
-                    logger.info(f"Removed base image: {filename}")
-            else:
-                os.remove(os.path.join(BASE_IMAGES_DIR, filename))
+            if filename.startswith(base_pattern):
+                file_path = os.path.join(BASE_IMAGES_DIR, filename)
+                os.remove(file_path)
                 logger.info(f"Removed base image: {filename}")
     except Exception as e:
-        logger.error(f"Error clearing base images: {e}")
+        logger.error(f"Error clearing old base images: {e}")
 
 def get_latest_base_image(camera_name, lighting_condition):
     """
@@ -143,8 +148,8 @@ def save_base_image(image, camera_name, lighting_condition):
         # Generate timestamp
         timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
         
-        # Generate filename
-        filename = get_base_image_filename(camera_name, lighting_condition, timestamp)
+        # Generate filename - simplified format
+        filename = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
         
         # Save locally if enabled
         if local_saving:
@@ -162,14 +167,19 @@ def save_base_image(image, camera_name, lighting_condition):
             
             # Create temporary file for Supabase upload
             os.makedirs(TEMP_BASE_IMAGES_DIR, exist_ok=True)
-            temp_path = os.path.join(TEMP_BASE_IMAGES_DIR, f"temp_{filename}")
+            temp_path = os.path.join(TEMP_BASE_IMAGES_DIR, filename)
             if image.mode == "RGBA":
                 image = image.convert("RGB")
             image.save(temp_path)
             local_path = temp_path
         
-        # Upload to Supabase
-        supabase_url = upload_base_image(local_path, camera_name, lighting_condition)
+        # Upload to Supabase with simplified UTC timestamp for cloud storage
+        utc_timestamp = datetime.now(pytz.UTC)
+        supabase_filename = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{utc_timestamp.strftime('%Y%m%d%H%M%S')}.jpg"
+        supabase_url = upload_base_image(local_path, supabase_filename, camera_name, lighting_condition)
+        
+        # Record that we captured a base image
+        record_base_image_capture(lighting_condition)
         
         # Clean up temporary file if local saving is disabled
         if not local_saving and os.path.exists(local_path):
@@ -202,10 +212,10 @@ def capture_base_images(lighting_condition=None, force_capture=False):
         
         logger.info(f"Using lighting condition: {lighting_condition}")
         
-        # Clear existing base images for this lighting condition
-        # Only if local saving is enabled
-        if os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
-            clear_base_images(lighting_condition)
+        # Check if lighting condition is stable and it's a good time to capture
+        if not force_capture and not is_lighting_condition_stable():
+            logger.info(f"Lighting condition {lighting_condition} is not stable yet, skipping base image capture")
+            return []
         
         configs = load_config()
         results = []
@@ -218,6 +228,10 @@ def capture_base_images(lighting_condition=None, force_capture=False):
             logger.info(f"Capturing base image for {camera_name}...")
             
             try:
+                # Clear old base images for this camera and lighting condition
+                if os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
+                    clear_old_base_images(camera_name, lighting_condition)
+                
                 # Capture new image
                 new_image = capture_real_image(config["roi"])
                 
@@ -261,11 +275,18 @@ def handle_lighting_transition(old_condition, new_condition):
     try:
         logger.info(f"Handling lighting transition: {old_condition} -> {new_condition}")
         
-        # Capture new base images for the new lighting condition
-        capture_base_images(lighting_condition=new_condition, force_capture=True)
+        # Wait for the new lighting condition to stabilize before capturing
+        wait_time = 300  # 5 minutes
+        logger.info(f"Waiting {wait_time} seconds for lighting to stabilize...")
+        time.sleep(wait_time)
         
-        # Archive old base images if needed
-        # (implemented if you want to keep historical base images)
+        # Only capture if the lighting condition is still the same after waiting
+        current_condition = get_current_lighting_condition()
+        if current_condition == new_condition:
+            # Capture new base images for the new lighting condition
+            capture_base_images(lighting_condition=new_condition, force_capture=True)
+        else:
+            logger.info(f"Lighting condition changed again to {current_condition}, skipping capture")
         
     except Exception as e:
         logger.error(f"Error handling lighting transition: {e}")
@@ -275,7 +296,12 @@ if __name__ == "__main__":
     try:
         # When run directly, capture fresh base images
         current_condition = get_current_lighting_condition()
-        capture_base_images(current_condition, force_capture=True)
+        
+        # Only proceed if lighting condition is stable
+        if is_lighting_condition_stable():
+            capture_base_images(current_condition, force_capture=True)
+        else:
+            logger.info(f"Lighting condition {current_condition} is not stable, waiting...")
     except Exception as e:
         logger.error(f"Base image capture failed: {e}")
         raise

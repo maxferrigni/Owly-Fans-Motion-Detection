@@ -90,7 +90,7 @@ def log_base_image_to_supabase(local_path, camera_name, lighting_condition, supa
         # Insert into Supabase
         response = supabase_client.table("base_images_log").insert(log_entry).execute()
         
-        if hasattr(response, 'data') and response.data:
+        if hasattr(response, 'data') and response.data and len(response.data) > 0:
             logger.info(f"Base image logged successfully for {camera_name}")
         else:
             logger.error("Failed to log base image to Supabase")
@@ -119,9 +119,8 @@ def upload_comparison_image(local_image_path, detection_type):
         detection_type_clean = detection_type.lower().replace(" ", "_")
         filename = f"{detection_type_clean}_{timestamp}.jpg"
         
-        # Create storage path with date-based structure
-        current_date = datetime.datetime.utcnow()
-        storage_path = f"{detection_type_clean}/{current_date.year}-{current_date.month:02d}/{current_date.day:02d}/{filename}"
+        # Storage path: directly in the detection type folder
+        storage_path = f"{detection_type_clean}/{filename}"
 
         # Determine MIME type
         mime_type, _ = mimetypes.guess_type(local_image_path)
@@ -150,12 +149,13 @@ def upload_comparison_image(local_image_path, detection_type):
         logger.error(f"Error uploading image to Supabase: {e}")
         return None
 
-def upload_base_image(local_image_path, camera_name, lighting_condition):
+def upload_base_image(local_image_path, supabase_filename, camera_name, lighting_condition):
     """
     Upload a base image to Supabase Storage and log its metadata.
     
     Args:
         local_image_path (str): Path to the base image
+        supabase_filename (str): Filename to use in Supabase
         camera_name (str): Name of the camera
         lighting_condition (str): Current lighting condition
     
@@ -167,27 +167,23 @@ def upload_base_image(local_image_path, camera_name, lighting_condition):
             logger.error(f"Base image not found: {local_image_path}")
             return None
 
-        # Generate filename with timestamp
-        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        filename = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{timestamp}.jpg"
-
         # Determine MIME type
         mime_type, _ = mimetypes.guess_type(local_image_path)
         if not mime_type:
             mime_type = "image/jpeg"
         
-        logger.info(f"Uploading base image: {filename}")
+        logger.info(f"Uploading base image: {supabase_filename}")
         
-        # Upload image to Supabase Storage
+        # Upload image to Supabase Storage - no subfolder structure
         with open(local_image_path, "rb") as file:
             response = supabase_client.storage.from_(SUPABASE_STORAGE["base_images"]).upload(
-                path=filename,
+                path=supabase_filename,
                 file=file,
                 file_options={"content-type": mime_type}
             )
 
         # Generate public URL
-        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{supabase_filename}"
         
         # Log base image metadata to Supabase
         log_base_image_to_supabase(local_image_path, camera_name, lighting_condition, public_url)
@@ -216,7 +212,8 @@ if __name__ == "__main__":
         # Test base image upload
         test_base_path = "/path/to/test/base.jpg"
         if os.path.exists(test_base_path):
-            url = upload_base_image(test_base_path, "Upper Patio Camera", "day")
+            test_filename = "test_camera_day_base_20250101000000.jpg"
+            url = upload_base_image(test_base_path, test_filename, "Test Camera", "day")
             if url:
                 logger.info("Base image upload test successful")
             else:
