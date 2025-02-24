@@ -5,6 +5,8 @@ import os
 import json
 import pandas as pd
 import logging
+from datetime import datetime
+import pytz
 
 # Base directory path definition
 BASE_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection"
@@ -44,7 +46,7 @@ CAMERA_MAPPINGS = {
     "Wyze Internal Camera": "Owl In Box"
 }
 
-# Camera-specific comparison image paths
+# Camera-specific comparison image paths (using standardized naming)
 COMPARISON_IMAGE_PATHS = {
     "Owl In Box": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_box_comparison.jpg"),
     "Owl On Box": os.path.join(IMAGE_COMPARISONS_DIR, "owl_on_box_comparison.jpg"),
@@ -64,27 +66,45 @@ SUPABASE_STORAGE = {
     "base_images": "base_images"
 }
 
-def get_comparison_image_path(camera_name, temp=False):
+def get_comparison_image_path(camera_name, temp=False, timestamp=None):
     """
     Get the comparison image path for a given camera.
-    Uses temporary path if local saving is disabled.
+    Uses temporary path if local saving is disabled or temp=True.
+    If timestamp is provided, generates an archived path.
+    
+    Args:
+        camera_name (str): Name of the camera
+        temp (bool): Whether to use temporary directory
+        timestamp (datetime, optional): Timestamp for archived images
+        
+    Returns:
+        str: Path to the comparison image
     """
     alert_type = CAMERA_MAPPINGS.get(camera_name)
     if not alert_type:
         raise ValueError(f"No camera mapping found for: {camera_name}")
     
+    # If timestamp provided, generate archived path with timestamp
+    if timestamp:
+        return get_archive_comparison_path(camera_name, timestamp)
+    
     # Determine if using temporary path
     if temp or not os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
         path = TEMP_COMPARISON_PATHS.get(alert_type)
     else:
-        path = COMPARISON_IMAGE_PATHS.get(alert_type)
+        # Generate standardized path in the comparisons directory
+        alert_type_clean = alert_type.lower().replace(" ", "_")
+        camera_name_clean = camera_name.lower().replace(" ", "_")
+        timestamp_str = datetime.now(pytz.timezone('America/Los_Angeles')).strftime("%Y%m%d_%H%M%S")
+        filename = f"{camera_name_clean}_{alert_type_clean}_{timestamp_str}_comparison.jpg"
+        path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
     
     if not path:
         raise ValueError(f"No comparison image path found for alert type: {alert_type}")
     
     return path
 
-# NEW: Function to generate archival path for comparison images
+# Function to generate archival path for comparison images
 def get_archive_comparison_path(camera_name, timestamp):
     """
     Generate path for archived comparison image with timestamp-based organization.
@@ -96,27 +116,52 @@ def get_archive_comparison_path(camera_name, timestamp):
     Returns:
         str: Full path for archived comparison image
     """
-    # Create year/month/day directory structure
-    date_dir = os.path.join(
-        ARCHIVE_DIR,
-        timestamp.strftime("%Y"),
-        timestamp.strftime("%m"),
-        timestamp.strftime("%d")
-    )
+    # Format camera name
+    camera_name_clean = camera_name.lower().replace(" ", "_")
     
-    # Create filename with full timestamp
-    filename = f"{camera_name.lower().replace(' ', '_')}_{timestamp.strftime('%Y%m%d_%H%M%S')}_comparison.jpg"
+    # Use simple flat organization
+    # Format: archived_detections/camera_name_alerttype_YYYYMMDD_HHMMSS_comparison.jpg
+    alert_type = CAMERA_MAPPINGS.get(camera_name, "unknown")
+    alert_type_clean = alert_type.lower().replace(" ", "_")
     
-    return os.path.join(date_dir, filename)
+    filename = f"{camera_name_clean}_{alert_type_clean}_{timestamp.strftime('%Y%m%d_%H%M%S')}_comparison.jpg"
+    
+    return os.path.join(ARCHIVE_DIR, filename)
 
-def get_base_image_path(camera_name, temp=False):
+def get_base_image_path(camera_name, lighting_condition, temp=False):
     """
-    Get the base image directory path.
-    Uses temporary path if local saving is disabled.
+    Get the base image directory path based on camera and lighting condition.
+    Uses temporary path if local saving is disabled or temp=True.
+    
+    Args:
+        camera_name (str): Name of the camera
+        lighting_condition (str): Lighting condition (day, civil_twilight, etc.)
+        temp (bool): Whether to use temporary directory
+        
+    Returns:
+        str: Directory path for storing base images
     """
     if temp or not os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
         return TEMP_BASE_IMAGES_DIR
     return BASE_IMAGES_DIR
+
+def get_base_image_filename(camera_name, lighting_condition, timestamp=None):
+    """
+    Generate standardized filename for base images.
+    
+    Args:
+        camera_name (str): Name of the camera
+        lighting_condition (str): Current lighting condition
+        timestamp (datetime, optional): Timestamp to use, defaults to current time
+        
+    Returns:
+        str: Standardized filename for base image
+    """
+    if not timestamp:
+        timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
+        
+    camera_name_clean = camera_name.lower().replace(" ", "_")
+    return f"{camera_name_clean}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
 
 def ensure_directories_exist():
     """Create all necessary directories if they don't exist"""
@@ -128,7 +173,7 @@ def ensure_directories_exist():
         TEMP_DIR,
         TEMP_BASE_IMAGES_DIR,
         TEMP_COMPARISONS_DIR,
-        ARCHIVE_DIR  # NEW: Added archive directory to creation list
+        ARCHIVE_DIR
     ]
 
     for directory in directories:
@@ -139,17 +184,31 @@ def ensure_directories_exist():
             logging.error(f"Failed to create directory {directory}: {e}")
             raise
 
-def cleanup_temp_files():
-    """Clean up temporary files if they exist"""
+def cleanup_temp_files(older_than_days=1):
+    """
+    Clean up temporary files if they exist.
+    
+    Args:
+        older_than_days (int): Remove files older than this many days
+    """
     try:
+        import time
+        from datetime import timedelta
+        
+        # Current time minus days
+        cutoff_time = time.time() - (older_than_days * 86400)
+        
         # Only clean if local saving is disabled
         if not os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
             if os.path.exists(TEMP_DIR):
                 for root, dirs, files in os.walk(TEMP_DIR, topdown=False):
                     for name in files:
                         try:
-                            os.remove(os.path.join(root, name))
-                            logging.debug(f"Removed temporary file: {name}")
+                            file_path = os.path.join(root, name)
+                            # Check file age
+                            if os.path.getctime(file_path) < cutoff_time:
+                                os.remove(file_path)
+                                logging.debug(f"Removed temporary file: {name}")
                         except Exception as e:
                             logging.error(f"Failed to remove temporary file {name}: {e}")
     except Exception as e:
@@ -211,29 +270,18 @@ def validate_system():
         # Validate configuration files
         if not validate_config_files():
             return False
+    
+        # Check for archive directories
+        if not os.path.exists(ARCHIVE_DIR):
+            os.makedirs(ARCHIVE_DIR, exist_ok=True)
             
-        # Validate comparison image paths
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
-        paths_to_check = COMPARISON_IMAGE_PATHS if local_saving else TEMP_COMPARISON_PATHS
-        
-        for alert_type, path in paths_to_check.items():
-            parent_dir = os.path.dirname(path)
-            if not os.path.exists(parent_dir):
-                logging.error(f"Comparison image directory missing: {parent_dir}")
-                return False
-                
         logging.info("System validation completed successfully")
         return True
         
     except Exception as e:
         logging.error(f"System validation failed: {e}")
         return False
-
-def get_base_image_filename(camera_name, lighting_condition, timestamp):
-    """Generate filename for base images"""
-    return f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    if __name__ == "__main__":
+        logging.basicConfig(level=logging.INFO)
     validate_system()
     cleanup_temp_files()

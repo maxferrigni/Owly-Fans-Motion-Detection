@@ -98,13 +98,14 @@ def log_base_image_to_supabase(local_path, camera_name, lighting_condition, supa
     except Exception as e:
         logger.error(f"Error logging base image: {e}")
 
-def upload_comparison_image(local_image_path, detection_type):
+def upload_comparison_image(local_image_path, camera_name, detection_type):
     """
     Upload a motion detection comparison image to Supabase Storage.
     
     Args:
         local_image_path (str): Path to the comparison image
-        detection_type (str): Type of detection ("owl_in_box", "owl_on_box", "owl_in_area")
+        camera_name (str): Name of the camera
+        detection_type (str): Type of detection ("Owl In Box", "Owl On Box", "Owl In Area")
     
     Returns:
         str or None: Public URL of the uploaded image or None if failed
@@ -114,12 +115,15 @@ def upload_comparison_image(local_image_path, detection_type):
             logger.error(f"Comparison image not found: {local_image_path}")
             return None
 
+        # Format detection type for storage folder path
+        detection_type_clean = detection_type.lower().replace(" ", "_")
+        
         # Generate unique filename using timestamp
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        detection_type_clean = detection_type.lower().replace(" ", "_")
-        filename = f"{detection_type_clean}_{timestamp}.jpg"
+        camera_name_clean = camera_name.lower().replace(" ", "_")
+        filename = f"{camera_name_clean}_{timestamp}.jpg"
         
-        # Storage path: directly in the detection type folder
+        # Storage path: organized by detection type folder
         storage_path = f"{detection_type_clean}/{filename}"
 
         # Determine MIME type
@@ -203,7 +207,7 @@ if __name__ == "__main__":
         # Test comparison image upload
         test_comparison_path = "/path/to/test/comparison.jpg"
         if os.path.exists(test_comparison_path):
-            url = upload_comparison_image(test_comparison_path, "owl_in_box")
+            url = upload_comparison_image(test_comparison_path, "Test Camera", "Owl In Box")
             if url:
                 logger.info("Comparison image upload test successful")
             else:
@@ -212,7 +216,12 @@ if __name__ == "__main__":
         # Test base image upload
         test_base_path = "/path/to/test/base.jpg"
         if os.path.exists(test_base_path):
-            test_filename = "test_camera_day_base_20250101000000.jpg"
+            # Use standardized naming format
+            camera_name = "test_camera"
+            lighting_condition = "day"
+            timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            test_filename = f"{camera_name}_{lighting_condition}_base_{timestamp}.jpg"
+            
             url = upload_base_image(test_base_path, test_filename, "Test Camera", "day")
             if url:
                 logger.info("Base image upload test successful")

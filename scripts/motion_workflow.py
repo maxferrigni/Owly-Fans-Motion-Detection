@@ -15,7 +15,8 @@ from utilities.constants import (
     TEMP_BASE_IMAGES_DIR,
     get_comparison_image_path,
     CAMERA_MAPPINGS,
-    get_archive_comparison_path
+    get_archive_comparison_path,
+    get_base_image_filename
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -89,6 +90,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
         logger.info(f"Processing camera: {camera_name} {'(Test Mode)' if test_images else ''}")
         base_image = None
         new_image = None
+        timestamp = datetime.now(PACIFIC_TIME)
         
         try:
             # Get or use provided lighting condition
@@ -129,7 +131,8 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 "status": alert_type,  # Set default status to camera type
                 "motion_detected": False,
                 "pixel_change": 0.0,
-                "luminance_change": 0.0
+                "luminance_change": 0.0,
+                "timestamp": timestamp.isoformat()
             }
             
             logger.debug(f"Processing as {alert_type} type camera")
@@ -145,13 +148,15 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 
                 if is_owl_present and detection_info:
                     logger.debug("Owl detected in box, creating comparison image")
+                    # Generate comparison path with timestamp for proper archiving
                     comparison_path = create_comparison_image(
                         base_image, 
                         new_image,
-                        camera_name=alert_type,
+                        camera_name=camera_name,  # Use actual camera name instead of alert type
                         threshold=config["luminance_threshold"] * threshold_multiplier,
                         config=config,
-                        is_test=is_test
+                        is_test=is_test,
+                        timestamp=timestamp
                     )
                     
                     detection_results.update({
@@ -166,10 +171,11 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 comparison_path = create_comparison_image(
                     base_image, 
                     new_image,
-                    camera_name=alert_type,
+                    camera_name=camera_name,  # Use actual camera name instead of alert type
                     threshold=config["luminance_threshold"] * threshold_multiplier,
                     config=config,
-                    is_test=is_test
+                    is_test=is_test,
+                    timestamp=timestamp
                 )
                 
                 if comparison_path:
@@ -213,7 +219,8 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             "is_test": is_test if 'is_test' in locals() else False,
             "motion_detected": False,
             "pixel_change": 0.0,
-            "luminance_change": 0.0
+            "luminance_change": 0.0,
+            "timestamp": datetime.now(PACIFIC_TIME).isoformat()
         }
 
 def process_cameras(camera_configs, test_images=None):
@@ -255,7 +262,8 @@ def process_cameras(camera_configs, test_images=None):
                     "camera": camera_name,
                     "status": "Error",
                     "error_message": str(e),
-                    "motion_detected": False
+                    "motion_detected": False,
+                    "timestamp": datetime.now(PACIFIC_TIME).isoformat()
                 })
         
         return results
@@ -263,6 +271,52 @@ def process_cameras(camera_configs, test_images=None):
     except Exception as e:
         logger.error(f"Error in camera processing cycle: {e}")
         raise
+
+def archive_old_comparison_images(days_threshold=7):
+    """
+    Archive comparison images older than the specified threshold.
+    
+    Args:
+        days_threshold (int): Age in days to consider for archiving
+    """
+    from utilities.constants import IMAGE_COMPARISONS_DIR, ARCHIVE_DIR
+    import shutil
+    import os
+    from datetime import datetime, timedelta
+    
+    try:
+        if not os.path.exists(IMAGE_COMPARISONS_DIR):
+            logger.warning(f"Comparison images directory does not exist: {IMAGE_COMPARISONS_DIR}")
+            return
+            
+        # Ensure archive directory exists
+        os.makedirs(ARCHIVE_DIR, exist_ok=True)
+        
+        # Calculate threshold date
+        cutoff_time = time.time() - (days_threshold * 86400)
+        
+        # Get all files in the comparison directory
+        comparison_files = os.listdir(IMAGE_COMPARISONS_DIR)
+        archived_count = 0
+        
+        for filename in comparison_files:
+            file_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
+            
+            # Check if it's a file and not a directory
+            if os.path.isfile(file_path):
+                # Check if file is older than threshold
+                file_time = os.path.getctime(file_path)
+                if file_time < cutoff_time:
+                    # Move to archive directory
+                    archive_path = os.path.join(ARCHIVE_DIR, filename)
+                    shutil.move(file_path, archive_path)
+                    archived_count += 1
+        
+        if archived_count > 0:
+            logger.info(f"Archived {archived_count} comparison images older than {days_threshold} days")
+            
+    except Exception as e:
+        logger.error(f"Error archiving old comparison images: {e}")
 
 if __name__ == "__main__":
     # Test the motion detection

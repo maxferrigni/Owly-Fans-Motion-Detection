@@ -145,11 +145,13 @@ def save_base_image(image, camera_name, lighting_condition):
         local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
         local_path = None
         
-        # Generate timestamp
+        # Generate timestamp in consistent format
         timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
+        timestamp_str = timestamp.strftime('%Y%m%d_%H%M%S')
         
-        # Generate filename - simplified format
-        filename = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
+        # Generate standardized filename
+        camera_name_clean = camera_name.lower().replace(' ', '_')
+        filename = f"{camera_name_clean}_{lighting_condition}_base_{timestamp_str}.jpg"
         
         # Save locally if enabled
         if local_saving:
@@ -173,9 +175,8 @@ def save_base_image(image, camera_name, lighting_condition):
             image.save(temp_path)
             local_path = temp_path
         
-        # Upload to Supabase with simplified UTC timestamp for cloud storage
-        utc_timestamp = datetime.now(pytz.UTC)
-        supabase_filename = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{utc_timestamp.strftime('%Y%m%d%H%M%S')}.jpg"
+        # Upload to Supabase with consistent timestamp format
+        supabase_filename = f"{camera_name_clean}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d%H%M%S')}.jpg"
         supabase_url = upload_base_image(local_path, supabase_filename, camera_name, lighting_condition)
         
         # Record that we captured a base image
@@ -246,6 +247,8 @@ def capture_base_images(lighting_condition=None, force_capture=False):
                     'camera': camera_name,
                     'local_path': local_path,
                     'supabase_url': supabase_url,
+                    'lighting_condition': lighting_condition,
+                    'timestamp': datetime.now(pytz.timezone('America/Los_Angeles')).isoformat(),
                     'status': 'success'
                 })
                 
