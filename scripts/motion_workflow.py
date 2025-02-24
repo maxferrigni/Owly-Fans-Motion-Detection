@@ -26,8 +26,9 @@ from utilities.time_utils import (
 from utilities.owl_detection_utils import detect_owl_in_box
 from utilities.image_comparison_utils import create_comparison_image
 from utilities.alert_manager import AlertManager
-from capture_base_images import capture_base_images, get_latest_base_image
-from push_to_supabase import push_activity_log
+
+# Import from database_utils instead of push_to_supabase
+from utilities.database_utils import push_log_to_supabase
 
 # Initialize logger and alert manager
 logger = get_logger()
@@ -106,7 +107,7 @@ def format_detection_metrics(detection_info, config, camera_type):
     if camera_type == "Owl In Box":
         metrics.update({
             "detected": detection_info.get("is_owl_present", False),
-            "shapes_count": len(detection_info.get("owl_candidates", [])),
+            "shapes_count": len(detection_info.get("owl_candidates",)),
             "pixel_change": detection_info.get("diff_metrics", {}).get("significant_pixels", 0.0) * 100,
             "luminance_change": detection_info.get("diff_metrics", {}).get("mean_difference", 0.0)
         })
@@ -265,10 +266,10 @@ def process_cameras(camera_configs, test_images=None):
             if should_capture_base_image():
                 logger.info("Time to capture new base images")
                 capture_base_images(lighting_condition, force_capture=True)
-                time.sleep(3)  # Allow system to stabilize
+                time.sleep(3)  # Allow system to stabilize after capture
         
         # Process each camera with shared lighting info
-        results = []
+        results = [] # Initialize results list here
         for camera_name, config in camera_configs.items():
             try:
                 camera_test_images = test_images.get(camera_name) if test_images else None
