@@ -1,244 +1,244 @@
-# File: utilities/alert_manager.py
-# Purpose: Manage owl detection alerts with hierarchy and timing rules
+# File: utilities/push_to_supabase.py
+# Purpose: Log owl detection data to Supabase database and manage subscribers
 
-from datetime import datetime, timedelta
-import pytz
-import time
+import os
+import datetime
+import supabase
+from dotenv import load_dotenv
+
+# Import utilities
 from utilities.logging_utils import get_logger
-from alert_email import send_email_alert
-from alert_email_to_text import send_text_alert
-from push_to_supabase import (
-    check_alert_eligibility,
-    create_alert_entry,
-    update_alert_status,
-    get_subscribers
-)
 
+# Initialize logger
 logger = get_logger()
 
-class AlertManager:
-    def __init__(self):
-        # Alert hierarchy (highest to lowest priority)
-        self.ALERT_HIERARCHY = {
-            "Owl In Box": 3,
-            "Owl On Box": 2,
-            "Owl In Area": 1
-        }
+# Load environment variables from.env file
+load_dotenv()
 
-        # Default alert delay in minutes
-        self.alert_delay = 30
+# Retrieve Supabase credentials
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET")
 
-    def set_alert_delay(self, minutes):
-        """Set the minimum time between alerts in minutes"""
-        try:
-            delay = int(minutes)
-            if delay < 1:
-                logger.warning("Alert delay must be at least 1 minute, setting to 1")
-                delay = 1
-            self.alert_delay = delay
-            logger.info(f"Alert delay set to {delay} minutes")
-        except ValueError:
-            logger.error(f"Invalid alert delay value: {minutes}")
+# Validate credentials
+if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET]):
+    error_msg = "Supabase credentials are missing. Check the.env file."
+    logger.error(error_msg)
+    raise ValueError(error_msg)
 
-    def _check_alert_hierarchy(self, alert_type, current_priority):
-        """
-        Check if any higher priority alerts are active.
-        
-        Args:
-            alert_type (str): Type of alert being checked
-            current_priority (int): Priority of current alert
-            
-        Returns:
-            tuple: (bool, dict) - (should_suppress, suppression_info)
-        """
-        try:
-            # Get recent alerts of higher priority
-            for other_type, priority in self.ALERT_HIERARCHY.items():
-                if priority > current_priority:
-                    is_eligible, last_alert = check_alert_eligibility(other_type)
-                    
-                    if last_alert and not is_eligible:
-                        return True, {
-                            "suppressed_by_type": other_type,
-                            "suppressed_by_id": last_alert['id'],
-                            "reason": f"Suppressed by recent {other_type} alert"
-                        }
-            
-            return False, None
-            
-        except Exception as e:
-            logger.error(f"Error checking alert hierarchy: {e}")
-            return True, {
-                "reason": f"Error checking hierarchy: {str(e)}"
-            }
+# Initialize Supabase client
+try:
+    supabase_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY)
+    logger.info("Supabase client initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Supabase client: {e}")
+    raise
 
-    def _send_notifications(self, camera_name, alert_type):
-        """
-        Send email and SMS notifications.
-        
-        Args:
-            camera_name (str): Name of the camera
-            alert_type (str): Type of alert
-            
-        Returns:
-            tuple: (email_count, sms_count) - Number of notifications sent
-        """
-        try:
-            # Get email subscribers
-            email_subscribers = get_subscribers(notification_type="email")
-            email_count = 0
-            if email_subscribers:
-                send_email_alert(camera_name, alert_type)
-                email_count = len(email_subscribers)
-                logger.info(f"Sent {email_count} email notifications")
+# Import the get_subscribers function from database_utils.py
+from utilities.database_utils import get_subscribers
 
-            # Get SMS subscribers
-            sms_subscribers = get_subscribers(
-                notification_type="sms",
-                owl_location=alert_type.lower().replace(" ", "_")
-            )
-            sms_count = 0
-            if sms_subscribers:
-                send_text_alert(camera_name, alert_type)
-                sms_count = len(sms_subscribers)
-                logger.info(f"Sent {sms_count} SMS notifications")
+def get_last_alert_time(alert_type):
+    """
+    Retrieve the last time a specific alert was sent from Supabase.
 
-            return email_count, sms_count
+    Args:
+        alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
 
-        except Exception as e:
-            logger.error(f"Error sending notifications: {e}")
-            return 0, 0
-
-    def process_detection(self, camera_name, detection_result, activity_log_id):
-        """
-        Process a new detection result and send alerts if appropriate.
-        
-        Args:
-            camera_name (str): Name of the camera
-            detection_result (dict): Detection result including status and metrics
-            activity_log_id (int): ID of the owl_activity_log entry
-            
-        Returns:
-            bool: Whether an alert was sent
-        """
-        try:
-            alert_type = detection_result.get("status")
-            if alert_type not in self.ALERT_HIERARCHY:
-                return False
-
-            # Check if detection is positive
-            is_detected = detection_result.get("status") == alert_type
-            if not is_detected:
-                return False
-
-            logger.info(f"{alert_type} detected by {camera_name}")
-            logger.info(f"Pixel change: {detection_result.get('pixel_change', 0):.2f}%")
-            logger.info(f"Luminance change: {detection_result.get('luminance_change', 0):.2f}")
-
-            # Create alert entry
-            alert_entry = create_alert_entry(
-                owl_activity_log_id=activity_log_id,
-                alert_type=alert_type,
-                base_cooldown_minutes=self.alert_delay
-            )
-
-            if not alert_entry:
-                logger.error("Failed to create alert entry")
-                return False
-
-            # Check basic eligibility
-            is_eligible, last_alert = check_alert_eligibility(alert_type)
-            
-            # Check hierarchy suppression
-            current_priority = self.ALERT_HIERARCHY[alert_type]
-            should_suppress, suppression_info = self._check_alert_hierarchy(
-                alert_type,
-                current_priority
-            )
-
-            if should_suppress:
-                # Update alert as suppressed
-                update_alert_status(
-                    alert_id=alert_entry['id'],
-                    suppressed=True,
-                    suppression_reason=suppression_info['reason'],
-                    suppressed_by_id=suppression_info.get('suppressed_by_id'),
-                    previous_alert_id=last_alert['id'] if last_alert else None
-                )
-                return False
-
-            # Handle priority override
-            priority_override = False
-            if not is_eligible and last_alert:
-                last_alert_type = last_alert['alert_type']
-                last_priority = self.ALERT_HIERARCHY[last_alert_type]
-                
-                if current_priority > last_priority:
-                    priority_override = True
-                    logger.info(f"Priority override: {alert_type} overriding {last_alert_type}")
-                else:
-                    # Update alert as suppressed by cooldown
-                    update_alert_status(
-                        alert_id=alert_entry['id'],
-                        suppressed=True,
-                        suppression_reason="In cooldown period",
-                        previous_alert_id=last_alert['id']
-                    )
-                    return False
-
-            # Send notifications
-            email_count, sms_count = self._send_notifications(camera_name, alert_type)
-
-            # Update alert status
-            update_alert_status(
-                alert_id=alert_entry['id'],
-                email_count=email_count,
-                sms_count=sms_count,
-                previous_alert_id=last_alert['id'] if last_alert else None,
-                priority_override=priority_override
-            )
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Error processing detection: {e}")
-            return False
-
-    def get_alert_status(self):
-        """Get current alert status for logging/debugging"""
-        return {
-            "alert_delay": self.alert_delay,
-            "alert_hierarchy": self.ALERT_HIERARCHY.copy()
-        }
-
-
-if __name__ == "__main__":
-    # Test the alert manager
+    Returns:
+        datetime or None: Last alert time or None if no alert found
+    """
     try:
-        logger.info("Testing alert manager...")
-        alert_manager = AlertManager()
+        # Fetch the last alert time for the given alert_type
+        last_alert = supabase_client.table('alerts') \
+                                 .select('last_alert_time') \
+                                 .eq('alert_type', alert_type) \
+                                 .order('last_alert_time', desc=True) \
+                                 .limit(1) \
+                                 .execute().data
 
-        # Test detection processing
-        test_detection = {
-            "status": "Owl In Box",
-            "pixel_change": 25.5,
-            "luminance_change": 30.2,
-            "detection_info": {
-                "confidence": 0.85,
-                "is_test": True
-            }
-        }
-
-        # Process test detection
-        result = alert_manager.process_detection(
-            camera_name="Test Camera",
-            detection_result=test_detection,
-            activity_log_id=1  # Test ID
-        )
-
-        logger.info(f"Test detection processed: Alert sent = {result}")
-        logger.info("Alert manager test complete")
+        # If an alert is found, return the last_alert_time
+        if last_alert:
+            return last_alert['last_alert_time']
+        else:
+            return None
 
     except Exception as e:
-        logger.error(f"Alert manager test failed: {e}")
+        logger.error(f"Error getting last alert time: {e}")
+        return None
+
+def check_alert_eligibility(alert_type, cooldown_minutes):
+    """
+    Check if enough time has passed since the last alert of the specified type.
+
+    Args:
+        alert_type (str): Type of alert
+        cooldown_minutes (int): Cooldown period in minutes
+
+    Returns:
+        tuple: (bool, dict or None) - (is_eligible, last_alert_data)
+    """
+    try:
+        last_alert_time = get_last_alert_time(alert_type)
+        if last_alert_time:
+            last_alert_time = datetime.datetime.fromisoformat(last_alert_time)
+            
+            # Calculate time difference and check against cooldown
+            time_diff = datetime.datetime.now(datetime.timezone.utc) - last_alert_time
+            if time_diff < datetime.timedelta(minutes=cooldown_minutes):
+                return False, {'last_alert_time': last_alert_time}
+            else:
+                return True, {'last_alert_time': last_alert_time}
+        else:
+            return True, None
+
+    except Exception as e:
+        logger.error(f"Error checking alert eligibility: {e}")
+        return False, None
+
+def create_alert_entry(alert_type, camera_name=None, activity_log_id=None):
+    """
+    Create a new alert entry in Supabase.
+
+    Args:
+        alert_type (str): Type of alert
+        camera_name (str, optional): Name of the camera that triggered the alert
+        activity_log_id (int, optional): ID of the related activity log entry
+
+    Returns:
+        dict or None: The created alert entry or None if creation failed
+    """
+    try:
+        # Create a new alert entry in the alerts table
+        new_alert = supabase_client.table('alerts').insert({
+            'alert_type': alert_type,
+            'camera_name': camera_name,
+            'activity_log_id': activity_log_id,
+            'last_alert_time': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }).execute().data
+
+        if new_alert:
+            logger.info(f"Created new alert entry for {alert_type} (ID: {new_alert['id']})")
+            return new_alert
+        else:
+            return None
+
+    except Exception as e:
+        logger.error(f"Error creating alert entry: {e}")
+        return None
+
+def update_alert_status(
+    alert_id,
+    email_count=None,
+    sms_count=None,
+    previous_alert_id=None,
+    priority_override=None
+):
+    """
+    Update the status of an existing alert entry in Supabase.
+
+    Args:
+        alert_id (int): ID of the alert entry to update
+        email_count (int, optional): Number of email notifications sent
+        sms_count (int, optional): Number of SMS notifications sent
+        previous_alert_id (int, optional): ID of the previous alert that was overridden
+        priority_override (bool, optional): Whether this alert overrides a previous alert
+    """
+    try:
+        # Update the alert entry with additional information
+        supabase_client.table('alerts').update({
+            'email_count': email_count,
+            'sms_count': sms_count,
+            'previous_alert_id': previous_alert_id,
+            'priority_override': priority_override
+        }).eq('id', alert_id).execute()
+
+        logger.info(f"Updated alert status for alert ID {alert_id}")
+
+    except Exception as e:
+        logger.error(f"Error updating alert status: {e}")
+
+def push_log_to_supabase(log_entry):
+    """
+    Push a log entry to the Supabase database.
+
+    Args:
+        log_entry (dict): Dictionary containing the log data
+    """
+    try:
+        # Insert the log entry into the activity_log table
+        supabase_client.table('activity_log').insert(log_entry).execute()
+        logger.info("Successfully uploaded log to Supabase")
+
+    except Exception as e:
+        logger.error(f"Failed to upload log to Supabase: {e}")
+
+def format_detection_results(detection_result):
+    """
+    Format detection results into a dictionary suitable for logging to Supabase.
+
+    Args:
+        detection_result (dict): Dictionary containing detection results
+
+    Returns:
+        dict: Formatted log entry
+    """
+    try:
+        # Extract relevant information from the detection result
+        camera_name = detection_result.get("camera")
+        status = detection_result.get("status")
+        error_message = detection_result.get("error_message")
+        is_test = detection_result.get("is_test")
+        lighting_condition = detection_result.get("lighting_condition")
+        
+        # Create the log entry dictionary
+        log_entry = {
+            "camera_name": camera_name,
+            "alert_type": status,
+            "lighting_condition": lighting_condition,
+            "is_test": is_test,
+            "time": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+
+        # Add optional fields if available
+        if error_message:
+            log_entry["error_message"] = error_message
+
+        return log_entry
+
+    except Exception as e:
+        logger.error(f"Error formatting log entry: {e}")
+        return {}
+
+if __name__ == "__main__":
+    # Test the functionality
+    try:
+        logger.info("Testing Supabase logging functionality...")
+
+        # Test get_subscribers
+        email_subscribers = get_subscribers(notification_type="email")
+        logger.info(f"Found {len(email_subscribers)} email subscribers")
+
+        sms_subscribers = get_subscribers(notification_type="sms")
+        logger.info(f"Found {len(sms_subscribers)} SMS subscribers")
+
+        # Test last alert time retrieval
+        last_alert = get_last_alert_time("Owl In Box")
+        if last_alert:
+            logger.info(f"Last Owl In Box alert was sent at: {last_alert}")
+        else:
+            logger.info("No previous Owl In Box alerts found")
+
+        # Test log upload with alert tracking
+        sample_log = format_detection_results({
+            "camera": "Test Camera",
+            "status": "Owl In Box",
+            "lighting_condition": "day",
+            "is_test": True
+        })
+
+        push_log_to_supabase(sample_log)
+        logger.info("Supabase logging test complete")
+
+    except Exception as e:
+        logger.error(f"Supabase logging test failed: {e}")
         raise

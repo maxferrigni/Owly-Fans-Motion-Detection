@@ -9,7 +9,9 @@ from dotenv import load_dotenv
 
 # Import utilities
 from utilities.logging_utils import get_logger
-from push_to_supabase import get_subscribers
+
+# Update: Import get_subscribers from database_utils.py
+from utilities.database_utils import get_subscribers
 
 # Initialize logger
 logger = get_logger()
@@ -40,75 +42,64 @@ def send_email_alert(camera_name, alert_type):
             subject = "ALERT: Owl In The Area"
             body = ("Motion has been detected in the Upper Patio area. "
                    "Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
+        elif camera_name == "Bindy Patio Camera" and alert_type == "Owl On Box":
+            subject = "ALERT: Owl On The Box"
+            body = ("Motion has been detected on the Owl Box. "
+                   "Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
+        elif camera_name == "Wyze Internal Camera" and alert_type == "Owl In Box":
+            subject = "ALERT: Owl In The Box"
+            body = ("Motion has been detected in the Owl Box. "
+                   "Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
         else:
-            subject = f"ALERT: {alert_type}"
-            body = (f"Motion has been detected at {camera_name}. "
-                   f"Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
+            subject = "ALERT: Owl Motion Detected"
+            body = f"Motion has been detected by {camera_name}! Check www.owly-fans.com"
 
-        # Get subscribers who want email notifications
-        subscribers = get_subscribers(notification_type="email")
+        # Get email subscribers
+        subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
 
-        if subscribers:
-            logger.info(f"Sending email alerts to {len(subscribers)} subscribers")
-            for subscriber in subscribers:
-                send_single_email(subject, body, subscriber['email'], subscriber['name'])
-        else:
-            logger.warning("No email subscribers found for this alert type")
-
-    except Exception as e:
-        logger.error(f"Error sending email alerts: {e}")
-
-def send_single_email(subject, body, to_email, recipient_name=None):
-    """
-    Send a single email to a recipient.
-    
-    Args:
-        subject (str): Email subject
-        body (str): Email body (HTML)
-        to_email (str): Recipient's email address
-        recipient_name (str, optional): Recipient's name for personalization
-    """
-    try:
-        # Set up the email server
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
+        logger.info(f"Sending email alerts to {len(subscribers)} subscribers")
         
-        try:
+        # Send to each subscriber
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-        except smtplib.SMTPAuthenticationError as auth_error:
-            logger.error(f"Email authentication failed: {auth_error}")
-            return
-            
-        try:
-            # Create the email
-            msg = MIMEMultipart()
-            msg["From"] = EMAIL_ADDRESS
-            msg["To"] = to_email
-            msg["Subject"] = subject
 
-            # Personalize greeting if name is available
-            greeting = f"Hello {recipient_name}," if recipient_name else "Hello,"
+            for subscriber in subscribers:
+                try:
+                    to_email = subscriber.get('email')
+                    if not to_email:
+                        logger.warning(f"Missing email for subscriber: {subscriber.get('name', 'Unknown')}")
+                        continue
 
-            # HTML email body with personalized greeting
-            html_body = f"""
-            <html>
-                <body>
-                    <p>{greeting}</p>
-                    <p>{body}</p>
-                    <p>Best regards,<br>Owly Fans Monitoring System</p>
-                </body>
-            </html>
-            """
-            msg.attach(MIMEText(html_body, "html"))
+                    recipient_name = subscriber.get('name')
 
-            # Send the email
-            server.send_message(msg)
-            logger.info(f"Email alert sent successfully to {to_email}")
+                    # Create the email message
+                    msg = MIMEMultipart()
+                    msg["From"] = EMAIL_ADDRESS
+                    msg["To"] = to_email
+                    msg["Subject"] = subject
 
-        except Exception as e:
-            logger.error(f"Failed to send email to {to_email}: {e}")
-            
-        finally:
+                    # Personalize greeting if name is available
+                    greeting = f"Hello {recipient_name}," if recipient_name else "Hello,"
+
+                    # HTML email body with personalized greeting
+                    html_body = f"""
+                    <html>
+                        <body>
+                            <p>{greeting}</p>
+                            <p>{body}</p>
+                            <p>Best regards,<br>Owly Fans Monitoring System</p>
+                        </body>
+                    </html>
+                    """
+                    msg.attach(MIMEText(html_body, "html"))
+
+                    # Send the email
+                    server.send_message(msg)
+                    logger.info(f"Email alert sent successfully to {to_email}")
+
+                except Exception as e:
+                    logger.error(f"Failed to send email to {to_email}: {e}")
+                    
             # Always close the connection
             server.quit()
 
