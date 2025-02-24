@@ -20,9 +20,10 @@ from utilities.time_utils import get_current_lighting_condition
 # Local imports
 from motion_workflow import process_cameras, initialize_system
 from push_to_supabase import push_log_to_supabase
+from capture_base_images import capture_base_images
 
-# Import from database_utils
-from utilities.database_utils import format_detection_results  
+# Corrected import
+from push_to_supabase import format_detection_results
 
 # Set up logging
 logger = get_logger()
