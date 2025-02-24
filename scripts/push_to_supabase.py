@@ -94,13 +94,12 @@ def check_alert_eligibility(alert_type, cooldown_minutes):
         logger.error(f"Error checking alert eligibility: {e}")
         return False, None
 
-def create_alert_entry(alert_type, camera_name=None, activity_log_id=None):
+def create_alert_entry(alert_type, activity_log_id=None):
     """
     Create a new alert entry in Supabase.
 
     Args:
         alert_type (str): Type of alert
-        camera_name (str, optional): Name of the camera that triggered the alert
         activity_log_id (int, optional): ID of the related activity log entry
 
     Returns:
@@ -132,9 +131,7 @@ def create_alert_entry(alert_type, camera_name=None, activity_log_id=None):
             'suppressed': False
         }
         
-        # Add optional fields if provided
-        if camera_name:
-            alert_data['camera_name'] = camera_name
+        # Add activity log ID if provided
         if activity_log_id:
             alert_data['owl_activity_log_id'] = activity_log_id
 

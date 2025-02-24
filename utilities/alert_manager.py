@@ -107,7 +107,7 @@ class AlertManager:
 
             if is_eligible:
                 # Create a new alert entry in the database
-                alert_entry = create_alert_entry(alert_type, camera_name, activity_log_id)
+                alert_entry = create_alert_entry(alert_type, activity_log_id)
 
                 if alert_entry:
                     # Send email and SMS alerts

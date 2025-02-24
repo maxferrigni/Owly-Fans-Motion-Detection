@@ -181,15 +181,14 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
 
             logger.debug(f"Final detection results before formatting: {detection_results}")
 
-            # Format and push to activity log
+            # Format the results just once
             formatted_results = format_detection_results(detection_results)
-            logger.debug(f"Formatted results: {formatted_results}")
             
+            # Only push to Supabase once for this camera
             log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
-            logger.debug(f"Supabase log entry result: {log_entry}")
-
+            
+            # Process alert only if we have a successful log entry and motion was detected
             if log_entry and detection_results.get("motion_detected", False) and not is_test:
-                # Process alert if motion was detected
                 alert_manager.process_detection(
                     camera_name,
                     detection_results,
@@ -207,16 +206,15 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
 
     except Exception as e:
         logger.error(f"Error processing {camera_name}: {e}")
-        error_results = {
+        return {
             "camera": camera_name,
-            "status": "Error",  # Ensure status is set in error case
+            "status": "Error",
             "error_message": str(e),
             "is_test": is_test if 'is_test' in locals() else False,
             "motion_detected": False,
             "pixel_change": 0.0,
             "luminance_change": 0.0
         }
-        return error_results
 
 def process_cameras(camera_configs, test_images=None):
     """Process all cameras in batch for efficient motion detection"""
