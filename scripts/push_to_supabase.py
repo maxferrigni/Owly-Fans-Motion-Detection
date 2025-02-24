@@ -157,7 +157,7 @@ def update_alert_status(
     except Exception as e:
         logger.error(f"Error updating alert status: {e}")
 
-def push_log_to_supabase(log_entry):
+def push_log_to_supabase(log_entry):  # Add the new arguments here
     """
     Push a log entry to the Supabase database.
 

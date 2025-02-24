@@ -14,281 +14,168 @@ def validate_images(new_image, base_image, expected_roi=None, is_test=False):
         # Basic image validation
         if not isinstance(new_image, Image.Image) or not isinstance(base_image, Image.Image):
             return False, "Invalid image types provided"
-            
+
         # Size checks
-        if new_image.size != base_image.size:
+        if new_image.size!= base_image.size:
             return False, f"Image size mismatch: {new_image.size} vs {base_image.size}"
-            
+
         # ROI validation if provided
         if expected_roi:
-            expected_width = abs(expected_roi[2] - expected_roi[0])
-            expected_height = abs(expected_roi[3] - expected_roi[1])
+            expected_width = abs(expected_roi - expected_roi)
+            expected_height = abs(expected_roi - expected_roi)
             expected_size = (expected_width, expected_height)
-            
-            if new_image.size != expected_size:
+
+            if new_image.size!= expected_size:
                 return False, f"Image does not match ROI dimensions: {new_image.size} vs {expected_size}"
-        
+
         # Additional validation for test images
         if is_test:
             if new_image.mode not in ['RGB', 'L']:
                 return False, f"Unsupported image mode for testing: {new_image.mode}"
-            
+
             # Check minimum dimensions
             min_size = 100  # minimum pixel dimension
             if new_image.width < min_size or new_image.height < min_size:
-                return False, f"Image too small: minimum {min_size}px required"
-        
+                return False, f"Image too small for testing: {new_image.size}"
+
         return True, "Images validated successfully"
-        
+
     except Exception as e:
-        logger.error(f"Error during image validation: {e}")
+        logger.error(f"Error validating images: {e}")
         return False, f"Validation error: {str(e)}"
 
-def prepare_images(new_image, base_image, expected_roi=None, is_test=False):
-    """Convert PIL images to OpenCV format and prepare for processing."""
-    logger.info("Starting image preparation for owl detection")
-    
-    # Validate images
-    is_valid, message = validate_images(new_image, base_image, expected_roi, is_test)
-    if not is_valid:
-        raise ValueError(message)
-    
-    # Convert PIL images to OpenCV format
-    new_cv = cv2.cvtColor(np.array(new_image), cv2.COLOR_RGB2GRAY)
-    base_cv = cv2.cvtColor(np.array(base_image), cv2.COLOR_RGB2GRAY)
-    
-    logger.info(f"Image sizes - New: {new_cv.shape}, Base: {base_cv.shape}")
-    
-    return new_cv, base_cv
+def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=1.0):
+    """
+    Detect the presence of an owl in the new image compared to the base image.
 
-def split_box_image(image):
-    """Split box image into left and right compartments."""
-    height, width = image.shape
-    center = width // 2
-    
-    logger.info(f"Image dimensions - Height: {height}, Width: {width}, Center: {center}")
-    
-    left_compartment = image[:, :center]
-    right_compartment = image[:, center:]
-    
-    return left_compartment, right_compartment
+    Args:
+        new_image (PIL.Image): New image to check for owl.
+        base_image (PIL.Image): Base reference image.
+        config (dict): Configuration dictionary.
+        is_test (bool): Whether this is a test image.
+        sensitivity (float): Owl detection sensitivity.
 
-def analyze_compartment_differences(new_compartment, base_compartment, sensitivity=1.0):
-    """Analyze differences between new and base compartment images."""
+    Returns:
+        tuple: (bool, dict) - (is_owl_present, detection_info)
+    """
     try:
-        logger.info("Starting compartment difference analysis")
-        
-        # Calculate absolute difference
-        diff = cv2.absdiff(new_compartment, base_compartment)
-        
-        # Apply Gaussian blur
-        blurred_diff = cv2.GaussianBlur(diff, (5, 5), 0)
-        
-        # Calculate adaptive threshold with sensitivity adjustment
-        mean_diff = np.mean(blurred_diff)
-        std_diff = np.std(blurred_diff)
-        threshold_value = (mean_diff + (2 * std_diff)) * sensitivity
-        
-        logger.info(f"Difference metrics - Mean: {mean_diff:.2f}, Std: {std_diff:.2f}, "
-                   f"Threshold: {threshold_value:.2f}, Sensitivity: {sensitivity}")
-        
-        # Create binary mask
-        _, binary_mask = cv2.threshold(
-            blurred_diff,
-            threshold_value,
-            255,
-            cv2.THRESH_BINARY
+        # Validate images
+        is_valid, validation_message = validate_images(
+            new_image, base_image, is_test=is_test
         )
-        
-        # Calculate metrics
-        significant_pixels = np.sum(binary_mask > 0) / binary_mask.size
-        max_luminance_change = np.max(blurred_diff)
-        
-        diff_metrics = {
-            "mean_difference": mean_diff,
-            "std_difference": std_diff,
-            "threshold_used": threshold_value,
-            "significant_pixels": significant_pixels,
-            "max_luminance_change": max_luminance_change,
-            "sensitivity_used": sensitivity
-        }
-        
-        return binary_mask, diff_metrics
-        
-    except Exception as e:
-        logger.error(f"Error analyzing compartment differences: {e}")
-        raise
+        if not is_valid:
+            logger.error(f"Image validation failed: {validation_message}")
+            return False, {"error": validation_message}
 
-def analyze_contour_shape(contour, compartment_area, image, base_image):
-    """Analyze a contour for owl-like characteristics with enhanced metrics."""
-    try:
-        # Calculate basic metrics
-        area = cv2.contourArea(contour)
-        perimeter = cv2.arcLength(contour, True)
-        x, y, w, h = cv2.boundingRect(contour)
-        
-        # Calculate shape metrics
-        circularity = 4 * np.pi * area / (perimeter * perimeter) if perimeter > 0 else 0
-        aspect_ratio = float(w) / h if h > 0 else 0
-        area_ratio = area / compartment_area
-        extent = area / (w * h) if w * h > 0 else 0
-        
-        # Calculate brightness difference
-        mask = np.zeros_like(image)
-        cv2.drawContours(mask, [contour], 0, 255, -1)
-        current_brightness = np.mean(image[mask == 255])
-        base_brightness = np.mean(base_image[mask == 255])
-        brightness_diff = current_brightness - base_brightness
-        
-        # Calculate convexity
-        hull = cv2.convexHull(contour)
-        hull_area = cv2.contourArea(hull)
-        convexity = area / hull_area if hull_area > 0 else 0
-        
-        metrics = {
-            "area": area,
-            "perimeter": perimeter,
-            "circularity": circularity,
-            "aspect_ratio": aspect_ratio,
-            "area_ratio": area_ratio,
-            "extent": extent,
-            "convexity": convexity,
-            "brightness_diff": brightness_diff,
-            "position": (x, y),
-            "size": (w, h),
-            "current_brightness": current_brightness,
-            "base_brightness": base_brightness
-        }
-        
-        logger.info(f"Contour metrics - Area Ratio: {area_ratio:.2f}, "
-                   f"Circularity: {circularity:.2f}, "
-                   f"Aspect Ratio: {aspect_ratio:.2f}, "
-                   f"Brightness Diff: {brightness_diff:.2f}")
-        
-        return metrics
-        
-    except Exception as e:
-        logger.error(f"Error analyzing contour shape: {e}")
-        raise
-
-def find_owl_contours(binary_mask, image, base_image):
-    """Find and analyze potential owl contours in binary mask."""
-    try:
-        logger.info("Starting owl contour detection")
-        
-        contours, _ = cv2.findContours(
-            binary_mask, 
-            cv2.RETR_EXTERNAL, 
-            cv2.CHAIN_APPROX_SIMPLE
-        )
-        
-        logger.info(f"Found {len(contours)} initial contours")
-        
-        compartment_area = binary_mask.shape[0] * binary_mask.shape[1]
-        
-        contour_data = []
-        for contour in contours:
-            metrics = analyze_contour_shape(contour, compartment_area, image, base_image)
-            contour_data.append({
-                "contour": contour,
-                "metrics": metrics
-            })
-        
-        # Sort contours by area ratio
-        contour_data.sort(key=lambda x: x["metrics"]["area_ratio"], reverse=True)
-        
-        return contour_data
-        
-    except Exception as e:
-        logger.error(f"Error finding owl contours: {e}")
-        raise
-
-def detect_owl_in_box(new_image, base_image, config, is_test=False):
-    """Main function to detect owl presence in box with enhanced metrics."""
-    try:
         logger.info(f"Starting owl detection process (Test Mode: {is_test})")
-        
-        # Validate and prepare images
-        new_cv, base_cv = prepare_images(
-            new_image, 
-            base_image,
-            expected_roi=config.get("roi") if not is_test else None,
-            is_test=is_test
+        logger.info("Starting image preparation for owl detection")
+
+        # Convert images to grayscale numpy arrays
+        new_array = np.array(new_image.convert('L'))
+        base_array = np.array(base_image.convert('L'))
+
+        # Log image sizes
+        logger.info(f"Image sizes - New: {new_array.shape}, Base: {base_array.shape}")
+
+        # Split the image into left and right compartments
+        center_x = new_array.shape // 2
+        left_new = new_array[:,:center_x]
+        right_new = new_array[:, center_x:]
+        left_base = base_array[:,:center_x]
+        right_base = base_array[:, center_x:]
+
+        # Calculate absolute differences between new and base images
+        left_diff = cv2.absdiff(left_new, left_base)
+        right_diff = cv2.absdiff(right_new, right_base)
+
+        # Threshold the differences to highlight significant changes
+        threshold = config["motion_detection"]["brightness_threshold"]
+        _, left_thresh = cv2.threshold(left_diff, threshold, 255, cv2.THRESH_BINARY)
+        _, right_thresh = cv2.threshold(right_diff, threshold, 255, cv2.THRESH_BINARY)
+
+        # Find contours of the shapes in the thresholded images
+        left_contours, _ = cv2.findContours(
+            left_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        
-        # Split into compartments
-        new_left, new_right = split_box_image(new_cv)
-        base_left, base_right = split_box_image(base_cv)
-        
-        # Get configuration parameters
-        motion_config = config.get("motion_detection", {})
-        min_circularity = motion_config.get("min_circularity", 0.5)
-        min_aspect_ratio = motion_config.get("min_aspect_ratio", 0.5)
-        max_aspect_ratio = motion_config.get("max_aspect_ratio", 2.0)
-        min_area_ratio = motion_config.get("min_area_ratio", 0.2)
-        brightness_threshold = motion_config.get("brightness_threshold", 20)
-        
-        # Adjust sensitivity for test mode
-        sensitivity = 0.8 if is_test else 1.0
-        
-        # Analyze differences
-        binary_mask, diff_metrics = analyze_compartment_differences(
-            new_left, 
-            base_left,
-            sensitivity=sensitivity
+        right_contours, _ = cv2.findContours(
+            right_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        
-        # Find and analyze contours
-        contour_data = find_owl_contours(binary_mask, new_left, base_left)
-        
-        # Filter for owl-like contours
-        owl_candidates = []
-        for data in contour_data:
-            metrics = data["metrics"]
+
+        # Combine contours from both compartments
+        all_contours = left_contours + right_contours
+        contour_data = []
+
+        # Analyze contours to identify potential owl candidates
+        for contour in all_contours:
+            area_ratio = cv2.contourArea(contour) / (new_array.shape * new_array.shape)
+            circularity = (4 * np.pi * cv2.contourArea(contour)) / (cv2.arcLength(contour, True) ** 2) if cv2.arcLength(contour, True) > 0 else 0
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = float(w) / h if h > 0 else 0
             
-            if (metrics["brightness_diff"] > brightness_threshold and
-                metrics["circularity"] > min_circularity and
-                min_aspect_ratio < metrics["aspect_ratio"] < max_aspect_ratio and
-                metrics["area_ratio"] > min_area_ratio):
-                
-                owl_candidates.append(metrics)
+            # Calculate brightness difference
+            mask = np.zeros(new_array.shape, dtype=np.uint8)
+            cv2.drawContours(mask, [contour], -1, 255, -1)
+            brightness_diff = cv2.mean(new_array, mask=mask) - cv2.mean(base_array, mask=mask)
+
+            # Log only when a contour meets the criteria
+            if (
+                circularity >= config["motion_detection"]["min_circularity"] and
+                config["motion_detection"]["min_aspect_ratio"] <= aspect_ratio <= config["motion_detection"]["max_aspect_ratio"] and
+                area_ratio >= config["motion_detection"]["min_area_ratio"]
+            ):
+                logger.info(
+                    f"Contour metrics - Area Ratio: {area_ratio:.2f}, "
+                    f"Circularity: {circularity:.2f}, "
+                    f"Aspect Ratio: {aspect_ratio:.2f}, "
+                    f"Brightness Diff: {brightness_diff:.2f}"
+                )
+                contour_data.append({
+                    "area_ratio": area_ratio,
+                    "circularity": circularity,
+                    "aspect_ratio": aspect_ratio,
+                    "brightness_diff": brightness_diff
+                })
+
+        # Determine owl presence based on detected contours
+        is_owl_present = len(contour_data) > 0
+        owl_candidates = [c for c in contour_data if c["area_ratio"] >= config["motion_detection"]["min_area_ratio"]]
+
+        # Calculate confidence based on number of candidates and their area ratios
+        confidence = sum(c["area_ratio"] for c in owl_candidates)
         
-        is_owl_present = len(owl_candidates) > 0
-        
-        # Prepare comprehensive detection info
-        detection_info = {
-            "is_owl_present": is_owl_present,
-            "owl_candidates": owl_candidates,
-            "diff_metrics": diff_metrics,
-            "total_shapes_detected": len(contour_data),
-            "owl_like_shapes_count": len(owl_candidates),
-            "threshold_percentage_used": config.get("threshold_percentage", 0.0),
-            "threshold_luminance_used": config.get("luminance_threshold", 0.0),
-            "interval_seconds": config.get("interval_seconds", 0),
-            "largest_shape_metrics": owl_candidates[0] if owl_candidates else None,
-            "is_test": is_test,
-            "sensitivity_used": sensitivity
+        # Prepare detection metrics
+        diff_metrics = {
+            "mean_difference": np.mean(left_diff) if left_diff.any() else 0.0,
+            "significant_pixels": np.mean(left_thresh) / 255 if left_thresh.any() else 0.0,
+            "threshold": threshold
         }
         
+        # Prepare detection info
+        detection_info = {
+            "confidence": confidence,
+            "owl_candidates": owl_candidates,
+            "largest_candidate": owl_candidates if owl_candidates else None,
+            "is_test": is_test,
+            "sensitivity_used": sensitivity,
+            "diff_metrics": diff_metrics
+        }
+
         logger.info(f"Owl detection completed - Owl Present: {is_owl_present}, "
                    f"Candidates: {len(owl_candidates)}, "
                    f"Total Shapes: {len(contour_data)}")
-        
+
         return is_owl_present, detection_info
-        
+
     except Exception as e:
         logger.error(f"Error in owl detection: {e}")
-        return False, {
-            "error": str(e),
-            "is_test": is_test
-        }
+        return False, {"error": str(e), "is_test": is_test}
 
 if __name__ == "__main__":
     # Test the detection
     try:
         test_new = Image.open("test_new.jpg")
         test_base = Image.open("test_base.jpg")
-        
+
         test_config = {
             "motion_detection": {
                 "min_circularity": 0.5,
@@ -301,17 +188,18 @@ if __name__ == "__main__":
             "luminance_threshold": 40,
             "interval_seconds": 3
         }
-        
+
         # Test with is_test=True
         result, info = detect_owl_in_box(
-            test_new, 
-            test_base, 
+            test_new,
+            test_base,
             test_config,
             is_test=True
         )
-        
-        print(f"Test Detection Result: {result}")
-        print(f"Test Detection Info: {info}")
-        
+
+        print(f"Test detection result: {result}")
+        print(f"Detection info: {info}")
+
     except Exception as e:
-        print(f"Test failed: {e}")
+        logger.error(f"Owl detection test failed: {e}")
+        raise
