@@ -1,4 +1,4 @@
-# File: utilities/push_to_supabase.py
+# File: push_to_supabase.py
 # Purpose: Log owl detection data to Supabase database and manage subscribers
 
 import os
@@ -36,6 +36,9 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     raise
+
+# Track uploaded entries to prevent duplicates
+last_uploaded_entries = {}
 
 def get_last_alert_time(alert_type):
     """
@@ -99,10 +102,6 @@ def check_alert_eligibility(alert_type, cooldown_minutes):
                 return True, {'last_alert_time': last_alert_time}
         else:
             return True, None
-
-    except Exception as e:
-        logger.error(f"Error checking alert eligibility: {e}")
-        return False, None
 
     except Exception as e:
         logger.error(f"Error checking alert eligibility: {e}")
@@ -206,6 +205,7 @@ def update_alert_status(
 def push_log_to_supabase(detection_results, lighting_condition=None, base_image_age=None):
     """
     Push detection results to the owl_activity_log table in Supabase.
+    Checks for duplicates to prevent multiple uploads of the same data.
     
     Args:
         detection_results (dict): Dictionary containing detection results
@@ -221,8 +221,18 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
             logger.error("Missing required camera or status field in detection results")
             return None
 
-        # Get status (alert type) and validate
+        # Get camera and status
+        camera_name = detection_results.get('camera')
         alert_type = detection_results.get('status')
+        timestamp = detection_results.get('timestamp')
+        
+        # Check if we've already uploaded this entry
+        entry_key = f"{camera_name}_{alert_type}_{timestamp}"
+        if entry_key in last_uploaded_entries:
+            logger.debug(f"Skipping duplicate upload for {entry_key}")
+            return last_uploaded_entries[entry_key]
+        
+        # Validate alert type
         if alert_type not in ["Owl In Box", "Owl On Box", "Owl In Area"]:
             logger.error(f"Invalid alert type: {alert_type}")
             return None
@@ -270,6 +280,14 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         
         if response.data and len(response.data) > 0:
             logger.info(f"Successfully uploaded {alert_type} data to owl_activity_log")
+            # Store this entry to prevent duplicates
+            last_uploaded_entries[entry_key] = response.data[0]
+            # Keep only the last 100 entries to prevent memory growth
+            if len(last_uploaded_entries) > 100:
+                # Remove oldest entries
+                keys_to_remove = list(last_uploaded_entries.keys())[:-100]
+                for key in keys_to_remove:
+                    del last_uploaded_entries[key]
             return response.data[0]
         else:
             logger.error("Failed to insert into owl_activity_log")
@@ -303,7 +321,8 @@ def format_detection_results(detection_result):
             "is_test": is_test,
             "motion_detected": motion_detected,
             "pixel_change": float(detection_result.get("pixel_change", 0.0)),
-            "luminance_change": float(detection_result.get("luminance_change", 0.0))
+            "luminance_change": float(detection_result.get("luminance_change", 0.0)),
+            "timestamp": detection_result.get("timestamp")  # Ensure timestamp is preserved
         }
         
         # Add image paths if available
