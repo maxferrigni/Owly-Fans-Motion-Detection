@@ -96,12 +96,7 @@ class MotionDetectionSettings:
             1
         )
         
-        self.create_parameter_control(
-            settings_frame, camera,
-            "interval_seconds", "Interval (s)",
-            1, 10, camera_config.get("interval_seconds", 3),
-            1
-        )
+        # NOTE: Removed interval_seconds control as it's now a global setting
         
         # Create motion detection parameter controls
         motion_frame = ttk.LabelFrame(tab, text="Motion Detection Parameters")
