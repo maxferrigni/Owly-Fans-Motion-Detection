@@ -173,12 +173,14 @@ class StatusPanel(ttk.LabelFrame):
 
     def create_status_indicators(self):
         """Create system status indicators"""
-        # Create a 2x2 grid layout for indicators
+        # Create a 3x2 grid layout for indicators (added one more for interval)
         indicators = [
             ("Motion Detection", "stopped"),
             ("Local Saving", "enabled"),
             ("Alert System", "ready"),
-            ("Base Images", "not verified")
+            ("Base Images", "not verified"),
+            ("Capture Interval", "60 sec"),  # Added capture interval indicator
+            ("Last Detection", "none")       # Added for completeness
         ]
         
         # Create indicator frame with grid layout

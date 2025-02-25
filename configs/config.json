@@ -4,7 +4,6 @@
         "threshold_percentage": 0.05,
         "luminance_threshold": 40,
         "alert_type": "Owl In Area",
-        "interval_seconds": 3,
         "lighting_thresholds": {
             "day": 30,
             "civil_twilight": 25,
@@ -24,7 +23,6 @@
         "threshold_percentage": 0.05,
         "luminance_threshold": 35,
         "alert_type": "Owl On Box",
-        "interval_seconds": 3,
         "lighting_thresholds": {
             "day": 40,
             "civil_twilight": 30,
@@ -44,7 +42,6 @@
         "threshold_percentage": 0.15,
         "luminance_threshold": 10,
         "alert_type": "Owl In Box",
-        "interval_seconds": 3,
         "lighting_thresholds": {
             "day": 10,
             "civil_twilight": 8,

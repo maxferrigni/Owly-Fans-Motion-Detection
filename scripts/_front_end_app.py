@@ -36,6 +36,7 @@ class OwlApp:
         # Initialize variables
         self.script_process = None
         self.local_saving_enabled = tk.BooleanVar(value=True)
+        self.capture_interval = tk.IntVar(value=60)  # Default to 60 seconds
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         # Set style for more immediate button rendering
@@ -152,6 +153,37 @@ class OwlApp:
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=1)
 
+        # Add interval setting control
+        interval_frame = ttk.Frame(control_frame)
+        interval_frame.pack(fill="x", pady=2, padx=3)
+        
+        ttk.Label(
+            interval_frame,
+            text="Capture Interval (seconds):"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        interval_spinner = ttk.Spinbox(
+            interval_frame,
+            from_=10,
+            to=300,
+            increment=10,
+            textvariable=self.capture_interval,
+            width=5
+        )
+        interval_spinner.pack(side=tk.LEFT, padx=5)
+        
+        # Connect the interval spinner to the update handler
+        interval_spinner.bind('<FocusOut>', self.update_capture_interval)
+        interval_spinner.bind('<Return>', self.update_capture_interval)
+        # Also update when using the spinbox arrows
+        self.capture_interval.trace_add("write", self.update_capture_interval)
+        
+        # Add status indication for the interval
+        ttk.Label(
+            interval_frame,
+            text="(Default: 60 seconds)"
+        ).pack(side=tk.LEFT, padx=5)
+
         # Log viewing button in a separate section
         log_frame = ttk.Frame(control_frame)
         log_frame.pack(fill="x", pady=2, padx=3)  # Reduced padding
@@ -161,6 +193,37 @@ class OwlApp:
             text="View Logs",
             command=lambda: self.log_window.show()
         ).pack(pady=2)  # Reduced padding
+
+    def update_capture_interval(self, *args):
+        """Handle changes to the capture interval"""
+        try:
+            interval = self.capture_interval.get()
+            
+            # Validate interval is within reasonable range
+            if interval < 10:
+                self.capture_interval.set(10)
+                interval = 10
+                self.log_message("Minimum capture interval is 10 seconds", "WARNING")
+            elif interval > 300:
+                self.capture_interval.set(300)
+                interval = 300
+                self.log_message("Maximum capture interval is 300 seconds", "WARNING")
+                
+            # Update environment variable for child processes
+            os.environ['OWL_CAPTURE_INTERVAL'] = str(interval)
+            
+            # Update status panel
+            self.status_panel.update_status(
+                "Capture Interval",
+                f"{interval} sec"
+            )
+            
+            self.log_message(f"Capture interval updated to {interval} seconds")
+            
+        except Exception as e:
+            self.log_message(f"Error updating capture interval: {e}", "ERROR")
+            # Reset to default on error
+            self.capture_interval.set(60)
 
     class LogRedirector:
         """Redirects stdout/stderr to log window"""
@@ -280,8 +343,8 @@ class OwlApp:
                 # Pass configuration through environment variables
                 env = os.environ.copy()
                 env['OWL_LOCAL_SAVING'] = str(self.local_saving_enabled.get())
-                # Using a fixed default interval of 60 seconds (removed UI control)
-                env['OWL_CAPTURE_INTERVAL'] = "60"
+                # Use the capture interval from the UI control
+                env['OWL_CAPTURE_INTERVAL'] = str(self.capture_interval.get())
                 
                 # Set default alert delay
                 self.alert_manager.set_alert_delay(30)  # Default to 30 minutes

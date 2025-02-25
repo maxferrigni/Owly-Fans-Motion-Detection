@@ -74,6 +74,14 @@ def motion_detection():
         logger.info("Waiting for base image stabilization...")
         time.sleep(3)
         
+        # Get the capture interval from environment variable (default to 60 if not set)
+        try:
+            capture_interval = int(os.getenv('OWL_CAPTURE_INTERVAL', '60'))
+            logger.info(f"Using capture interval of {capture_interval} seconds")
+        except ValueError:
+            logger.warning("Invalid capture interval value, defaulting to 60 seconds")
+            capture_interval = 60
+        
         logger.info("Starting motion detection...")
 
         # Main detection loop
@@ -94,12 +102,13 @@ def motion_detection():
                     except Exception as e:
                         logger.error(f"Error processing results for camera {result.get('camera', 'unknown')}: {e}")
 
-                # Wait before next iteration
-                time.sleep(60)  # Capture images every minute
+                # Wait before next iteration using the configured interval
+                logger.debug(f"Waiting {capture_interval} seconds for next detection cycle")
+                time.sleep(capture_interval)
 
             except Exception as e:
                 logger.error(f"Error in detection cycle: {e}")
-                time.sleep(60)  # Still wait before retry
+                time.sleep(capture_interval)  # Still wait before retry
 
     except Exception as e:
         logger.error(f"Fatal error in motion detection: {e}")
