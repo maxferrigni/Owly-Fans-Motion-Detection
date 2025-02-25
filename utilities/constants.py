@@ -30,13 +30,8 @@ TEMP_DIR = os.path.join(LOCAL_FILES_DIR, "temp")
 TEMP_BASE_IMAGES_DIR = os.path.join(TEMP_DIR, "base_images")
 TEMP_COMPARISONS_DIR = os.path.join(TEMP_DIR, "comparisons")
 
-# Historical storage paths
+# NEW: Archival storage path for saved comparisons
 ARCHIVE_DIR = os.path.join(LOCAL_FILES_DIR, "archived_detections")
-HISTORY_DIR = os.path.join(LOCAL_FILES_DIR, "historical_images")
-
-# Create a more organized structure for archive paths
-ARCHIVE_BASE_IMAGES_DIR = os.path.join(ARCHIVE_DIR, "base_images")
-ARCHIVE_COMPARISONS_DIR = os.path.join(ARCHIVE_DIR, "comparisons")
 
 # Input config files
 INPUT_CONFIG_FILES = {
@@ -90,19 +85,21 @@ def get_comparison_image_path(camera_name, temp=False, timestamp=None):
         raise ValueError(f"No camera mapping found for: {camera_name}")
     
     # If timestamp provided, generate archived path with timestamp
-    if timestamp:
-        return get_archive_comparison_path(camera_name, timestamp)
+    if timestamp and not temp:
+        alert_type_clean = alert_type.lower().replace(" ", "_")
+        ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
+        filename = f"{alert_type_clean}_{ts_str}_comparison.jpg"
+        
+        # Use the main image comparison directory for recent images
+        return os.path.join(IMAGE_COMPARISONS_DIR, filename)
     
-    # Determine if using temporary path
+    # For temporary/analysis images, use standard locations without timestamps
     if temp or not os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
         path = TEMP_COMPARISON_PATHS.get(alert_type)
     else:
-        # Generate standardized path in the comparisons directory
+        # For non-temporary, non-timestamped images (legacy format)
         alert_type_clean = alert_type.lower().replace(" ", "_")
-        camera_name_clean = camera_name.lower().replace(" ", "_")
-        timestamp_str = datetime.now(pytz.timezone('America/Los_Angeles')).strftime("%Y%m%d_%H%M%S")
-        filename = f"{camera_name_clean}_{alert_type_clean}_{timestamp_str}_comparison.jpg"
-        path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
+        path = os.path.join(IMAGE_COMPARISONS_DIR, f"{alert_type_clean}_comparison.jpg")
     
     if not path:
         raise ValueError(f"No comparison image path found for alert type: {alert_type}")
@@ -129,7 +126,7 @@ def get_archive_comparison_path(camera_name, timestamp):
     alert_type = CAMERA_MAPPINGS.get(camera_name, "unknown")
     alert_type_clean = alert_type.lower().replace(" ", "_")
     
-    filename = f"{camera_name_clean}_{alert_type_clean}_{timestamp.strftime('%Y%m%d_%H%M%S')}_comparison.jpg"
+    filename = f"{alert_type_clean}_{timestamp.strftime('%Y%m%d_%H%M%S')}_comparison.jpg"
     
     return os.path.join(ARCHIVE_DIR, filename)
 
@@ -275,7 +272,7 @@ def validate_system():
         # Validate configuration files
         if not validate_config_files():
             return False
-    
+        
         # Check for archive directories
         if not os.path.exists(ARCHIVE_DIR):
             os.makedirs(ARCHIVE_DIR, exist_ok=True)
@@ -286,39 +283,8 @@ def validate_system():
     except Exception as e:
         logging.error(f"System validation failed: {e}")
         return False
-    if __name__ == "__main__":
-        logging.basicConfig(level=logging.INFO)
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     validate_system()
     cleanup_temp_files()
-
-def get_historical_image_path(camera_name, alert_type, timestamp):
-    """
-    Get path for storing historical images with proper organization.
-    
-    Args:
-        camera_name (str): Name of the camera
-        alert_type (str): Type of detection alert
-        timestamp (datetime): Timestamp of detection
-        
-    Returns:
-        str: Path for storing the historical image
-    """
-    # Format alert type and camera name
-    alert_type_clean = alert_type.lower().replace(" ", "_")
-    camera_name_clean = camera_name.lower().replace(" ", "_")
-    
-    # Create date-based folder structure (YYYY/MM/DD)
-    date_path = os.path.join(
-        HISTORY_DIR,
-        timestamp.strftime("%Y"),
-        timestamp.strftime("%m"),
-        timestamp.strftime("%d")
-    )
-    
-    # Ensure directory exists
-    os.makedirs(date_path, exist_ok=True)
-    
-    # Create filename with timestamp
-    filename = f"{camera_name_clean}_{alert_type_clean}_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
-    
-    return os.path.join(date_path, filename)
