@@ -69,7 +69,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
                 "error": validation_message,
                 "pixel_change": 0.0,
                 "luminance_change": 0.0,
-                "is_test": is_test
+                "is_test": is_test,
+                "is_owl_detected": False  # Add clear owl detection flag
             }
 
         logger.info(f"Starting owl detection process (Test Mode: {is_test})")
@@ -140,14 +141,14 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             base_mean = cv2.mean(base_array, mask=mask)[0]
             brightness_diff = abs(new_mean - base_mean)
 
-            # Log only when a contour meets minimum criteria
+            # Only add contours that meet minimum criteria for owl shape
             if (
                 circularity >= config["motion_detection"]["min_circularity"] and
                 config["motion_detection"]["min_aspect_ratio"] <= aspect_ratio <= config["motion_detection"]["max_aspect_ratio"] and
                 area_ratio >= config["motion_detection"]["min_area_ratio"]
             ):
                 logger.info(
-                    f"Contour metrics - Area Ratio: {area_ratio:.2f}, "
+                    f"Potential owl contour found - Area Ratio: {area_ratio:.2f}, "
                     f"Circularity: {circularity:.2f}, "
                     f"Aspect Ratio: {aspect_ratio:.2f}, "
                     f"Brightness Diff: {brightness_diff:.2f}"
@@ -197,7 +198,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             "diff_metrics": diff_metrics,
             "pixel_change": significant_pixels * 100,  # Convert to percentage
             "luminance_change": mean_diff,
-            "motion_detected": is_owl_present  # Add motion_detected field
+            "motion_detected": is_owl_present,  # Retain for backward compatibility
+            "is_owl_detected": is_owl_present   # Add clear owl detection flag
         }
 
         logger.info(
@@ -216,7 +218,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             "is_test": is_test,
             "pixel_change": 0.0,
             "luminance_change": 0.0,
-            "motion_detected": False
+            "motion_detected": False,
+            "is_owl_detected": False  # Add clear owl detection flag
         }
 
 if __name__ == "__main__":
@@ -233,7 +236,6 @@ if __name__ == "__main__":
             },
             "threshold_percentage": 0.05,
             "luminance_threshold": 40,
-            "interval_seconds": 3
         }
 
         # Load test images if available

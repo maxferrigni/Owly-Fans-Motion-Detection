@@ -139,7 +139,7 @@ def analyze_motion_characteristics(binary_mask, config):
         raise
 
 def create_difference_visualization(base_image, new_image, threshold, config):
-    """Create enhanced difference visualization."""
+    """Create enhanced difference visualization with focus on owl shapes."""
     try:
         # Convert to OpenCV format
         base_cv = cv2.cvtColor(np.array(base_image), cv2.COLOR_RGB2GRAY)
@@ -173,45 +173,83 @@ def create_difference_visualization(base_image, new_image, threshold, config):
         # Sort contours by area
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
         
-        # Draw contours with different colors based on size
-        for i, contour in enumerate(contours):
-            color = (0, 0, 255) if i == 0 else (0, 255, 0)
-            cv2.drawContours(diff_color, [contour], -1, color, 2)
-            
-            # Add bounding box and metrics for largest contour
-            if i == 0:
-                x, y, w, h = cv2.boundingRect(contour)
-                cv2.rectangle(diff_color, (x, y), (x + w, y + h), (255, 0, 0), 2)
+        # Filter contours to only include owl-like shapes
+        owl_contours = []
+        for contour in contours:
+            # Calculate contour properties
+            area = cv2.contourArea(contour)
+            perimeter = cv2.arcLength(contour, True)
+            if perimeter == 0:
+                continue
                 
-                # Calculate metrics for annotation
-                area = cv2.contourArea(contour)
-                area_ratio = area / (height * width)
+            circularity = 4 * np.pi * area / (perimeter * perimeter)
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = float(w) / h if h > 0 else 0
+            area_ratio = area / (height * width)
+            
+            # Check if this contour meets our owl criteria
+            min_circularity = config["motion_detection"]["min_circularity"]
+            min_aspect_ratio = config["motion_detection"]["min_aspect_ratio"]
+            max_aspect_ratio = config["motion_detection"]["max_aspect_ratio"]
+            min_area_ratio = config["motion_detection"]["min_area_ratio"]
+            
+            if (circularity >= min_circularity and 
+                min_aspect_ratio <= aspect_ratio <= max_aspect_ratio and
+                area_ratio >= min_area_ratio):
+                owl_contours.append((contour, (x, y, w, h), circularity, area_ratio))
+        
+        # Draw only contours that resemble owls 
+        for i, (contour, (x, y, w, h), circularity, area_ratio) in enumerate(owl_contours):
+            # Draw ellipse instead of irregular contour for cleaner visualization
+            if len(contour) >= 5:  # Minimum 5 points required for ellipse fitting
+                ellipse = cv2.fitEllipse(contour)
+                cv2.ellipse(diff_color, ellipse, (0, 255, 0), 2)
+                
+                # Add "OWL" label near the detected shape
+                label_x = int(x + w/2)
+                label_y = int(y - 10) if y > 20 else int(y + h + 20)
                 cv2.putText(
                     diff_color,
-                    f"Area: {area_ratio:.2%}",
-                    (x, y - 10),
+                    "OWL",
+                    (label_x, label_y),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 255, 255),
-                    1
+                    0.7,
+                    (0, 255, 0),
+                    2
+                )
+            else:
+                # Fallback to drawing a simple oval if we can't fit an ellipse
+                cv2.ellipse(
+                    diff_color,
+                    (x + w//2, y + h//2),  # center point
+                    (w//2, h//2),          # axes lengths
+                    0,                     # rotation angle
+                    0, 360,                # start and end angles
+                    (0, 255, 0),           # color (green)
+                    2                      # thickness
                 )
         
-        return Image.fromarray(diff_color), binary_mask
+        return Image.fromarray(diff_color), binary_mask, len(owl_contours) > 0
         
     except Exception as e:
         logger.error(f"Error creating difference visualization: {e}")
         raise
 
-def add_status_overlay(image, metrics, threshold, is_test=False):
-    """Add enhanced status and metrics overlay."""
+def add_status_overlay(image, metrics, threshold, is_owl_detected=False, is_test=False):
+    """Add enhanced status and metrics overlay with owl-specific language."""
     try:
         # Create copy to avoid modifying original
         img_with_text = image.copy()
         draw = ImageDraw.Draw(img_with_text)
         
         # Determine detection status
-        significant_motion = metrics['pixel_change_ratio'] > 0.05  # 5% threshold
-        status_text = "MOTION DETECTED" if significant_motion else "NO SIGNIFICANT MOTION"
+        if is_owl_detected:
+            status_text = "OWL DETECTED"
+            status_color = "red"
+        else:
+            status_text = "NO OWL DETECTED"
+            status_color = "green"
+            
         if is_test:
             status_text = f"TEST MODE - {status_text}"
         
@@ -219,8 +257,8 @@ def add_status_overlay(image, metrics, threshold, is_test=False):
         x, y = 10, 10
         line_height = 20
         
-        # Draw status
-        draw.text((x, y), status_text, fill="red" if significant_motion else "green")
+        # Draw status with appropriate color
+        draw.text((x, y), status_text, fill=status_color)
         y += line_height * 2
         
         # Draw detailed metrics
@@ -295,7 +333,7 @@ def save_local_image_set(base_image, new_image, comparison_image, camera_name, t
         return None
 
 def create_comparison_image(base_image, new_image, camera_name, threshold, config, is_test=False, timestamp=None):
-    """Create enhanced three-panel comparison image."""
+    """Create enhanced three-panel comparison image with owl-specific detection."""
     try:
         # Validate images
         is_valid, message = validate_comparison_images(base_image, new_image)
@@ -306,7 +344,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         width, height = base_image.size
         
         # Create visualization
-        diff_image, binary_mask = create_difference_visualization(
+        diff_image, binary_mask, is_owl_detected = create_difference_visualization(
             base_image,
             new_image,
             threshold,
@@ -321,7 +359,8 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         change_metrics.update({
             'motion_characteristics': motion_chars,
             'camera_name': camera_name,
-            'is_test': is_test
+            'is_test': is_test,
+            'is_owl_detected': is_owl_detected  # Add flag for owl detection
         })
         
         # Add overlay
@@ -329,6 +368,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
             diff_image,
             change_metrics,
             threshold,
+            is_owl_detected=is_owl_detected,
             is_test=is_test
         )
         
@@ -356,8 +396,8 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         # Save the comparison image to the fixed location
         comparison.save(comparison_path, quality=95)
         
-        # Determine if motion was detected
-        motion_detected = change_metrics['pixel_change_ratio'] > 0.05
+        # Determine if motion was detected - now we use is_owl_detected flag
+        motion_detected = is_owl_detected
         
         # Check if local saving is enabled
         local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
@@ -373,12 +413,12 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
                 timestamp
             )
             
-            if motion_detected:
-                logger.info(f"Motion detected in saved image set for {camera_name}")
+            if is_owl_detected:
+                logger.info(f"Owl detected in saved image set for {camera_name}")
         
         logger.info(
             f"Created comparison image for {camera_name}. "
-            f"Motion detected: {motion_detected} "
+            f"Owl detected: {is_owl_detected} "
             f"{'(Test Mode)' if is_test else ''}"
         )
         
