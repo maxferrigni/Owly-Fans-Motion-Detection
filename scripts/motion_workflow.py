@@ -14,7 +14,7 @@ from utilities.constants import (
     BASE_IMAGES_DIR,
     get_comparison_image_path,
     CAMERA_MAPPINGS,
-    get_base_image_filename
+    get_base_image_path  # Updated from get_base_image_filename
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
