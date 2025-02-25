@@ -36,7 +36,6 @@ class OwlApp:
         # Initialize variables
         self.script_process = None
         self.local_saving_enabled = tk.BooleanVar(value=True)
-        self.capture_interval = tk.StringVar(value="60")
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         # Set style for more immediate button rendering
@@ -134,30 +133,9 @@ class OwlApp:
         )
         self.stop_button.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
 
-        # Make columns expand evenly
-        button_frame.columnconfigure(0, weight=1)
-        button_frame.columnconfigure(1, weight=1)
-
-        # Capture interval with a cleaner layout
-        interval_frame = ttk.Frame(button_frame)
-        interval_frame.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
-        
-        ttk.Label(interval_frame, text="Capture Interval:").pack(side=tk.LEFT, padx=(0,5))
-        
-        self.capture_interval_combo = ttk.Combobox(
-            interval_frame,
-            textvariable=self.capture_interval,
-            width=5,
-            state="readonly",
-            values=["1", "5", "15", "30", "60"]
-        )
-        self.capture_interval_combo.pack(side=tk.LEFT, padx=5)
-        
-        ttk.Label(interval_frame, text="seconds").pack(side=tk.LEFT, padx=5)
-
-        # Local saving option in a separate frame
-        save_frame = ttk.Frame(control_frame)
-        save_frame.pack(fill="x", pady=5, padx=10)
+        # Local saving option in the right column, second row
+        save_frame = ttk.Frame(button_frame)
+        save_frame.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
         
         ttk.Checkbutton(
             save_frame,
@@ -166,7 +144,11 @@ class OwlApp:
             command=self.toggle_local_saving
         ).pack(pady=5)
 
-        # Log viewing button
+        # Make columns expand evenly
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+
+        # Log viewing button in a separate section
         log_frame = ttk.Frame(control_frame)
         log_frame.pack(fill="x", pady=5, padx=10)
         
@@ -294,7 +276,8 @@ class OwlApp:
                 # Pass configuration through environment variables
                 env = os.environ.copy()
                 env['OWL_LOCAL_SAVING'] = str(self.local_saving_enabled.get())
-                env['OWL_CAPTURE_INTERVAL'] = str(self.capture_interval.get())
+                # Using a fixed default interval of 60 seconds (removed UI control)
+                env['OWL_CAPTURE_INTERVAL'] = "60"
                 
                 # Set default alert delay
                 self.alert_manager.set_alert_delay(30)  # Default to 30 minutes
