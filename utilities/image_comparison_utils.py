@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import logging
 from utilities.logging_utils import get_logger
-from utilities.constants import IMAGE_COMPARISONS_DIR, TEMP_COMPARISONS_DIR
+from utilities.constants import IMAGE_COMPARISONS_DIR
 
 # Initialize logger
 logger = get_logger()
@@ -281,7 +281,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         comparison.paste(new_image, (width, 0))
         comparison.paste(diff_with_overlay, (width * 2, 0))
         
-# Get alert type from camera name using CAMERA_MAPPINGS
+        # Get alert type from camera name using CAMERA_MAPPINGS
         from utilities.constants import CAMERA_MAPPINGS
         
         # Get the alert type based on camera name or use the camera name if not found
@@ -298,29 +298,28 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         # Convert to safe filename format
         alert_type_clean = alert_type.lower().replace(' ', '_')
         
-        # Save comparison image
-        if is_test:
-            save_dir = TEMP_COMPARISONS_DIR
-            filename = f"test_{alert_type_clean}_comparison.jpg"
+        # Generate filename with timestamp
+        if timestamp:
+            ts_str = timestamp.strftime('%Y%m%d_%H%M%S')
+            filename = f"{alert_type_clean}_{ts_str}_comparison.jpg"
         else:
-            save_dir = IMAGE_COMPARISONS_DIR if os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true' else TEMP_COMPARISONS_DIR
+            filename = f"{alert_type_clean}_comparison.jpg"
+        
+        # Check if local saving is enabled
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true'
+        
+        # Save comparison image if local saving is enabled
+        save_path = None
+        if local_saving or is_test:
+            os.makedirs(IMAGE_COMPARISONS_DIR, exist_ok=True)
+            save_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
+            comparison.save(save_path, quality=95)
             
-            if timestamp:
-                # Use timestamp for filename
-                ts_str = timestamp.strftime('%Y%m%d_%H%M%S')
-                filename = f"{alert_type_clean}_{ts_str}_comparison.jpg"
-            else:
-                filename = f"{'temp_' if save_dir == TEMP_COMPARISONS_DIR else ''}{alert_type_clean}_comparison.jpg"
-        
-        os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, filename)
-        comparison.save(save_path, quality=95)
-        
-        logger.info(
-            f"Created comparison image for {camera_name}. "
-            f"Motion detected: {change_metrics['pixel_change_ratio'] > 0.05} "
-            f"{'(Test Mode)' if is_test else ''}"
-        )
+            logger.info(
+                f"Created comparison image for {camera_name}. "
+                f"Motion detected: {change_metrics['pixel_change_ratio'] > 0.05} "
+                f"{'(Test Mode)' if is_test else ''}"
+            )
         
         return save_path
         

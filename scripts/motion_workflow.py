@@ -12,10 +12,8 @@ import numpy as np
 # Import utilities
 from utilities.constants import (
     BASE_IMAGES_DIR,
-    TEMP_BASE_IMAGES_DIR,
     get_comparison_image_path,
     CAMERA_MAPPINGS,
-    get_archive_comparison_path,
     get_base_image_filename
 )
 from utilities.logging_utils import get_logger
@@ -56,14 +54,9 @@ def initialize_system(camera_configs, is_test=False):
                 return False
                 
         # Verify base images directory based on local saving setting
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true'
-        logger.info(f"Local image saving is {'enabled' if local_saving else 'disabled'}")
-        
-        if not is_test:
-            check_dir = BASE_IMAGES_DIR if local_saving else TEMP_BASE_IMAGES_DIR
-            if not os.path.exists(check_dir):
-                os.makedirs(check_dir, exist_ok=True)
-                logger.info(f"Created base images directory: {check_dir}")
+        if not os.path.exists(BASE_IMAGES_DIR):
+            os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
+            logger.info(f"Created base images directory: {BASE_IMAGES_DIR}")
             
         logger.info("Motion detection system initialization complete")
         return True
@@ -137,7 +130,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             
             logger.debug(f"Processing as {alert_type} type camera")
             
-# Process based on camera type
+            # Process based on camera type
             if alert_type == "Owl In Box":
                 is_owl_present, detection_info = detect_owl_in_box(
                     new_image, 
@@ -271,80 +264,11 @@ def process_cameras(camera_configs, test_images=None):
                     "timestamp": datetime.now(PACIFIC_TIME).isoformat()
                 })
         
-        # Archive old comparison images
-        try:
-            # Archive images older than 7 days
-            archive_old_comparison_images(days_threshold=7)
-        except Exception as e:
-            logger.error(f"Error archiving old comparison images: {e}")
-        
         return results
 
     except Exception as e:
         logger.error(f"Error in camera processing cycle: {e}")
         raise
-
-def archive_old_comparison_images(days_threshold=7):
-    """
-    Archive comparison images older than the specified threshold.
-    
-    Args:
-        days_threshold (int): Age in days to consider for archiving
-    """
-    from utilities.constants import IMAGE_COMPARISONS_DIR, ARCHIVE_DIR
-    import shutil
-    import os
-    from datetime import datetime, timedelta
-    
-    try:
-        if not os.path.exists(IMAGE_COMPARISONS_DIR):
-            logger.warning(f"Comparison images directory does not exist: {IMAGE_COMPARISONS_DIR}")
-            return
-            
-        # Ensure archive directory exists
-        os.makedirs(ARCHIVE_DIR, exist_ok=True)
-        
-        # Calculate threshold date
-        cutoff_time = time.time() - (days_threshold * 86400)
-        
-        # Get all files in the comparison directory
-        comparison_files = [f for f in os.listdir(IMAGE_COMPARISONS_DIR) 
-                          if os.path.isfile(os.path.join(IMAGE_COMPARISONS_DIR, f)) and 
-                          f.endswith('.jpg')]
-        
-        if not comparison_files:
-            logger.debug("No comparison files found to archive")
-            return
-            
-        archived_count = 0
-        
-        for filename in comparison_files:
-            file_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
-            
-            # Check if file is older than threshold
-            file_time = os.path.getctime(file_path)
-            if file_time < cutoff_time:
-                # Move to archive directory
-                archive_path = os.path.join(ARCHIVE_DIR, filename)
-                
-                # If file already exists in archive, add timestamp to make unique
-                if os.path.exists(archive_path):
-                    base, ext = os.path.splitext(filename)
-                    unique_filename = f"{base}_{int(time.time())}{ext}"
-                    archive_path = os.path.join(ARCHIVE_DIR, unique_filename)
-                
-                # Copy file to archive then delete original
-                shutil.copy2(file_path, archive_path)
-                os.remove(file_path)
-                
-                logger.debug(f"Archived: {filename}")
-                archived_count += 1
-        
-        if archived_count > 0:
-            logger.info(f"Archived {archived_count} comparison images older than {days_threshold} days")
-        
-    except Exception as e:
-        logger.error(f"Error archiving old comparison images: {e}")
 
 if __name__ == "__main__":
     # Test the motion detection

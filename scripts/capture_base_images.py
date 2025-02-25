@@ -14,8 +14,7 @@ import time
 from utilities.constants import (
     BASE_IMAGES_DIR,
     CONFIGS_DIR,
-    get_base_image_filename,
-    TEMP_BASE_IMAGES_DIR
+    get_base_image_filename
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -91,34 +90,28 @@ def get_latest_base_image(camera_name, lighting_condition):
         FileNotFoundError: If no matching base image is found
     """
     try:
-        # Check both regular and temp directories
+        # Format camera name for filename matching
         base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
         
-        search_dirs = [TEMP_BASE_IMAGES_DIR]
-        if local_saving:
-            search_dirs.insert(0, BASE_IMAGES_DIR)
+        if not os.path.exists(BASE_IMAGES_DIR):
+            os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
             
-        for directory in search_dirs:
-            if not os.path.exists(directory):
-                continue
-                
-            matching_files = [
-                f for f in os.listdir(directory) 
-                if f.startswith(base_pattern)
-            ]
+        matching_files = [
+            f for f in os.listdir(BASE_IMAGES_DIR) 
+            if f.startswith(base_pattern)
+        ]
+        
+        if matching_files:
+            # Get most recent file
+            latest_file = max(
+                matching_files,
+                key=lambda f: os.path.getctime(os.path.join(BASE_IMAGES_DIR, f))
+            )
             
-            if matching_files:
-                # Get most recent file
-                latest_file = max(
-                    matching_files,
-                    key=lambda f: os.path.getctime(os.path.join(directory, f))
-                )
-                
-                image_path = os.path.join(directory, latest_file)
-                logger.info(f"Using base image: {image_path}")
-                
-                return image_path
+            image_path = os.path.join(BASE_IMAGES_DIR, latest_file)
+            logger.info(f"Using base image: {image_path}")
+            
+            return image_path
         
         raise FileNotFoundError(
             f"No base image found for {camera_name} under {lighting_condition} condition"
@@ -165,11 +158,9 @@ def save_base_image(image, camera_name, lighting_condition):
             image.save(local_path)
             logger.info(f"Saved base image locally: {local_path}")
         else:
-            logger.debug("Local saving disabled - using temporary directory")
-            
-            # Create temporary file for Supabase upload
-            os.makedirs(TEMP_BASE_IMAGES_DIR, exist_ok=True)
-            temp_path = os.path.join(TEMP_BASE_IMAGES_DIR, filename)
+            # Create temporary file just for Supabase upload
+            os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
+            temp_path = os.path.join(BASE_IMAGES_DIR, "temp_" + filename)
             if image.mode == "RGBA":
                 image = image.convert("RGB")
             image.save(temp_path)
@@ -185,7 +176,6 @@ def save_base_image(image, camera_name, lighting_condition):
         # Clean up temporary file if local saving is disabled
         if not local_saving and os.path.exists(local_path):
             os.remove(local_path)
-            logger.debug(f"Removed temporary file: {local_path}")
         
         return local_path if local_saving else None, supabase_url
         
