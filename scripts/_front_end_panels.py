@@ -33,6 +33,9 @@ class LogWindow(tk.Toplevel):
         
         # Bind parent movement
         parent.bind("<Configure>", self.follow_main_window)
+        
+        # Initially hide the window - will be shown when View Logs is clicked
+        self.withdraw()
 
     def create_filter_frame(self, parent):
         """Create log filtering controls"""
@@ -76,15 +79,16 @@ class LogWindow(tk.Toplevel):
             width=100,
             height=30,
             wrap=tk.WORD,
-            font=('Consolas', 10)  # Changed to Consolas for better readability
+            font=('Consolas', 10)  # Monospaced font for better readability
         )
         self.log_display.pack(fill="both", expand=True)
         
-        # Configure tags for coloring - using more visible colors
+        # Configure tags for coloring with more visible colors
         self.log_display.tag_configure("ERROR", foreground="#FF0000")  # Bright red
         self.log_display.tag_configure("WARNING", foreground="#FF8C00")  # Dark orange
         self.log_display.tag_configure("INFO", foreground="#000080")  # Navy blue
         self.log_display.tag_configure("HIGHLIGHT", background="#FFFF00")  # Yellow highlight
+        self.log_display.tag_configure("filtered", elide=True)  # For hiding filtered entries
         
         # Configure the base text color and background
         self.log_display.config(bg="#F8F8F8", fg="#000000")  # Light gray background, black text
@@ -95,39 +99,33 @@ class LogWindow(tk.Toplevel):
         level = self.level_var.get()
         search = self.search_var.get().lower()
         
-        # Fixed: Properly show/hide log entries based on level
+        # First, show all text
         self.log_display.tag_remove("filtered", "1.0", tk.END)
         
+        # Filter by level - collect ranges to hide
         if level != "ALL":
             for tag in ["ERROR", "WARNING", "INFO"]:
                 if tag != level:
-                    # Find all ranges with this tag
                     index = "1.0"
                     while True:
-                        index = self.log_display.tag_nextrange(tag, index, tk.END)
-                        if not index:
+                        tag_range = self.log_display.tag_nextrange(tag, index, tk.END)
+                        if not tag_range:
                             break
-                        # Add filtered tag to hide these entries
-                        self.log_display.tag_add("filtered", index[0], index[1])
-                        index = index[1]
-            
-            # Configure the filtered tag to hide text
-            self.log_display.tag_configure("filtered", elide=True)
-        else:
-            # Show all entries
-            self.log_display.tag_configure("filtered", elide=False)
+                        # Mark these lines to be hidden
+                        self.log_display.tag_add("filtered", tag_range[0], tag_range[1])
+                        index = tag_range[1]
         
         # Apply search highlighting
         self.log_display.tag_remove("HIGHLIGHT", "1.0", tk.END)
         if search:
-            pos = "1.0"
+            start_pos = "1.0"
             while True:
-                pos = self.log_display.search(search, pos, tk.END, nocase=True)
+                pos = self.log_display.search(search, start_pos, tk.END, nocase=True)
                 if not pos:
                     break
                 end_pos = f"{pos}+{len(search)}c"
                 self.log_display.tag_add("HIGHLIGHT", pos, end_pos)
-                pos = end_pos
+                start_pos = end_pos
 
     def log_message(self, message, level="INFO"):
         """Add enhanced log message"""
@@ -156,104 +154,13 @@ class LogWindow(tk.Toplevel):
             
     def on_closing(self):
         """Handle window closing"""
-        self.withdraw()
+        self.withdraw()  # Hide instead of destroy
         
     def show(self):
         """Show the log window"""
         self.deiconify()
         self.position_window()
-
-class AlertHierarchyFrame(ttk.LabelFrame):
-    """Frame showing alert hierarchy and settings"""
-    def __init__(self, parent, alert_manager):
-        super().__init__(parent, text="Alert Hierarchy Settings")
-        self.alert_manager = alert_manager
-        
-        # Create alert hierarchy display
-        self.create_hierarchy_display()
-        
-        # Create delay settings
-        self.create_delay_settings()
-
-    def create_hierarchy_display(self):
-        """Create display showing alert hierarchy"""
-        # Using a more compact layout
-        hierarchy_frame = ttk.Frame(self)
-        hierarchy_frame.pack(fill="x", padx=5, pady=2)
-        
-        # Header with smaller font
-        ttk.Label(
-            hierarchy_frame,
-            text="Alert Priority (Highest to Lowest):",
-            font=('Arial', 8, 'bold')
-        ).pack(anchor="w")
-        
-        # Priority list
-        priorities = {
-            "Owl In Box": "Highest Priority - Overrides All",
-            "Owl On Box": "Medium Priority - Overrides Area",
-            "Owl In Area": "Lowest Priority"
-        }
-        
-        # More compact display of priorities
-        for alert_type, description in priorities.items():
-            frame = ttk.Frame(hierarchy_frame)
-            frame.pack(fill="x", pady=1)
-            ttk.Label(
-                frame,
-                text=f"• {alert_type}:",
-                width=15
-            ).pack(side="left")
-            ttk.Label(
-                frame,
-                text=description,
-                font=('Arial', 8, 'italic')
-            ).pack(side="left")
-
-    def create_delay_settings(self):
-        """Create alert delay settings"""
-        delay_frame = ttk.LabelFrame(self, text="Alert Delay Settings")
-        delay_frame.pack(fill="x", padx=5, pady=2)
-        
-        # Base delay setting in a more compact layout
-        base_delay_frame = ttk.Frame(delay_frame)
-        base_delay_frame.pack(fill="x", pady=2)
-        
-        ttk.Label(
-            base_delay_frame,
-            text="Base Alert Delay:"
-        ).pack(side="left")
-        
-        self.base_delay = ttk.Entry(
-            base_delay_frame,
-            width=5
-        )
-        self.base_delay.insert(0, "30")
-        self.base_delay.pack(side="left", padx=5)
-        
-        ttk.Label(
-            base_delay_frame,
-            text="minutes"
-        ).pack(side="left")
-        
-        # Help text with smaller font and more compact layout
-        help_text = "Base delay applies to alerts of the same type. Higher priority alerts can override lower priority alerts."
-        
-        help_label = ttk.Label(
-            delay_frame,
-            text=help_text,
-            wraplength=300,
-            justify="left",
-            font=('Arial', 8, 'italic')
-        )
-        help_label.pack(pady=2)
-
-    def get_base_delay(self):
-        """Get current base delay setting"""
-        try:
-            return int(self.base_delay.get())
-        except ValueError:
-            return 30  # Default value
+        self.lift()  # Bring to front
 
 class StatusPanel(ttk.LabelFrame):
     """Panel showing system status indicators"""
@@ -266,7 +173,7 @@ class StatusPanel(ttk.LabelFrame):
 
     def create_status_indicators(self):
         """Create system status indicators"""
-        # Using a grid layout for more compact display
+        # Create a 2x2 grid layout for indicators
         indicators = [
             ("Motion Detection", "stopped"),
             ("Local Saving", "enabled"),
@@ -274,29 +181,30 @@ class StatusPanel(ttk.LabelFrame):
             ("Base Images", "not verified")
         ]
         
-        # Create 2x2 grid for indicators
+        # Create indicator frame with grid layout
+        indicator_frame = ttk.Frame(self)
+        indicator_frame.pack(pady=5, padx=5, fill="x")
+        
         for i, (label, initial_status) in enumerate(indicators):
             row = i // 2
             col = i % 2
             
-            frame = ttk.Frame(self)
-            frame.grid(row=row, column=col, sticky="w", padx=5, pady=2)
+            indicator_label = ttk.Label(indicator_frame, text=f"{label}:")
+            indicator_label.grid(row=row, column=col*2, sticky='w', padx=5, pady=3)
             
-            ttk.Label(
-                frame,
-                text=f"{label}:",
-                width=15
-            ).pack(side="left")
-            
-            status_label = ttk.Label(frame, text=initial_status)
-            status_label.pack(side="left")
+            status_label = ttk.Label(indicator_frame, text=initial_status)
+            status_label.grid(row=row, column=col*2+1, sticky='w', padx=5, pady=3)
             
             self.status_labels[label] = status_label
+            
+        # Configure grid to expand properly
+        for i in range(4):
+            indicator_frame.columnconfigure(i, weight=1)
 
     def create_control_buttons(self):
         """Create control buttons"""
         button_frame = ttk.Frame(self)
-        button_frame.grid(row=2, column=0, columnspan=2, sticky="e", pady=3)
+        button_frame.pack(pady=5, padx=5, fill="x")
         
         ttk.Button(
             button_frame,

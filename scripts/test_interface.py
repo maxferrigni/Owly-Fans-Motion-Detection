@@ -6,6 +6,7 @@ from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 import os
 import json
+import numpy as np
 
 from utilities.logging_utils import get_logger
 from utilities.constants import CAMERA_MAPPINGS, CONFIGS_DIR
@@ -17,46 +18,25 @@ class TestInterface:
         self.parent_frame = parent_frame
         self.logger = logger or get_logger()
         self.alert_manager = alert_manager
-        self.test_mode = False
         
         # Track loaded images
         self.base_images = {}  # {camera_type: Image}
         self.test_images = {}  # {camera_type: Image}
         
-        # Create main test frame
-        self.test_frame = ttk.LabelFrame(parent_frame, text="Test Interface")
-        self.test_frame.pack(pady=5, padx=5, fill="x")
+        # Create the test interface directly (no test mode toggle needed)
+        self.create_interface()
         
-        # Create subframes
-        self.create_test_mode_controls()
+    def create_interface(self):
+        """Create test mode interface elements"""
+        # Create main sections
         self.create_image_testing_interface()
         self.create_alert_testing_interface()
         self.create_results_display()
-
-    def create_test_mode_controls(self):
-        """Create main test mode toggle"""
-        control_frame = ttk.Frame(self.test_frame)
-        control_frame.pack(pady=5, fill="x")
         
-        self.test_mode_button = ttk.Button(
-            control_frame,
-            text="Enter Test Mode",
-            command=self.toggle_test_mode,
-            width=20
-        )
-        self.test_mode_button.pack(side=tk.LEFT, padx=5)
-        
-        # Status indicator
-        self.status_label = ttk.Label(
-            control_frame,
-            text="Test Mode: Inactive",
-            font=('Arial', 10, 'bold')
-        )
-        self.status_label.pack(side=tk.LEFT, padx=5)
-
     def create_image_testing_interface(self):
         """Create interface for image-based testing"""
-        self.image_frame = ttk.LabelFrame(self.test_frame, text="Image Testing")
+        self.image_frame = ttk.LabelFrame(self.parent_frame, text="Image Testing")
+        self.image_frame.pack(pady=5, fill="both", expand=True)
         
         # Camera selection
         camera_frame = ttk.Frame(self.image_frame)
@@ -92,7 +72,7 @@ class TestInterface:
         
         ttk.Button(
             button_frame,
-            text="Run Detection",
+            text="Run Detection Test",
             command=self.run_detection_test
         ).pack(side=tk.LEFT, padx=5)
         
@@ -102,7 +82,8 @@ class TestInterface:
 
     def create_alert_testing_interface(self):
         """Create interface for direct alert testing"""
-        self.alert_frame = ttk.LabelFrame(self.test_frame, text="Alert Testing")
+        self.alert_frame = ttk.LabelFrame(self.parent_frame, text="Alert Testing")
+        self.alert_frame.pack(pady=5, fill="x")
         
         button_frame = ttk.Frame(self.alert_frame)
         button_frame.pack(pady=5, fill="x")
@@ -118,40 +99,17 @@ class TestInterface:
 
     def create_results_display(self):
         """Create results display area"""
-        self.results_frame = ttk.LabelFrame(self.test_frame, text="Test Results")
+        self.results_frame = ttk.LabelFrame(self.parent_frame, text="Test Results")
+        self.results_frame.pack(pady=5, fill="both", expand=True)
         
         self.results_text = tk.Text(
             self.results_frame,
-            height=6,
+            height=10,
             width=60,
             wrap=tk.WORD,
-            font=('Courier', 9)
+            font=('Consolas', 9)
         )
         self.results_text.pack(pady=5, padx=5, fill="both", expand=True)
-
-    def toggle_test_mode(self):
-        """Toggle test mode on/off"""
-        self.test_mode = not self.test_mode
-        if self.test_mode:
-            self.test_mode_button.configure(text="Exit Test Mode")
-            self.status_label.configure(text="Test Mode: Active", foreground='green')
-            self.image_frame.pack(pady=5, fill="x")
-            self.alert_frame.pack(pady=5, fill="x")
-            self.results_frame.pack(pady=5, fill="both", expand=True)
-        else:
-            self.test_mode_button.configure(text="Enter Test Mode")
-            self.status_label.configure(text="Test Mode: Inactive", foreground='black')
-            self.image_frame.pack_forget()
-            self.alert_frame.pack_forget()
-            self.results_frame.pack_forget()
-            self.clear_test_data()
-
-    def clear_test_data(self):
-        """Clear all test data"""
-        self.base_images.clear()
-        self.test_images.clear()
-        self.image_info.configure(text="No images loaded")
-        self.results_text.delete(1.0, tk.END)
 
     def on_camera_selected(self, event=None):
         """Handle camera selection"""
@@ -246,7 +204,8 @@ class TestInterface:
                 is_owl_present, detection_info = detect_owl_in_box(
                     self.test_images[camera],
                     self.base_images[camera],
-                    camera_config
+                    camera_config,
+                    is_test=True
                 )
                 self.display_results(is_owl_present, detection_info)
                 
@@ -255,9 +214,10 @@ class TestInterface:
                 comparison_path = create_comparison_image(
                     self.base_images[camera],
                     self.test_images[camera],
-                    camera_name=alert_type,
+                    camera_name=camera,
                     threshold=camera_config["luminance_threshold"],
-                    config=camera_config
+                    config=camera_config,
+                    is_test=True
                 )
                 
                 # Analyze comparison image
@@ -279,10 +239,6 @@ class TestInterface:
                 }
                 
                 self.display_results(motion_detected, detection_info)
-                
-                # Clean up comparison image
-                if os.path.exists(comparison_path):
-                    os.remove(comparison_path)
                 
         except Exception as e:
             self.logger.error(f"Error running detection test: {e}")
@@ -328,7 +284,8 @@ class TestInterface:
                 "detection_info": {
                     "confidence": 0.8,
                     "is_test": True
-                }
+                },
+                "motion_detected": True
             }
             
             # Process test alert

@@ -22,22 +22,16 @@ from motion_detection_settings import MotionDetectionSettings
 from test_interface import TestInterface
 
 # Import GUI panels
-from _front_end_panels import LogWindow, AlertHierarchyFrame, StatusPanel
+from _front_end_panels import LogWindow, StatusPanel
 
 class OwlApp:
     def __init__(self, root):
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("900x600+-1920+0")  # Reduced height from 700 to 600
+        self.root.geometry("900x650+-1920+0")  # Increased height to accommodate test mode
         self.root.update_idletasks()
         self.root.resizable(True, True)
-
-        # Set theme for better visual appearance
-        style = ttk.Style()
-        style.configure("TFrame", padding=2)  # Reduced padding
-        style.configure("TLabelframe", padding=2)  # Reduced padding
-        style.configure("TButton", padding=3)  # Reduced padding
 
         # Initialize variables
         self.script_process = None
@@ -45,16 +39,33 @@ class OwlApp:
         self.capture_interval = tk.StringVar(value="60")
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
+        # Set style for more immediate button rendering
+        self.style = ttk.Style()
+        self.style.configure('TButton', font=('Arial', 10))
+        self.style.configure('TFrame', padding=3)
+        self.style.configure('TLabelframe', padding=5)
+
         # Initialize managers
         self.alert_manager = AlertManager()
         self.logger = get_logger()
 
         # Create main container
         self.main_container = ttk.Frame(self.root)
-        self.main_container.pack(fill="both", expand=True)
+        self.main_container.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Create layout frames
-        self.create_layout_frames()
+        # Create main notebook for tab-based layout
+        self.notebook = ttk.Notebook(self.main_container)
+        self.notebook.pack(fill="both", expand=True)
+
+        # Create tabs
+        self.control_tab = ttk.Frame(self.notebook)
+        self.settings_tab = ttk.Frame(self.notebook)
+        self.test_tab = ttk.Frame(self.notebook)
+
+        # Add tabs to notebook
+        self.notebook.add(self.control_tab, text="Control")
+        self.notebook.add(self.settings_tab, text="Settings")
+        self.notebook.add(self.test_tab, text="Test")
 
         # Initialize components
         self.initialize_components()
@@ -67,16 +78,6 @@ class OwlApp:
         self.verify_directories()
         self.log_message("GUI initialized and ready", "INFO")
 
-    def create_layout_frames(self):
-        """Create main layout frames"""
-        # Left panel for controls
-        self.left_panel = ttk.Frame(self.main_container)
-        self.left_panel.pack(side=tk.LEFT, fill="both", padx=3)  # Reduced padding
-        
-        # Right panel for settings and status
-        self.right_panel = ttk.Frame(self.main_container)
-        self.right_panel.pack(side=tk.LEFT, fill="both", expand=True, padx=3)  # Reduced padding
-
     def initialize_components(self):
         """Initialize all GUI components"""
         # Initialize log window
@@ -85,80 +86,95 @@ class OwlApp:
         # Create control panel
         self.create_control_panel()
         
-        # Create alert hierarchy panel
-        self.alert_hierarchy = AlertHierarchyFrame(self.left_panel, self.alert_manager)
-        self.alert_hierarchy.pack(fill="x", pady=2)  # Reduced padding
+        # Create status panel
+        self.status_panel = StatusPanel(self.control_tab)
+        self.status_panel.pack(fill="x", pady=5)
         
-        # Create status panel - Moving this up to use less vertical space
-        self.status_panel = StatusPanel(self.left_panel)
-        self.status_panel.pack(fill="x", pady=2)  # Reduced padding
+        # Create motion detection settings in settings tab
+        self.settings = MotionDetectionSettings(self.settings_tab, self.logger)
         
-        # Create motion detection settings
-        self.settings = MotionDetectionSettings(self.right_panel, self.logger)
-        
-        # Create test interface - Using a notebook to save space
-        test_frame = ttk.LabelFrame(self.left_panel, text="Testing")
-        test_frame.pack(fill="x", pady=2)  # Reduced padding
-        self.test_interface = TestInterface(test_frame, self.logger, self.alert_manager)
+        # Create test interface in test tab
+        self.test_interface = TestInterface(self.test_tab, self.logger, self.alert_manager)
 
     def create_control_panel(self):
         """Create main control panel"""
-        control_frame = ttk.LabelFrame(self.left_panel, text="System Controls")
-        control_frame.pack(fill="x", pady=2)  # Reduced padding
+        # Main control frame with a clear title
+        control_frame = ttk.LabelFrame(self.control_tab, text="System Controls")
+        control_frame.pack(fill="x", pady=10, padx=10)
 
-        # Create 2-column grid for more compact layout
-        buttons_frame = ttk.Frame(control_frame)
-        buttons_frame.pack(pady=2, padx=2, fill="x")
+        # Grid layout for better button placement
+        button_frame = ttk.Frame(control_frame)
+        button_frame.pack(fill="x", pady=10, padx=10)
         
-        # Update System button
-        ttk.Button(
-            buttons_frame,
+        # Update button
+        update_button = ttk.Button(
+            button_frame,
             text="Update System",
             command=self.update_system,
-            width=18  # Slightly reduced width
-        ).grid(row=0, column=0, pady=2, padx=2)
+            style='TButton'
+        )
+        update_button.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
-        # Motion Detection buttons in a single row
-        ttk.Button(
-            buttons_frame,
+        # Start button
+        start_button = ttk.Button(
+            button_frame,
             text="Start Motion Detection",
             command=self.start_script,
-            width=18  # Slightly reduced width
-        ).grid(row=0, column=1, pady=2, padx=2)
+            style='TButton'
+        )
+        start_button.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
 
+        # Stop button
         self.stop_button = ttk.Button(
-            buttons_frame,
+            button_frame,
             text="Stop Motion Detection",
             command=self.stop_script,
             state=tk.DISABLED,
-            width=18  # Slightly reduced width
+            style='TButton'
         )
-        self.stop_button.grid(row=1, column=0, pady=2, padx=2)
+        self.stop_button.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
 
-        # Capture Interval frame
-        interval_frame = ttk.Frame(buttons_frame)
-        interval_frame.grid(row=1, column=1, pady=2, padx=2)
+        # Make columns expand evenly
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(interval_frame, text="Interval:").pack(side=tk.LEFT)
-
+        # Capture interval with a cleaner layout
+        interval_frame = ttk.Frame(button_frame)
+        interval_frame.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+        
+        ttk.Label(interval_frame, text="Capture Interval:").pack(side=tk.LEFT, padx=(0,5))
+        
         self.capture_interval_combo = ttk.Combobox(
             interval_frame,
             textvariable=self.capture_interval,
-            width=3,  # Reduced width
+            width=5,
             state="readonly",
             values=["1", "5", "15", "30", "60"]
         )
-        self.capture_interval_combo.pack(side=tk.LEFT, padx=2)
+        self.capture_interval_combo.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(interval_frame, text="seconds").pack(side=tk.LEFT, padx=5)
 
-        ttk.Label(interval_frame, text="s").pack(side=tk.LEFT)  # Shortened "seconds" to "s"
-
-        # Local Saving toggle
+        # Local saving option in a separate frame
+        save_frame = ttk.Frame(control_frame)
+        save_frame.pack(fill="x", pady=5, padx=10)
+        
         ttk.Checkbutton(
-            control_frame,
+            save_frame,
             text="Save Images Locally",
             variable=self.local_saving_enabled,
             command=self.toggle_local_saving
-        ).pack(pady=2)  # Reduced padding
+        ).pack(pady=5)
+
+        # Log viewing button
+        log_frame = ttk.Frame(control_frame)
+        log_frame.pack(fill="x", pady=5, padx=10)
+        
+        ttk.Button(
+            log_frame,
+            text="View Logs",
+            command=lambda: self.log_window.show()
+        ).pack(pady=5)
 
     class LogRedirector:
         """Redirects stdout/stderr to log window"""
@@ -280,10 +296,8 @@ class OwlApp:
                 env['OWL_LOCAL_SAVING'] = str(self.local_saving_enabled.get())
                 env['OWL_CAPTURE_INTERVAL'] = str(self.capture_interval.get())
                 
-                # Update alert delay from hierarchy panel
-                self.alert_manager.set_alert_delay(
-                    self.alert_hierarchy.get_base_delay()
-                )
+                # Set default alert delay
+                self.alert_manager.set_alert_delay(30)  # Default to 30 minutes
                 
                 cmd = [sys.executable, self.main_script_path]
                 self.script_process = subprocess.Popen(
