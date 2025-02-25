@@ -29,7 +29,7 @@ class OwlApp:
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("900x650+-1920+0")  # Increased height to accommodate test mode
+        self.root.geometry("900x600+-1920+0")  # Reduced height to 600
         self.root.update_idletasks()
         self.root.resizable(True, True)
 
@@ -41,8 +41,8 @@ class OwlApp:
         # Set style for more immediate button rendering
         self.style = ttk.Style()
         self.style.configure('TButton', font=('Arial', 10))
-        self.style.configure('TFrame', padding=3)
-        self.style.configure('TLabelframe', padding=5)
+        self.style.configure('TFrame', padding=2)  # Reduced padding
+        self.style.configure('TLabelframe', padding=3)  # Reduced padding
 
         # Initialize managers
         self.alert_manager = AlertManager()
@@ -50,7 +50,7 @@ class OwlApp:
 
         # Create main container
         self.main_container = ttk.Frame(self.root)
-        self.main_container.pack(fill="both", expand=True, padx=5, pady=5)
+        self.main_container.pack(fill="both", expand=True, padx=3, pady=3)  # Reduced padding
 
         # Create main notebook for tab-based layout
         self.notebook = ttk.Notebook(self.main_container)
@@ -87,23 +87,27 @@ class OwlApp:
         
         # Create status panel
         self.status_panel = StatusPanel(self.control_tab)
-        self.status_panel.pack(fill="x", pady=5)
+        self.status_panel.pack(fill="x", pady=3)  # Reduced padding
         
-        # Create motion detection settings in settings tab
-        self.settings = MotionDetectionSettings(self.settings_tab, self.logger)
+        # Create motion detection settings in settings tab (more compact)
+        settings_scroll = ttk.Frame(self.settings_tab)
+        settings_scroll.pack(fill="both", expand=True)
+        self.settings = MotionDetectionSettings(settings_scroll, self.logger)
         
-        # Create test interface in test tab
-        self.test_interface = TestInterface(self.test_tab, self.logger, self.alert_manager)
+        # Create test interface in test tab (more compact)
+        test_scroll = ttk.Frame(self.test_tab)
+        test_scroll.pack(fill="both", expand=True)
+        self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
 
     def create_control_panel(self):
         """Create main control panel"""
         # Main control frame with a clear title
         control_frame = ttk.LabelFrame(self.control_tab, text="System Controls")
-        control_frame.pack(fill="x", pady=10, padx=10)
+        control_frame.pack(fill="x", pady=3, padx=3)  # Reduced padding
 
-        # Grid layout for better button placement
+        # Grid layout for better button placement with reduced spacing
         button_frame = ttk.Frame(control_frame)
-        button_frame.pack(fill="x", pady=10, padx=10)
+        button_frame.pack(fill="x", pady=3, padx=3)  # Reduced padding
         
         # Update button
         update_button = ttk.Button(
@@ -112,7 +116,7 @@ class OwlApp:
             command=self.update_system,
             style='TButton'
         )
-        update_button.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+        update_button.grid(row=0, column=0, padx=5, pady=5, sticky="ew")  # Reduced padding
 
         # Start button
         start_button = ttk.Button(
@@ -121,7 +125,7 @@ class OwlApp:
             command=self.start_script,
             style='TButton'
         )
-        start_button.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+        start_button.grid(row=0, column=1, padx=5, pady=5, sticky="ew")  # Reduced padding
 
         # Stop button
         self.stop_button = ttk.Button(
@@ -131,18 +135,18 @@ class OwlApp:
             state=tk.DISABLED,
             style='TButton'
         )
-        self.stop_button.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
+        self.stop_button.grid(row=1, column=0, padx=5, pady=5, sticky="ew")  # Reduced padding
 
         # Local saving option in the right column, second row
         save_frame = ttk.Frame(button_frame)
-        save_frame.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+        save_frame.grid(row=1, column=1, padx=5, pady=5, sticky="ew")  # Reduced padding
         
         ttk.Checkbutton(
             save_frame,
             text="Save Images Locally",
             variable=self.local_saving_enabled,
             command=self.toggle_local_saving
-        ).pack(pady=5)
+        ).pack(pady=2)  # Reduced padding
 
         # Make columns expand evenly
         button_frame.columnconfigure(0, weight=1)
@@ -150,13 +154,13 @@ class OwlApp:
 
         # Log viewing button in a separate section
         log_frame = ttk.Frame(control_frame)
-        log_frame.pack(fill="x", pady=5, padx=10)
+        log_frame.pack(fill="x", pady=2, padx=3)  # Reduced padding
         
         ttk.Button(
             log_frame,
             text="View Logs",
             command=lambda: self.log_window.show()
-        ).pack(pady=5)
+        ).pack(pady=2)  # Reduced padding
 
     class LogRedirector:
         """Redirects stdout/stderr to log window"""
