@@ -6,8 +6,10 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import logging
+from datetime import datetime
+import pytz
 from utilities.logging_utils import get_logger
-from utilities.constants import IMAGE_COMPARISONS_DIR
+from utilities.constants import IMAGE_COMPARISONS_DIR, CAMERA_MAPPINGS, get_comparison_image_path, get_saved_image_path, COMPARISON_IMAGE_FILENAMES
 
 # Initialize logger
 logger = get_logger()
@@ -281,47 +283,42 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         comparison.paste(new_image, (width, 0))
         comparison.paste(diff_with_overlay, (width * 2, 0))
         
-        # Get alert type from camera name using CAMERA_MAPPINGS
-        from utilities.constants import CAMERA_MAPPINGS
-        
-        # Get the alert type based on camera name or use the camera name if not found
-        alert_type = None
-        for cam_name, alert in CAMERA_MAPPINGS.items():
-            if cam_name.lower() == camera_name.lower():
-                alert_type = alert
-                break
-                
+        # Get the alert type for this camera
+        alert_type = CAMERA_MAPPINGS.get(camera_name)
         if not alert_type:
-            # Fallback if camera name not found in mapping
-            alert_type = camera_name
+            alert_type = "Unknown"
+        
+        # Ensure timestamp is set
+        if not timestamp:
+            timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
             
-        # Convert to safe filename format
-        alert_type_clean = alert_type.lower().replace(' ', '_')
+        # Get the fixed path for this type of comparison
+        comparison_path = get_comparison_image_path(camera_name)
         
-        # Generate filename with timestamp
-        if timestamp:
-            ts_str = timestamp.strftime('%Y%m%d_%H%M%S')
-            filename = f"{alert_type_clean}_{ts_str}_comparison.jpg"
-        else:
-            filename = f"{alert_type_clean}_comparison.jpg"
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(comparison_path), exist_ok=True)
         
-        # Check if local saving is enabled
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'True').lower() == 'true'
+        # Save the comparison image to the fixed location
+        comparison.save(comparison_path, quality=95)
         
-        # Save comparison image if local saving is enabled
-        save_path = None
-        if local_saving or is_test:
-            os.makedirs(IMAGE_COMPARISONS_DIR, exist_ok=True)
-            save_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
-            comparison.save(save_path, quality=95)
-            
-            logger.info(
-                f"Created comparison image for {camera_name}. "
-                f"Motion detected: {change_metrics['pixel_change_ratio'] > 0.05} "
-                f"{'(Test Mode)' if is_test else ''}"
-            )
+        # Check if motion was detected and local saving is enabled
+        motion_detected = change_metrics['pixel_change_ratio'] > 0.05
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
         
-        return save_path
+        # If motion detected and local saving enabled, save a copy to logs
+        if motion_detected and local_saving:
+            saved_path = get_saved_image_path(camera_name, "comparison", timestamp)
+            comparison.save(saved_path, quality=95)
+            logger.info(f"Motion detected - saved copy to logs: {saved_path}")
+        
+        logger.info(
+            f"Created comparison image for {camera_name}. "
+            f"Motion detected: {motion_detected} "
+            f"{'(Test Mode)' if is_test else ''}"
+        )
+        
+        # Return the fixed path - this is what the rest of the code expects
+        return comparison_path
         
     except Exception as e:
         logger.error(f"Error creating comparison image: {e}")

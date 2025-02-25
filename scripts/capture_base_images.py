@@ -14,7 +14,8 @@ import time
 from utilities.constants import (
     BASE_IMAGES_DIR,
     CONFIGS_DIR,
-    get_base_image_filename
+    get_base_image_path,
+    get_saved_image_path,
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -53,77 +54,40 @@ def capture_real_image(roi):
         raise ValueError(f"Invalid ROI dimensions: {roi}")
     return pyautogui.screenshot(region=(x, y, width, height))
 
-def clear_old_base_images(camera_name, lighting_condition):
-    """
-    Clear existing base images for a specific camera and lighting condition.
-    
-    Args:
-        camera_name (str): Name of the camera
-        lighting_condition (str): Lighting condition to clear
-    """
-    try:
-        if not os.path.exists(BASE_IMAGES_DIR):
-            return
-
-        base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
-        
-        for filename in os.listdir(BASE_IMAGES_DIR):
-            if filename.startswith(base_pattern):
-                file_path = os.path.join(BASE_IMAGES_DIR, filename)
-                os.remove(file_path)
-                logger.info(f"Removed base image: {filename}")
-    except Exception as e:
-        logger.error(f"Error clearing old base images: {e}")
-
 def get_latest_base_image(camera_name, lighting_condition):
     """
-    Get the most recent base image path for a camera and lighting condition.
+    Get the base image path for a camera and lighting condition.
+    Always returns the fixed path for consistency.
     
     Args:
         camera_name (str): Name of the camera
         lighting_condition (str): Current lighting condition
         
     Returns:
-        str: Path to the most recent base image
+        str: Path to the base image
         
     Raises:
-        FileNotFoundError: If no matching base image is found
+        FileNotFoundError: If the base image doesn't exist
     """
     try:
-        # Format camera name for filename matching
-        base_pattern = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base"
+        # Get the fixed path for this camera and lighting condition
+        image_path = get_base_image_path(camera_name, lighting_condition)
         
-        if not os.path.exists(BASE_IMAGES_DIR):
-            os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
+        # Check if the file exists
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"No base image found for {camera_name} under {lighting_condition} condition")
             
-        matching_files = [
-            f for f in os.listdir(BASE_IMAGES_DIR) 
-            if f.startswith(base_pattern)
-        ]
-        
-        if matching_files:
-            # Get most recent file
-            latest_file = max(
-                matching_files,
-                key=lambda f: os.path.getctime(os.path.join(BASE_IMAGES_DIR, f))
-            )
-            
-            image_path = os.path.join(BASE_IMAGES_DIR, latest_file)
-            logger.info(f"Using base image: {image_path}")
-            
-            return image_path
-        
-        raise FileNotFoundError(
-            f"No base image found for {camera_name} under {lighting_condition} condition"
-        )
+        logger.info(f"Using base image: {image_path}")
+        return image_path
         
     except Exception as e:
-        logger.error(f"Error getting latest base image: {e}")
+        logger.error(f"Error getting base image: {e}")
         raise
 
 def save_base_image(image, camera_name, lighting_condition):
     """
-    Save base image locally (if enabled) and upload to Supabase.
+    Save base image to fixed location and upload to Supabase.
+    If local saving is enabled, also save a copy to the saved_images directory.
     
     Args:
         image (PIL.Image): The base image to save
@@ -134,50 +98,38 @@ def save_base_image(image, camera_name, lighting_condition):
         tuple: (local_path, supabase_url)
     """
     try:
-        # Check if local saving is enabled
-        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
-        local_path = None
-        
         # Generate timestamp in consistent format
         timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
-        timestamp_str = timestamp.strftime('%Y%m%d_%H%M%S')
         
-        # Generate standardized filename
-        camera_name_clean = camera_name.lower().replace(' ', '_')
-        filename = f"{camera_name_clean}_{lighting_condition}_base_{timestamp_str}.jpg"
+        # Get the fixed path for this base image
+        base_path = get_base_image_path(camera_name, lighting_condition)
         
-        # Save locally if enabled
-        if local_saving:
-            # Ensure base images directory exists
-            os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
+        # Ensure base images directory exists
+        os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
+        
+        # Save to the fixed location
+        if image.mode == "RGBA":
+            image = image.convert("RGB")
             
-            # Save locally
-            local_path = os.path.join(BASE_IMAGES_DIR, filename)
-            if image.mode == "RGBA":
-                image = image.convert("RGB")
-            image.save(local_path)
-            logger.info(f"Saved base image locally: {local_path}")
-        else:
-            # Create temporary file just for Supabase upload
-            os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
-            temp_path = os.path.join(BASE_IMAGES_DIR, "temp_" + filename)
-            if image.mode == "RGBA":
-                image = image.convert("RGB")
-            image.save(temp_path)
-            local_path = temp_path
+        image.save(base_path)
+        logger.info(f"Saved base image: {base_path}")
+        
+        # Check if local saving is enabled to save a copy to logs
+        local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
+        if local_saving:
+            # Save a copy with timestamp to the saved_images folder
+            saved_path = get_saved_image_path(camera_name, "base", timestamp)
+            image.save(saved_path)
+            logger.info(f"Saved copy to logs: {saved_path}")
         
         # Upload to Supabase with consistent timestamp format
-        supabase_filename = f"{camera_name_clean}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d%H%M%S')}.jpg"
-        supabase_url = upload_base_image(local_path, supabase_filename, camera_name, lighting_condition)
+        supabase_filename = f"{camera_name.lower().replace(' ', '_')}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d%H%M%S')}.jpg"
+        supabase_url = upload_base_image(base_path, supabase_filename, camera_name, lighting_condition)
         
         # Record that we captured a base image
         record_base_image_capture(lighting_condition)
         
-        # Clean up temporary file if local saving is disabled
-        if not local_saving and os.path.exists(local_path):
-            os.remove(local_path)
-        
-        return local_path if local_saving else None, supabase_url
+        return base_path, supabase_url
         
     except Exception as e:
         logger.error(f"Error saving base image: {e}")
@@ -219,10 +171,6 @@ def capture_base_images(lighting_condition=None, force_capture=False):
             logger.info(f"Capturing base image for {camera_name}...")
             
             try:
-                # Clear old base images for this camera and lighting condition
-                if os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true':
-                    clear_old_base_images(camera_name, lighting_condition)
-                
                 # Capture new image
                 new_image = capture_real_image(config["roi"])
                 

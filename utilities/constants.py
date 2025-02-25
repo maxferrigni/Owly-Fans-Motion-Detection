@@ -24,6 +24,7 @@ UTILITIES_DIR = os.path.join(GIT_DIR, "utilities")
 BASE_IMAGES_DIR = os.path.join(LOCAL_FILES_DIR, "base_images")
 IMAGE_COMPARISONS_DIR = os.path.join(LOCAL_FILES_DIR, "image_comparisons")
 LOGS_DIR = os.path.join(LOCAL_FILES_DIR, "logs")
+SAVED_IMAGES_DIR = os.path.join(LOGS_DIR, "saved_images")  # New folder for saved images when local saving is enabled
 
 # Input config files
 INPUT_CONFIG_FILES = {
@@ -38,11 +39,35 @@ CAMERA_MAPPINGS = {
     "Wyze Internal Camera": "Owl In Box"
 }
 
-# Camera-specific comparison image paths (using standardized naming)
-COMPARISON_IMAGE_PATHS = {
-    "Owl In Box": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_box_comparison.jpg"),
-    "Owl On Box": os.path.join(IMAGE_COMPARISONS_DIR, "owl_on_box_comparison.jpg"),
-    "Owl In Area": os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_area_comparison.jpg")
+# Fixed filenames for the limited number of images we keep
+BASE_IMAGE_FILENAMES = {
+    "day": {
+        "Bindy Patio Camera": "bindy_patio_camera_day_base.jpg",
+        "Upper Patio Camera": "upper_patio_camera_day_base.jpg",
+        "Wyze Internal Camera": "wyze_internal_camera_day_base.jpg"
+    },
+    "civil_twilight": {
+        "Bindy Patio Camera": "bindy_patio_camera_civil_twilight_base.jpg",
+        "Upper Patio Camera": "upper_patio_camera_civil_twilight_base.jpg",
+        "Wyze Internal Camera": "wyze_internal_camera_civil_twilight_base.jpg"
+    },
+    "astronomical_twilight": {
+        "Bindy Patio Camera": "bindy_patio_camera_astronomical_twilight_base.jpg",
+        "Upper Patio Camera": "upper_patio_camera_astronomical_twilight_base.jpg",
+        "Wyze Internal Camera": "wyze_internal_camera_astronomical_twilight_base.jpg"
+    },
+    "night": {
+        "Bindy Patio Camera": "bindy_patio_camera_night_base.jpg",
+        "Upper Patio Camera": "upper_patio_camera_night_base.jpg",
+        "Wyze Internal Camera": "wyze_internal_camera_night_base.jpg"
+    }
+}
+
+# Fixed filenames for comparison images
+COMPARISON_IMAGE_FILENAMES = {
+    "Owl In Box": "owl_in_box_comparison.jpg",
+    "Owl On Box": "owl_on_box_comparison.jpg",
+    "Owl In Area": "owl_in_area_comparison.jpg"
 }
 
 # Supabase storage buckets
@@ -58,7 +83,7 @@ def get_comparison_image_path(camera_name, temp=False, timestamp=None):
     Args:
         camera_name (str): Name of the camera
         temp (bool): Deprecated, kept for backwards compatibility
-        timestamp (datetime, optional): Timestamp for unique filenames
+        timestamp (datetime, optional): Timestamp for unique filenames in saved_images
         
     Returns:
         str: Path to the comparison image
@@ -67,48 +92,66 @@ def get_comparison_image_path(camera_name, temp=False, timestamp=None):
     if not alert_type:
         raise ValueError(f"No camera mapping found for: {camera_name}")
     
-    # Generate filename with timestamp
-    alert_type_clean = alert_type.lower().replace(" ", "_")
-    if timestamp:
-        ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
-        filename = f"{alert_type_clean}_{ts_str}_comparison.jpg"
-    else:
-        filename = f"{alert_type_clean}_comparison.jpg"
+    # Always use the fixed filename for the main comparison image
+    filename = COMPARISON_IMAGE_FILENAMES[alert_type]
     
-    # Always use the main image comparison directory
+    # Return standard path
     return os.path.join(IMAGE_COMPARISONS_DIR, filename)
 
-def get_base_image_path(camera_name, lighting_condition, temp=False):
+def get_saved_image_path(camera_name, image_type, timestamp=None):
     """
-    Get the base image directory path based on camera and lighting condition.
+    Get path for saving a copy of an image to the logs folder when local saving is enabled.
+    
+    Args:
+        camera_name (str): Name of the camera
+        image_type (str): Type of image ("base" or "comparison")
+        timestamp (datetime, optional): Timestamp for unique filename
+        
+    Returns:
+        str: Path for saved image
+    """
+    # Make sure we have a timestamp
+    if not timestamp:
+        timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
+    
+    # Format camera name and create a timestamp
+    camera_name_clean = camera_name.lower().replace(' ', '_')
+    ts_str = timestamp.strftime('%Y%m%d_%H%M%S')
+    
+    # Create a more descriptive filename
+    if image_type == "base":
+        filename = f"{camera_name_clean}_base_{ts_str}.jpg"
+    else:
+        alert_type = CAMERA_MAPPINGS.get(camera_name, "unknown").lower().replace(' ', '_')
+        filename = f"{camera_name_clean}_{alert_type}_{ts_str}.jpg"
+    
+    # Ensure directory exists
+    os.makedirs(SAVED_IMAGES_DIR, exist_ok=True)
+    
+    # Return the full path
+    return os.path.join(SAVED_IMAGES_DIR, filename)
+
+def get_base_image_path(camera_name, lighting_condition):
+    """
+    Get the path for a base image based on camera and lighting condition.
+    Uses fixed filenames to limit the number of base images.
     
     Args:
         camera_name (str): Name of the camera
         lighting_condition (str): Lighting condition (day, civil_twilight, etc.)
-        temp (bool): Deprecated, kept for backwards compatibility
         
     Returns:
-        str: Directory path for storing base images
+        str: Path for the base image
     """
-    return BASE_IMAGES_DIR
-
-def get_base_image_filename(camera_name, lighting_condition, timestamp=None):
-    """
-    Generate standardized filename for base images.
+    # Get the fixed filename for this camera and lighting condition
+    if lighting_condition in BASE_IMAGE_FILENAMES and camera_name in BASE_IMAGE_FILENAMES[lighting_condition]:
+        filename = BASE_IMAGE_FILENAMES[lighting_condition][camera_name]
+    else:
+        # Fallback to a default pattern if not found
+        camera_name_clean = camera_name.lower().replace(' ', '_')
+        filename = f"{camera_name_clean}_{lighting_condition}_base.jpg"
     
-    Args:
-        camera_name (str): Name of the camera
-        lighting_condition (str): Current lighting condition
-        timestamp (datetime, optional): Timestamp to use, defaults to current time
-        
-    Returns:
-        str: Standardized filename for base image
-    """
-    if not timestamp:
-        timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
-        
-    camera_name_clean = camera_name.lower().replace(" ", "_")
-    return f"{camera_name_clean}_{lighting_condition}_base_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
+    return os.path.join(BASE_IMAGES_DIR, filename)
 
 def ensure_directories_exist():
     """Create all necessary directories if they don't exist"""
@@ -116,7 +159,8 @@ def ensure_directories_exist():
         LOCAL_FILES_DIR,
         BASE_IMAGES_DIR,
         IMAGE_COMPARISONS_DIR,
-        LOGS_DIR
+        LOGS_DIR,
+        SAVED_IMAGES_DIR
     ]
 
     for directory in directories:
@@ -126,35 +170,6 @@ def ensure_directories_exist():
         except Exception as e:
             logging.error(f"Failed to create directory {directory}: {e}")
             raise
-
-def cleanup_temp_files(older_than_days=1):
-    """
-    Clean up temporary files if they exist.
-    
-    Args:
-        older_than_days (int): Remove files older than this many days
-    """
-    try:
-        import time
-        from datetime import timedelta
-        
-        # Current time minus days
-        cutoff_time = time.time() - (older_than_days * 86400)
-        
-        # Only clean base images above the threshold
-        if os.path.exists(BASE_IMAGES_DIR):
-            for name in os.listdir(BASE_IMAGES_DIR):
-                if name.startswith("temp_"):
-                    try:
-                        file_path = os.path.join(BASE_IMAGES_DIR, name)
-                        # Check file age
-                        if os.path.getctime(file_path) < cutoff_time:
-                            os.remove(file_path)
-                            logging.debug(f"Removed temporary file: {name}")
-                    except Exception as e:
-                        logging.error(f"Failed to remove temporary file {name}: {e}")
-    except Exception as e:
-        logging.error(f"Error during temporary file cleanup: {e}")
 
 def validate_config_files():
     """
@@ -223,4 +238,3 @@ def validate_system():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     validate_system()
-    cleanup_temp_files()
