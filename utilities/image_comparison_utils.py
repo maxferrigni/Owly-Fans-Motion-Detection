@@ -9,7 +9,14 @@ import logging
 from datetime import datetime
 import pytz
 from utilities.logging_utils import get_logger
-from utilities.constants import IMAGE_COMPARISONS_DIR, CAMERA_MAPPINGS, get_comparison_image_path, get_saved_image_path, COMPARISON_IMAGE_FILENAMES
+from utilities.constants import (
+    BASE_IMAGES_DIR, 
+    IMAGE_COMPARISONS_DIR, 
+    CAMERA_MAPPINGS, 
+    get_comparison_image_path, 
+    get_saved_image_path,
+    COMPARISON_IMAGE_FILENAMES
+)
 
 # Initialize logger
 logger = get_logger()
@@ -239,6 +246,54 @@ def add_status_overlay(image, metrics, threshold, is_test=False):
         logger.error(f"Error adding status overlay: {e}")
         raise
 
+def save_local_image_set(base_image, new_image, comparison_image, camera_name, timestamp):
+    """
+    Save a complete set of images (base, new, comparison) locally with matching timestamps.
+    
+    Args:
+        base_image (PIL.Image): The base reference image
+        new_image (PIL.Image): The newly captured image
+        comparison_image (PIL.Image): The 3-panel comparison image
+        camera_name (str): Name of the camera
+        timestamp (datetime): Timestamp to use for all three images
+    """
+    try:
+        from utilities.constants import SAVED_IMAGES_DIR
+        
+        # Ensure the directory exists
+        os.makedirs(SAVED_IMAGES_DIR, exist_ok=True)
+        
+        # Format camera name and timestamp
+        camera_name_clean = camera_name.lower().replace(' ', '_')
+        ts_str = timestamp.strftime('%Y%m%d_%H%M%S')
+        
+        # Create filenames for all three images with matching timestamps
+        base_filename = f"{camera_name_clean}_base_{ts_str}.jpg"
+        new_filename = f"{camera_name_clean}_new_{ts_str}.jpg"
+        comparison_filename = f"{camera_name_clean}_comparison_{ts_str}.jpg"
+        
+        # Create full paths
+        base_path = os.path.join(SAVED_IMAGES_DIR, base_filename)
+        new_path = os.path.join(SAVED_IMAGES_DIR, new_filename)
+        comparison_path = os.path.join(SAVED_IMAGES_DIR, comparison_filename)
+        
+        # Save all three images
+        base_image.save(base_path, quality=95)
+        new_image.save(new_path, quality=95)
+        comparison_image.save(comparison_path, quality=95)
+        
+        logger.info(f"Saved complete image set for {camera_name} with timestamp {ts_str}")
+        
+        return {
+            "base_path": base_path,
+            "new_path": new_path,
+            "comparison_path": comparison_path
+        }
+        
+    except Exception as e:
+        logger.error(f"Error saving local image set: {e}")
+        return None
+
 def create_comparison_image(base_image, new_image, camera_name, threshold, config, is_test=False, timestamp=None):
     """Create enhanced three-panel comparison image."""
     try:
@@ -301,15 +356,25 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         # Save the comparison image to the fixed location
         comparison.save(comparison_path, quality=95)
         
-        # Check if motion was detected and local saving is enabled
+        # Determine if motion was detected
         motion_detected = change_metrics['pixel_change_ratio'] > 0.05
+        
+        # Check if local saving is enabled
         local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
         
-        # If motion detected and local saving enabled, save a copy to logs
-        if motion_detected and local_saving:
-            saved_path = get_saved_image_path(camera_name, "comparison", timestamp)
-            comparison.save(saved_path, quality=95)
-            logger.info(f"Motion detected - saved copy to logs: {saved_path}")
+        # If local saving is enabled, save a complete set of images 
+        # (base, new, comparison) with the same timestamp
+        if local_saving:
+            saved_paths = save_local_image_set(
+                base_image, 
+                new_image, 
+                comparison,
+                camera_name,
+                timestamp
+            )
+            
+            if motion_detected:
+                logger.info(f"Motion detected in saved image set for {camera_name}")
         
         logger.info(
             f"Created comparison image for {camera_name}. "
