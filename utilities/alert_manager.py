@@ -1,5 +1,5 @@
 # File: utilities/alert_manager.py
-# Purpose: Manage owl detection alerts with hierarchy and timing rules
+# Purpose: Manage owl detection alerts with hierarchy, timing rules, and confidence-based decisions
 
 from datetime import datetime, timedelta
 import pytz
@@ -55,6 +55,10 @@ class AlertManager:
 
         # Default alert delay in minutes
         self.alert_delay = 30
+        
+        # Default confidence thresholds
+        self.DEFAULT_CONFIDENCE_THRESHOLD = 60.0  # 60% confidence required for alerts
+        self.DEFAULT_CONSECUTIVE_FRAMES_THRESHOLD = 2  # At least 2 consecutive frames required
 
     def set_alert_delay(self, minutes):
         """Set the minimum time between alerts in minutes"""
@@ -87,7 +91,7 @@ class AlertManager:
                     return True
         return False
 
-    def _send_alert(self, camera_name, alert_type, activity_log_id=None):
+    def _send_alert(self, camera_name, alert_type, activity_log_id=None, confidence_info=None):
         """
         Send alerts based on alert type and cooldown period.
         
@@ -95,6 +99,7 @@ class AlertManager:
             camera_name (str): Name of the camera that triggered the alert
             alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
             activity_log_id (int, optional): ID of the corresponding activity log entry
+            confidence_info (dict, optional): Confidence information for this alert
 
         Returns:
             bool: True if alert was sent, False otherwise
@@ -106,7 +111,7 @@ class AlertManager:
             )
 
             if is_eligible:
-                # Create a new alert entry in the database
+                # Create a new alert entry in the database with confidence information
                 alert_entry = create_alert_entry(alert_type, activity_log_id)
 
                 if alert_entry:
@@ -114,77 +119,58 @@ class AlertManager:
                     send_email_alert(camera_name, alert_type)
                     send_text_alert(camera_name, alert_type)
 
-                    # Update alert status with notification counts
+                    # Get subscriber counts for updating alert status
+                    email_subscribers = len(get_subscribers(notification_type="email", owl_location=alert_type))
+                    sms_subscribers = len(get_subscribers(notification_type="sms", owl_location=alert_type))
+                    
+                    # Additional info for alert status update
+                    additional_info = {}
+                    
+                    # Add confidence data if available
+                    if confidence_info:
+                        additional_info["owl_confidence_score"] = confidence_info.get("owl_confidence", 0.0)
+                        additional_info["consecutive_owl_frames"] = confidence_info.get("consecutive_owl_frames", 0)
+                        
+                        # Convert confidence factors to a string representation for logging
+                        confidence_factors = confidence_info.get("confidence_factors", {})
+                        if confidence_factors:
+                            factor_str = ", ".join([f"{k}: {v:.1f}%" for k, v in confidence_factors.items()])
+                            additional_info["confidence_breakdown"] = factor_str
+
+                    # Update alert status with notification counts and confidence info
                     update_alert_status(
                         alert_id=alert_entry['id'],
-                        email_count=len(get_subscribers(notification_type="email", owl_location=alert_type)),
-                        sms_count=len(get_subscribers(notification_type="sms", owl_location=alert_type))
+                        email_count=email_subscribers,
+                        sms_count=sms_subscribers,
+                        **additional_info
                     )
 
                     # Update last alert time
                     self.last_alert_times[alert_type] = datetime.now(pytz.utc)
                     self.active_alerts[alert_type] = time.time()
+                    
+                    # Log with confidence information if available
+                    if confidence_info:
+                        logger.info(
+                            f"Alert sent: {alert_type} from {camera_name} "
+                            f"with {confidence_info.get('owl_confidence', 0.0):.1f}% confidence "
+                            f"({confidence_info.get('consecutive_owl_frames', 0)} consecutive frames)"
+                        )
+                    else:
+                        logger.info(f"Alert sent: {alert_type} from {camera_name}")
 
                     return True
                 else:
                     logger.error(f"Failed to create alert entry for {alert_type}")
                     return False
             else:
-                logger.info(f"Alert for {alert_type} blocked by cooldown")
+                cooldown_mins = self.COOLDOWN_PERIODS[alert_type]
+                logger.info(f"Alert for {alert_type} blocked by {cooldown_mins} minute cooldown")
                 return False
 
         except Exception as e:
             logger.error(f"Error sending alert for {alert_type}: {e}")
             return False
-
-    def process_detection(self, camera_name, detection_result, activity_log_id=None):
-        """
-        Process detection results and send alerts based on hierarchy and cooldown.
-        
-        Args:
-            camera_name (str): Name of the camera that triggered the detection
-            detection_result (dict): Dictionary containing detection results
-            activity_log_id (int, optional): ID of the corresponding owl_activity_log entry
-
-        Returns:
-            bool: True if an alert was sent, False otherwise
-        """
-        alert_sent = False
-        alert_type = detection_result["status"]
-
-        # Check if the alert type is valid
-        if alert_type not in self.ALERT_HIERARCHY:
-            logger.warning(f"Invalid alert type: {alert_type}")
-            return False
-
-        # Check if motion was detected
-        if not detection_result.get("motion_detected", False):
-            logger.debug(f"No motion detected for {alert_type}, skipping alert")
-            return False
-
-        # Check alert hierarchy
-        priority = self.ALERT_HIERARCHY[alert_type]
-        if not self._check_alert_hierarchy(alert_type, priority):
-            # Check cooldown period
-            is_eligible, last_alert = check_alert_eligibility(
-                alert_type, self.COOLDOWN_PERIODS[alert_type]
-            )
-
-            if is_eligible:
-                # Determine which alert to send based on hierarchy
-                if alert_type == "Owl In Box":
-                    # Always send owl in box alert
-                    alert_sent = self._send_alert(camera_name, "Owl In Box", activity_log_id)
-                elif alert_type == "Owl On Box" and not self._is_higher_alert_active("Owl In Box"):
-                    # Send owl on box alert if no active owl in box alert
-                    alert_sent = self._send_alert(camera_name, "Owl On Box", activity_log_id)
-                elif (alert_type == "Owl In Area" and 
-                      not self._is_higher_alert_active("Owl On Box") and 
-                      not self._is_higher_alert_active("Owl In Box")):
-                    # If owl is in area and not on/in box, send area alert
-                    alert_sent = self._send_alert(camera_name, "Owl In Area", activity_log_id)
-
-        return alert_sent
 
     def _is_higher_alert_active(self, alert_type):
         """Check if any higher priority alerts are currently active."""
@@ -196,6 +182,124 @@ class AlertManager:
                 current_time - timestamp < 300):  # 5 minute window
                 return True
         return False
+
+    def _check_confidence_requirements(self, detection_result, camera_name, config=None):
+        """
+        Check if detection meets confidence requirements for alert.
+        
+        Args:
+            detection_result (dict): Detection results with confidence info
+            camera_name (str): Camera name
+            config (dict, optional): Camera configuration
+            
+        Returns:
+            bool: True if confidence is sufficient, False otherwise
+        """
+        try:
+            # Get confidence values from detection
+            owl_confidence = detection_result.get("owl_confidence", 0.0)
+            consecutive_frames = detection_result.get("consecutive_owl_frames", 0)
+            
+            # Get thresholds from config or use defaults
+            confidence_threshold = self.DEFAULT_CONFIDENCE_THRESHOLD
+            frames_threshold = self.DEFAULT_CONSECUTIVE_FRAMES_THRESHOLD
+            
+            if config:
+                confidence_threshold = config.get("owl_confidence_threshold", confidence_threshold)
+                frames_threshold = config.get("consecutive_frames_threshold", frames_threshold)
+            
+            # Check if confidence and frames meet requirements
+            if owl_confidence < confidence_threshold:
+                logger.debug(
+                    f"Alert blocked - Confidence too low: {owl_confidence:.1f}% < {confidence_threshold}% "
+                    f"for {camera_name}"
+                )
+                return False
+                
+            if consecutive_frames < frames_threshold:
+                logger.debug(
+                    f"Alert blocked - Too few consecutive frames: {consecutive_frames} < {frames_threshold} "
+                    f"for {camera_name}"
+                )
+                return False
+                
+            logger.info(
+                f"Alert confidence requirements met: {owl_confidence:.1f}% confidence, "
+                f"{consecutive_frames} consecutive frames"
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking confidence requirements: {e}")
+            return False
+
+    def process_detection(self, camera_name, detection_result, activity_log_id=None):
+        """
+        Process detection results and send alerts based on hierarchy, cooldown, and confidence.
+        
+        Args:
+            camera_name (str): Name of the camera that triggered the detection
+            detection_result (dict): Dictionary containing detection results
+            activity_log_id (int, optional): ID of the corresponding owl_activity_log entry
+
+        Returns:
+            bool: True if an alert was sent, False otherwise
+        """
+        alert_sent = False
+        alert_type = detection_result.get("status")
+
+        # Check if the alert type is valid
+        if alert_type not in self.ALERT_HIERARCHY:
+            logger.warning(f"Invalid alert type: {alert_type}")
+            return False
+
+        # Check if owl is present (according to detection result)
+        if not detection_result.get("is_owl_present", False) and not detection_result.get("motion_detected", False):
+            logger.debug(f"No owl detected for {alert_type}, skipping alert")
+            return False
+            
+        # Extract confidence information
+        confidence_info = {
+            "owl_confidence": detection_result.get("owl_confidence", 0.0),
+            "consecutive_owl_frames": detection_result.get("consecutive_owl_frames", 0),
+            "confidence_factors": detection_result.get("confidence_factors", {})
+        }
+        
+        # Check confidence requirements
+        if not self._check_confidence_requirements(detection_result, camera_name):
+            return False
+
+        # Check alert hierarchy
+        priority = self.ALERT_HIERARCHY[alert_type]
+        if self._check_alert_hierarchy(alert_type, priority):
+            logger.info(f"Alert {alert_type} suppressed by higher priority alert")
+            return False
+            
+        # Check cooldown period
+        is_eligible, last_alert = check_alert_eligibility(
+            alert_type, self.COOLDOWN_PERIODS[alert_type]
+        )
+
+        if not is_eligible:
+            logger.debug(f"Alert {alert_type} blocked by cooldown period")
+            return False
+
+        # Determine which alert to send based on hierarchy
+        if alert_type == "Owl In Box":
+            # Always send owl in box alert if it passes confidence check
+            alert_sent = self._send_alert(camera_name, "Owl In Box", activity_log_id, confidence_info)
+            
+        elif alert_type == "Owl On Box" and not self._is_higher_alert_active("Owl In Box"):
+            # Send owl on box alert if no active owl in box alert
+            alert_sent = self._send_alert(camera_name, "Owl On Box", activity_log_id, confidence_info)
+            
+        elif (alert_type == "Owl In Area" and 
+                not self._is_higher_alert_active("Owl On Box") and 
+                not self._is_higher_alert_active("Owl In Box")):
+            # If owl is in area and not on/in box, send area alert
+            alert_sent = self._send_alert(camera_name, "Owl In Area", activity_log_id, confidence_info)
+
+        return alert_sent
 
     def get_alert_status(self):
         """Get current alert status for logging/debugging"""
@@ -210,7 +314,11 @@ class AlertManager:
                 for k, v in self.active_alerts.items()
             },
             "alert_delay": self.alert_delay,
-            "alert_hierarchy": self.ALERT_HIERARCHY.copy()
+            "alert_hierarchy": self.ALERT_HIERARCHY.copy(),
+            "confidence_thresholds": {
+                "default_confidence": self.DEFAULT_CONFIDENCE_THRESHOLD,
+                "default_consecutive_frames": self.DEFAULT_CONSECUTIVE_FRAMES_THRESHOLD
+            }
         }
 
 
@@ -220,12 +328,21 @@ if __name__ == "__main__":
         logger.info("Testing alert manager...")
         alert_manager = AlertManager()
 
-        # Test detection processing
+        # Test detection processing with confidence
         test_detection = {
             "status": "Owl In Box",
             "motion_detected": True,
+            "is_owl_present": True,
             "pixel_change": 25.5,
-            "luminance_change": 30.2
+            "luminance_change": 30.2,
+            "owl_confidence": 85.5,  # High confidence
+            "consecutive_owl_frames": 3,  # Multiple consecutive frames
+            "confidence_factors": {
+                "shape_confidence": 35.0,
+                "motion_confidence": 30.5,
+                "temporal_confidence": 15.0,
+                "camera_confidence": 5.0
+            }
         }
 
         # Process test detection
@@ -236,6 +353,31 @@ if __name__ == "__main__":
         )
 
         logger.info(f"Test detection processed: Alert sent = {result}")
+        
+        # Test with low confidence
+        test_detection_low_conf = {
+            "status": "Owl In Box",
+            "motion_detected": True,
+            "is_owl_present": True,
+            "pixel_change": 25.5,
+            "luminance_change": 30.2,
+            "owl_confidence": 45.5,  # Below threshold
+            "consecutive_owl_frames": 1,  # Too few frames
+            "confidence_factors": {
+                "shape_confidence": 15.0,
+                "motion_confidence": 20.5,
+                "temporal_confidence": 5.0,
+                "camera_confidence": 5.0
+            }
+        }
+        
+        result_low_conf = alert_manager.process_detection(
+            camera_name="Test Camera",
+            detection_result=test_detection_low_conf,
+            activity_log_id=2  # Test ID
+        )
+        
+        logger.info(f"Low confidence test: Alert sent = {result_low_conf}")
         logger.info("Alert manager test complete")
 
     except Exception as e:

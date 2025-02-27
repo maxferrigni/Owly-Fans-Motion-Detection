@@ -1,5 +1,5 @@
 # File: utilities/image_comparison_utils.py
-# Purpose: Generate and handle three-panel comparison images with enhanced metrics
+# Purpose: Generate and handle three-panel comparison images with enhanced metrics and confidence display
 
 import os
 import cv2
@@ -235,19 +235,44 @@ def create_difference_visualization(base_image, new_image, threshold, config):
         logger.error(f"Error creating difference visualization: {e}")
         raise
 
-def add_status_overlay(image, metrics, threshold, is_owl_detected=False, is_test=False):
-    """Add enhanced status and metrics overlay with owl-specific language."""
+def add_status_overlay(image, metrics, threshold, detection_info=None, is_test=False):
+    """
+    Add enhanced status and metrics overlay with owl confidence.
+    
+    Args:
+        image (PIL.Image): Image to add overlay to
+        metrics (dict): Metrics dictionary
+        threshold (int): Threshold value used
+        detection_info (dict): Detection info including owl confidence
+        is_test (bool): Whether this is a test image
+        
+    Returns:
+        PIL.Image: Image with overlay added
+    """
     try:
         # Create copy to avoid modifying original
         img_with_text = image.copy()
         draw = ImageDraw.Draw(img_with_text)
         
-        # Determine detection status
+        # Get confidence from detection info
+        owl_confidence = 0.0
+        consecutive_frames = 0
+        confidence_factors = {}
+        
+        if detection_info:
+            owl_confidence = detection_info.get("owl_confidence", 0.0)
+            consecutive_frames = detection_info.get("consecutive_owl_frames", 0)
+            confidence_factors = detection_info.get("confidence_factors", {})
+            is_owl_detected = detection_info.get("is_owl_present", False)
+        else:
+            is_owl_detected = False
+        
+        # Determine detection status with confidence
         if is_owl_detected:
-            status_text = "OWL DETECTED"
+            status_text = f"OWL DETECTED ({owl_confidence:.1f}%)"
             status_color = "red"
         else:
-            status_text = "NO OWL DETECTED"
+            status_text = f"NO OWL DETECTED ({owl_confidence:.1f}%)"
             status_color = "green"
             
         if is_test:
@@ -266,23 +291,44 @@ def add_status_overlay(image, metrics, threshold, is_owl_detected=False, is_test
             f"Pixel Change: {metrics['pixel_change_ratio']*100:.1f}%",
             f"Mean Luminance: {metrics['mean_luminance']:.1f}",
             f"Max Luminance: {metrics['max_luminance']:.1f}",
-            f"Threshold: {metrics['threshold_used']}",
-            "",
-            "Region Analysis:",
-            f"Top: {metrics['region_metrics']['top']['mean_luminance']:.1f}",
-            f"Middle: {metrics['region_metrics']['middle']['mean_luminance']:.1f}",
-            f"Bottom: {metrics['region_metrics']['bottom']['mean_luminance']:.1f}"
+            f"Threshold: {metrics['threshold_used']}"
         ]
         
         for text in metrics_text:
             draw.text((x, y), text, fill="yellow")
             y += line_height
+        
+        # Add empty line
+        y += line_height
+        
+        # Draw region analysis
+        draw.text((x, y), "Region Analysis:", fill="yellow")
+        y += line_height
+        
+        for region, values in metrics['region_metrics'].items():
+            draw.text((x, y), f"{region.capitalize()}: {values['mean_luminance']:.1f}", fill="yellow")
+            y += line_height
+            
+        # Add confidence breakdown if available
+        if confidence_factors:
+            # Add empty line
+            y += line_height
+            
+            draw.text((x, y), "Confidence Breakdown:", fill="yellow")
+            y += line_height
+            
+            for factor, value in confidence_factors.items():
+                draw.text((x, y), f"{factor.replace('_', ' ').capitalize()}: {value:.1f}%", fill="yellow")
+                y += line_height
+                
+            # Add consecutive frames info
+            draw.text((x, y), f"Consecutive Frames: {consecutive_frames}", fill="yellow")
             
         return img_with_text
         
     except Exception as e:
         logger.error(f"Error adding status overlay: {e}")
-        raise
+        return image  # Return original if overlay fails
 
 def save_local_image_set(base_image, new_image, comparison_image, camera_name, timestamp):
     """
@@ -332,8 +378,23 @@ def save_local_image_set(base_image, new_image, comparison_image, camera_name, t
         logger.error(f"Error saving local image set: {e}")
         return None
 
-def create_comparison_image(base_image, new_image, camera_name, threshold, config, is_test=False, timestamp=None):
-    """Create enhanced three-panel comparison image with owl-specific detection."""
+def create_comparison_image(base_image, new_image, camera_name, threshold, config, detection_info=None, is_test=False, timestamp=None):
+    """
+    Create enhanced three-panel comparison image with owl-specific detection and confidence display.
+    
+    Args:
+        base_image (PIL.Image): Base reference image
+        new_image (PIL.Image): New image to check
+        camera_name (str): Name of the camera
+        threshold (int): Threshold value
+        config (dict): Camera configuration
+        detection_info (dict): Detection information including confidence scores
+        is_test (bool): Whether this is a test image
+        timestamp (datetime): Timestamp for image
+        
+    Returns:
+        str: Path to saved comparison image
+    """
     try:
         # Validate images
         is_valid, message = validate_comparison_images(base_image, new_image)
@@ -344,7 +405,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         width, height = base_image.size
         
         # Create visualization
-        diff_image, binary_mask, is_owl_detected = create_difference_visualization(
+        diff_image, binary_mask, contains_owl_shapes = create_difference_visualization(
             base_image,
             new_image,
             threshold,
@@ -359,16 +420,15 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         change_metrics.update({
             'motion_characteristics': motion_chars,
             'camera_name': camera_name,
-            'is_test': is_test,
-            'is_owl_detected': is_owl_detected  # Add flag for owl detection
+            'is_test': is_test
         })
         
-        # Add overlay
+        # Add overlay with confidence information
         diff_with_overlay = add_status_overlay(
             diff_image,
             change_metrics,
             threshold,
-            is_owl_detected=is_owl_detected,
+            detection_info=detection_info,
             is_test=is_test
         )
         
@@ -377,11 +437,6 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         comparison.paste(base_image, (0, 0))
         comparison.paste(new_image, (width, 0))
         comparison.paste(diff_with_overlay, (width * 2, 0))
-        
-        # Get the alert type for this camera
-        alert_type = CAMERA_MAPPINGS.get(camera_name)
-        if not alert_type:
-            alert_type = "Unknown"
         
         # Ensure timestamp is set
         if not timestamp:
@@ -395,9 +450,6 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         
         # Save the comparison image to the fixed location
         comparison.save(comparison_path, quality=95)
-        
-        # Determine if motion was detected - now we use is_owl_detected flag
-        motion_detected = is_owl_detected
         
         # Check if local saving is enabled
         local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
@@ -413,12 +465,13 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
                 timestamp
             )
             
-            if is_owl_detected:
-                logger.info(f"Owl detected in saved image set for {camera_name}")
+        is_owl_detected = detection_info.get("is_owl_present", False) if detection_info else contains_owl_shapes
+        confidence = detection_info.get("owl_confidence", 0.0) if detection_info else 0.0
         
         logger.info(
             f"Created comparison image for {camera_name}. "
-            f"Owl detected: {is_owl_detected} "
+            f"Owl detected: {is_owl_detected}, "
+            f"Confidence: {confidence:.1f}% "
             f"{'(Test Mode)' if is_test else ''}"
         )
         
@@ -445,6 +498,19 @@ if __name__ == "__main__":
             }
         }
         
+        # Test detection info with confidence
+        test_detection_info = {
+            "is_owl_present": True,
+            "owl_confidence": 75.5,
+            "consecutive_owl_frames": 3,
+            "confidence_factors": {
+                "shape_confidence": 30.0,
+                "motion_confidence": 25.5,
+                "temporal_confidence": 15.0,
+                "camera_confidence": 5.0
+            }
+        }
+        
         # Capture test images
         test_roi = (0, 0, 640, 480)
         base = pyautogui.screenshot(region=test_roi)
@@ -457,6 +523,7 @@ if __name__ == "__main__":
             "Test Camera",
             threshold=30,
             config=test_config,
+            detection_info=test_detection_info,
             is_test=True
         )
         

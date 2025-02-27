@@ -1,10 +1,11 @@
 # File: utilities/owl_detection_utils.py
-# Purpose: Specialized detection algorithms for owl presence with enhanced metrics
+# Purpose: Specialized detection algorithms for owl presence with enhanced metrics and confidence scoring
 
 import cv2
 import numpy as np
 from PIL import Image
 from utilities.logging_utils import get_logger
+from utilities.confidence_utils import calculate_owl_confidence, is_owl_detected
 
 logger = get_logger()
 
@@ -44,17 +45,19 @@ def validate_images(new_image, base_image, expected_roi=None, is_test=False):
         logger.error(f"Error validating images: {e}")
         return False, f"Validation error: {str(e)}"
 
-def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=1.0):
+def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=1.0, camera_name=None):
     """
     Detect the presence of an owl in the new image compared to the base image.
-
+    Now includes confidence-based detection system.
+    
     Args:
         new_image (PIL.Image): New image to check for owl.
         base_image (PIL.Image): Base reference image.
         config (dict): Configuration dictionary.
         is_test (bool): Whether this is a test image.
         sensitivity (float): Owl detection sensitivity.
-
+        camera_name (str): Name of the camera (needed for temporal confidence)
+        
     Returns:
         tuple: (bool, dict) - (is_owl_present, detection_info)
     """
@@ -70,7 +73,14 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
                 "pixel_change": 0.0,
                 "luminance_change": 0.0,
                 "is_test": is_test,
-                "is_owl_detected": False  # Add clear owl detection flag
+                "owl_confidence": 0.0,
+                "consecutive_owl_frames": 0,
+                "confidence_factors": {
+                    "shape_confidence": 0.0,
+                    "motion_confidence": 0.0,
+                    "temporal_confidence": 0.0,
+                    "camera_confidence": 0.0
+                }
             }
 
         logger.info(f"Starting owl detection process (Test Mode: {is_test})")
@@ -167,46 +177,69 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
         std_diff = np.std(full_diff)
         significant_pixels = np.sum(full_diff > threshold) / total_area
 
-        # Determine owl presence based on detected contours and metrics
-        is_owl_present = len(contour_data) > 0
+        # Prepare detection info with metrics for confidence calculation
         owl_candidates = [c for c in contour_data if c["area_ratio"] >= config["motion_detection"]["min_area_ratio"]]
-
-        # Calculate confidence based on number of candidates and their characteristics
-        if owl_candidates:
-            max_area_ratio = max(c["area_ratio"] for c in owl_candidates)
-            max_brightness = max(c["brightness_diff"] for c in owl_candidates)
-            confidence = (max_area_ratio + (max_brightness / 255)) / 2
-        else:
-            confidence = 0.0
+        
+        # Prepare region analysis for confidence calculation
+        height, width = full_diff.shape
+        regions = {
+            'top': full_diff[:height//3, :],
+            'middle': full_diff[height//3:2*height//3, :],
+            'bottom': full_diff[2*height//3:, :]
+        }
+        
+        region_metrics = {}
+        for region_name, region_data in regions.items():
+            region_metrics[region_name] = {
+                'mean_luminance': np.mean(region_data),
+                'pixel_change_ratio': np.sum(region_data > threshold) / region_data.size
+            }
         
         # Prepare detection metrics
         diff_metrics = {
             "mean_difference": mean_diff,
             "std_difference": std_diff,
             "significant_pixels": significant_pixels,
-            "threshold_used": threshold
+            "threshold_used": threshold,
+            "region_metrics": region_metrics
         }
         
-        # Prepare detection info with required fields for motion_workflow.py
+        # Prepare detection info for confidence calculation
         detection_info = {
-            "is_owl_present": is_owl_present,
-            "confidence": confidence,
             "owl_candidates": owl_candidates,
-            "largest_candidate": max(owl_candidates, key=lambda x: x["area_ratio"]) if owl_candidates else None,
-            "is_test": is_test,
-            "sensitivity_used": sensitivity,
             "diff_metrics": diff_metrics,
             "pixel_change": significant_pixels * 100,  # Convert to percentage
             "luminance_change": mean_diff,
-            "motion_detected": is_owl_present,  # Retain for backward compatibility
-            "is_owl_detected": is_owl_present   # Add clear owl detection flag
+            "is_test": is_test
         }
+
+        # Calculate owl confidence
+        if camera_name is None:
+            # If camera name not provided, try to infer from config or use a default
+            camera_name = "Unknown Camera"
+            
+        confidence_results = calculate_owl_confidence(detection_info, camera_name, config)
+        
+        # Determine if owl is present based on confidence
+        is_owl_present = is_owl_detected(
+            confidence_results["owl_confidence"], 
+            camera_name, 
+            config
+        )
+        
+        # Update detection info with confidence results
+        detection_info.update({
+            "is_owl_present": is_owl_present,
+            "motion_detected": is_owl_present,  # For backward compatibility
+            "owl_confidence": confidence_results["owl_confidence"],
+            "consecutive_owl_frames": confidence_results["consecutive_owl_frames"],
+            "confidence_factors": confidence_results["confidence_factors"]
+        })
 
         logger.info(
             f"Owl detection completed - Owl Present: {is_owl_present}, "
-            f"Candidates: {len(owl_candidates)}, "
-            f"Confidence: {confidence:.2f}, "
-            f"Total Shapes: {len(contour_data)}"
+            f"Confidence: {confidence_results['owl_confidence']:.1f}%, "
+            f"Consecutive Frames: {confidence_results['consecutive_owl_frames']}"
         )
 
         return is_owl_present, detection_info
@@ -219,7 +252,16 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             "pixel_change": 0.0,
             "luminance_change": 0.0,
             "motion_detected": False,
-            "is_owl_detected": False  # Add clear owl detection flag
+            "is_owl_present": False,
+            "owl_confidence": 0.0,
+            "consecutive_owl_frames": 0,
+            "confidence_factors": {
+                "shape_confidence": 0.0,
+                "motion_confidence": 0.0,
+                "temporal_confidence": 0.0,
+                "camera_confidence": 0.0,
+                "error": str(e)
+            }
         }
 
 if __name__ == "__main__":
@@ -236,6 +278,7 @@ if __name__ == "__main__":
             },
             "threshold_percentage": 0.05,
             "luminance_threshold": 40,
+            "owl_confidence_threshold": 60
         }
 
         # Load test images if available
@@ -248,11 +291,13 @@ if __name__ == "__main__":
                 test_new,
                 test_base,
                 test_config,
-                is_test=True
+                is_test=True,
+                camera_name="Test Camera"
             )
 
             logger.info(f"Test detection result: {result}")
             logger.info(f"Detection info: {info}")
+            logger.info(f"Confidence: {info.get('owl_confidence', 0)}%")
 
         except FileNotFoundError:
             logger.warning("Test images not found. Create test_new.jpg and test_base.jpg to run tests.")

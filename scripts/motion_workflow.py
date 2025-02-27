@@ -1,5 +1,5 @@
 # File: scripts/motion_workflow.py
-# Purpose: Handle motion detection with adaptive lighting conditions
+# Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
 
 import os
 import time
@@ -25,6 +25,7 @@ from utilities.time_utils import (
 from utilities.owl_detection_utils import detect_owl_in_box
 from utilities.image_comparison_utils import create_comparison_image
 from utilities.alert_manager import AlertManager
+from utilities.confidence_utils import reset_frame_history
 from capture_base_images import capture_base_images, get_latest_base_image
 
 # Import from push_to_supabase
@@ -41,6 +42,9 @@ def initialize_system(camera_configs, is_test=False):
     """Initialize the motion detection system."""
     try:
         logger.info(f"Initializing motion detection system (Test Mode: {is_test})")
+        
+        # Reset frame history at startup
+        reset_frame_history()
         
         # Verify camera configurations
         if not camera_configs:
@@ -78,7 +82,7 @@ def capture_real_image(roi):
         raise
 
 def process_camera(camera_name, config, lighting_info=None, test_images=None):
-    """Process motion detection for a specific camera"""
+    """Process motion detection for a specific camera with confidence-based detection"""
     try:
         logger.info(f"Processing camera: {camera_name} {'(Test Mode)' if test_images else ''}")
         base_image = None
@@ -125,79 +129,69 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 "motion_detected": False,
                 "pixel_change": 0.0,
                 "luminance_change": 0.0,
-                "timestamp": timestamp.isoformat()
+                "timestamp": timestamp.isoformat(),
+                "owl_confidence": 0.0,
+                "consecutive_owl_frames": 0
             }
             
             logger.debug(f"Processing as {alert_type} type camera")
             
-            # Process based on camera type
-            if alert_type == "Owl In Box":
-                is_owl_present, detection_info = detect_owl_in_box(
-                    new_image, 
-                    base_image,
-                    config,
-                    is_test=is_test
-                )
-                
-                # Always create comparison image regardless of owl detection result
-                logger.debug("Creating comparison image for Owl In Box camera")
-                comparison_path = create_comparison_image(
-                    base_image, 
-                    new_image,
-                    camera_name=camera_name,  # Use actual camera name instead of alert type
-                    threshold=config["luminance_threshold"] * threshold_multiplier,
-                    config=config,
-                    is_test=is_test,
-                    timestamp=timestamp
-                )
-                
-                if is_owl_present and detection_info:
-                    detection_results.update({
-                        "status": "Owl In Box",
-                        "motion_detected": True,
-                        "comparison_path": comparison_path,
-                        "pixel_change": float(detection_info.get("pixel_change", 0.0)),
-                        "luminance_change": float(detection_info.get("luminance_change", 0.0))
-                    })
-                else:
-                    # Still update with comparison path even if no owl detected
-                    detection_results.update({
-                        "comparison_path": comparison_path
-                    })
-            else:
-                # For non-owl box cameras
-                comparison_path = create_comparison_image(
-                    base_image, 
-                    new_image,
-                    camera_name=camera_name,  # Use actual camera name instead of alert type
-                    threshold=config["luminance_threshold"] * threshold_multiplier,
-                    config=config,
-                    is_test=is_test,
-                    timestamp=timestamp
-                )
-                
-                if comparison_path:
-                    detection_results.update({
-                        "status": alert_type,
-                        "motion_detected": True,
-                        "comparison_path": comparison_path
-                    })
+            # Run owl detection with confidence calculation
+            is_owl_present, detection_info = detect_owl_in_box(
+                new_image, 
+                base_image,
+                config,
+                is_test=is_test,
+                camera_name=camera_name  # Pass camera name for temporal confidence
+            )
+            
+            # Always create comparison image with confidence data
+            comparison_path = create_comparison_image(
+                base_image, 
+                new_image,
+                camera_name,
+                threshold=config["luminance_threshold"] * threshold_multiplier,
+                config=config,
+                detection_info=detection_info,  # Pass detection info with confidence
+                is_test=is_test,
+                timestamp=timestamp
+            )
+            
+            # Update detection results with detection info
+            detection_results.update({
+                "status": alert_type,
+                "motion_detected": is_owl_present,
+                "is_owl_present": is_owl_present,
+                "owl_confidence": detection_info.get("owl_confidence", 0.0),
+                "consecutive_owl_frames": detection_info.get("consecutive_owl_frames", 0),
+                "confidence_factors": detection_info.get("confidence_factors", {}),
+                "comparison_path": comparison_path,
+                "pixel_change": detection_info.get("pixel_change", 0.0),
+                "luminance_change": detection_info.get("luminance_change", 0.0)
+            })
+            
+            logger.info(
+                f"Detection results for {camera_name}: Owl Present: {is_owl_present}, "
+                f"Confidence: {detection_results['owl_confidence']:.1f}%, "
+                f"Consecutive Frames: {detection_results['consecutive_owl_frames']}"
+            )
 
-            logger.debug(f"Final detection results before formatting: {detection_results}")
-
-            # Format the results just once
+            # Format the results for database
             formatted_results = format_detection_results(detection_results)
             
-            # Only push to Supabase once for this camera
-            log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
-            
-            # Process alert only if we have a successful log entry and motion was detected
-            if log_entry and detection_results.get("motion_detected", False) and not is_test:
-                alert_manager.process_detection(
-                    camera_name,
-                    detection_results,
-                    log_entry.get("id")
-                )
+            # Only push to Supabase if motion was detected or in test mode
+            if is_owl_present or is_test:
+                log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
+                
+                # Process alert only if we have a successful log entry and owl was detected
+                if log_entry and is_owl_present and not is_test:
+                    alert_manager.process_detection(
+                        camera_name,
+                        detection_results,
+                        log_entry.get("id")
+                    )
+            else:
+                logger.debug(f"No owl detected for {camera_name}, skipping database push")
 
             return detection_results
 
@@ -216,6 +210,10 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             "error_message": str(e),
             "is_test": is_test if 'is_test' in locals() else False,
             "motion_detected": False,
+            "is_owl_present": False,
+            "owl_confidence": 0.0,
+            "consecutive_owl_frames": 0,
+            "confidence_factors": {},
             "pixel_change": 0.0,
             "luminance_change": 0.0,
             "timestamp": datetime.now(PACIFIC_TIME).isoformat()
@@ -261,6 +259,10 @@ def process_cameras(camera_configs, test_images=None):
                     "status": "Error",
                     "error_message": str(e),
                     "motion_detected": False,
+                    "is_owl_present": False,
+                    "owl_confidence": 0.0,
+                    "consecutive_owl_frames": 0,
+                    "confidence_factors": {},
                     "timestamp": datetime.now(PACIFIC_TIME).isoformat()
                 })
         

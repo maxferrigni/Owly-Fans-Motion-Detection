@@ -1,5 +1,5 @@
 # File: test_interface.py
-# Purpose: Handle test mode functionality for the Owl Monitoring System
+# Purpose: Handle test mode functionality for the Owl Monitoring System with confidence metrics
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -12,6 +12,7 @@ from utilities.logging_utils import get_logger
 from utilities.constants import CAMERA_MAPPINGS, CONFIGS_DIR
 from utilities.owl_detection_utils import detect_owl_in_box
 from utilities.image_comparison_utils import create_comparison_image
+from utilities.confidence_utils import reset_frame_history
 
 class TestInterface:
     def __init__(self, parent_frame, logger, alert_manager):
@@ -23,13 +24,18 @@ class TestInterface:
         self.base_images = {}  # {camera_type: Image}
         self.test_images = {}  # {camera_type: Image}
         
-        # Create the test interface directly (no test mode toggle needed)
+        # Track test confidence settings
+        self.confidence_threshold_var = tk.DoubleVar(value=60.0)
+        self.consecutive_frames_var = tk.IntVar(value=2)
+        
+        # Create the test interface
         self.create_interface()
         
     def create_interface(self):
         """Create test mode interface elements"""
         # Create main sections
         self.create_image_testing_interface()
+        self.create_confidence_settings_interface()
         self.create_alert_testing_interface()
         self.create_results_display()
         
@@ -80,6 +86,78 @@ class TestInterface:
         self.image_info = ttk.Label(self.image_frame, text="No images loaded")
         self.image_info.pack(pady=5)
 
+    def create_confidence_settings_interface(self):
+        """Create interface for confidence threshold settings"""
+        self.confidence_frame = ttk.LabelFrame(self.parent_frame, text="Confidence Settings")
+        self.confidence_frame.pack(pady=5, fill="x")
+        
+        # Confidence threshold control
+        confidence_frame = ttk.Frame(self.confidence_frame)
+        confidence_frame.pack(pady=5, fill="x")
+        
+        ttk.Label(
+            confidence_frame, 
+            text="Confidence Threshold (%)"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        confidence_scale = ttk.Scale(
+            confidence_frame,
+            from_=0,
+            to=100,
+            variable=self.confidence_threshold_var,
+            orient="horizontal"
+        )
+        confidence_scale.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
+        
+        confidence_entry = ttk.Entry(confidence_frame, width=5)
+        confidence_entry.pack(side=tk.LEFT, padx=5)
+        confidence_entry.insert(0, str(self.confidence_threshold_var.get()))
+        
+        # Update functions for confidence threshold
+        def update_confidence_entry(*args):
+            value = self.confidence_threshold_var.get()
+            confidence_entry.delete(0, tk.END)
+            confidence_entry.insert(0, f"{value:.1f}")
+            
+        def update_confidence_scale(event):
+            try:
+                value = float(confidence_entry.get())
+                if 0 <= value <= 100:
+                    self.confidence_threshold_var.set(value)
+            except ValueError:
+                confidence_entry.delete(0, tk.END)
+                confidence_entry.insert(0, f"{self.confidence_threshold_var.get():.1f}")
+        
+        # Bind updates
+        self.confidence_threshold_var.trace_add("write", update_confidence_entry)
+        confidence_entry.bind('<Return>', update_confidence_scale)
+        confidence_entry.bind('<FocusOut>', update_confidence_scale)
+        
+        # Consecutive frames control
+        frames_frame = ttk.Frame(self.confidence_frame)
+        frames_frame.pack(pady=5, fill="x")
+        
+        ttk.Label(
+            frames_frame, 
+            text="Consecutive Frames"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        frames_spinbox = ttk.Spinbox(
+            frames_frame,
+            from_=1,
+            to=10,
+            textvariable=self.consecutive_frames_var,
+            width=5
+        )
+        frames_spinbox.pack(side=tk.LEFT, padx=5)
+        
+        # Reset button
+        ttk.Button(
+            frames_frame,
+            text="Reset Frame History",
+            command=self.reset_frame_history
+        ).pack(side=tk.RIGHT, padx=5)
+
     def create_alert_testing_interface(self):
         """Create interface for direct alert testing"""
         self.alert_frame = ttk.LabelFrame(self.parent_frame, text="Alert Testing")
@@ -98,13 +176,13 @@ class TestInterface:
             self.alert_buttons[alert_type].pack(side=tk.LEFT, padx=5)
 
     def create_results_display(self):
-        """Create results display area"""
+        """Create results display area with confidence metrics"""
         self.results_frame = ttk.LabelFrame(self.parent_frame, text="Test Results")
         self.results_frame.pack(pady=5, fill="both", expand=True)
         
         self.results_text = tk.Text(
             self.results_frame,
-            height=10,
+            height=15,  # Increased height for additional confidence metrics
             width=60,
             wrap=tk.WORD,
             font=('Consolas', 9)
@@ -117,6 +195,15 @@ class TestInterface:
         if camera:
             config = self.load_camera_config()
             roi = config[camera]['roi']
+            
+            # Update confidence threshold from config if available
+            if "owl_confidence_threshold" in config[camera]:
+                self.confidence_threshold_var.set(config[camera]["owl_confidence_threshold"])
+                
+            # Update consecutive frames threshold from config if available
+            if "consecutive_frames_threshold" in config[camera]:
+                self.consecutive_frames_var.set(config[camera]["consecutive_frames_threshold"])
+                
             self.log_message(f"Selected {camera}\nROI: {roi}")
 
     def load_camera_config(self):
@@ -181,7 +268,7 @@ class TestInterface:
         self.image_info.configure(text=info_text)
 
     def run_detection_test(self):
-        """Run owl detection test with loaded images"""
+        """Run owl detection test with loaded images using confidence metrics"""
         camera = self.camera_var.get()
         if not camera:
             messagebox.showwarning("Warning", "Please select a camera first")
@@ -196,74 +283,89 @@ class TestInterface:
             config = self.load_camera_config()
             camera_config = config[camera]
             
-            # Get alert type
-            alert_type = CAMERA_MAPPINGS[camera]
+            # Add or update confidence thresholds in config
+            camera_config["owl_confidence_threshold"] = self.confidence_threshold_var.get()
+            camera_config["consecutive_frames_threshold"] = self.consecutive_frames_var.get()
             
-            # Process images based on camera type
-            if alert_type == "Owl In Box":
-                is_owl_present, detection_info = detect_owl_in_box(
-                    self.test_images[camera],
-                    self.base_images[camera],
-                    camera_config,
-                    is_test=True
-                )
-                self.display_results(is_owl_present, detection_info)
-                
-            else:
-                # Create comparison image and analyze
-                comparison_path = create_comparison_image(
-                    self.base_images[camera],
-                    self.test_images[camera],
-                    camera_name=camera,
-                    threshold=camera_config["luminance_threshold"],
-                    config=camera_config,
-                    is_test=True
-                )
-                
-                # Analyze comparison image
-                diff_image = Image.open(comparison_path)
-                width = diff_image.size[0] // 3
-                diff_panel = diff_image.crop((width * 2, 0, width * 3, diff_image.height))
-                
-                # Calculate metrics
-                pixels_array = np.array(diff_panel.convert('L'))
-                changed_pixels = np.sum(pixels_array > camera_config["luminance_threshold"])
-                total_pixels = pixels_array.size
-                
-                motion_detected = (changed_pixels / total_pixels) > camera_config["threshold_percentage"]
-                
-                detection_info = {
-                    "pixel_change": changed_pixels / total_pixels * 100,
-                    "luminance_change": np.mean(pixels_array),
-                    "threshold_used": camera_config["luminance_threshold"]
-                }
-                
-                self.display_results(motion_detected, detection_info)
+            # Run the detection with confidence metrics
+            is_owl_present, detection_info = detect_owl_in_box(
+                self.test_images[camera],
+                self.base_images[camera],
+                camera_config,
+                is_test=True,
+                camera_name=camera
+            )
+            
+            # Create confidence-enhanced comparison image
+            create_comparison_image(
+                self.base_images[camera],
+                self.test_images[camera],
+                camera_name=camera,
+                threshold=camera_config["luminance_threshold"],
+                config=camera_config,
+                detection_info=detection_info,
+                is_test=True
+            )
+            
+            # Display results with confidence metrics
+            self.display_results(is_owl_present, detection_info)
                 
         except Exception as e:
             self.logger.error(f"Error running detection test: {e}")
             messagebox.showerror("Error", f"Detection test failed: {e}")
 
     def display_results(self, detection_result, info):
-        """Display detection test results"""
+        """Display detection test results with confidence information"""
         self.results_text.delete(1.0, tk.END)
         
-        result_text = f"Detection Result: {'OWL DETECTED' if detection_result else 'NO OWL DETECTED'}\n\n"
-        result_text += "Detection Metrics:\n"
+        # Extract confidence metrics
+        owl_confidence = info.get("owl_confidence", 0.0)
+        consecutive_frames = info.get("consecutive_owl_frames", 0)
+        confidence_factors = info.get("confidence_factors", {})
+        
+        # Prepare detection summary
+        result_text = f"Detection Result: {'OWL DETECTED' if detection_result else 'NO OWL DETECTED'}\n"
+        result_text += f"Owl Confidence: {owl_confidence:.1f}%\n"
+        result_text += f"Consecutive Frames: {consecutive_frames}\n"
+        
+        # Check if confidence meets threshold
+        threshold = self.confidence_threshold_var.get()
+        frames_threshold = self.consecutive_frames_var.get()
+        
+        if owl_confidence >= threshold and consecutive_frames >= frames_threshold:
+            result_text += "Alert Status: WOULD TRIGGER ALERT\n"
+        else:
+            reasons = []
+            if owl_confidence < threshold:
+                reasons.append(f"confidence too low ({owl_confidence:.1f}% < {threshold}%)")
+            if consecutive_frames < frames_threshold:
+                reasons.append(f"not enough consecutive frames ({consecutive_frames} < {frames_threshold})")
+                
+            reason_text = " and ".join(reasons)
+            result_text += f"Alert Status: WOULD NOT TRIGGER ALERT ({reason_text})\n"
+            
+        result_text += "\nDetection Metrics:\n"
         
         if isinstance(info, dict):
+            # Display standard metrics
             for key, value in info.items():
-                if isinstance(value, (int, float)):
-                    result_text += f"{key}: {value:.2f}\n"
-                elif isinstance(value, list):
-                    result_text += f"{key}: {len(value)} items\n"
-                else:
-                    result_text += f"{key}: {value}\n"
+                if key not in ["confidence_factors", "owl_confidence", "consecutive_owl_frames"]:
+                    if isinstance(value, (int, float)):
+                        result_text += f"{key}: {value:.2f}\n"
+                    elif isinstance(value, list):
+                        result_text += f"{key}: {len(value)} items\n"
+                    elif not isinstance(value, dict):  # Skip nested dictionaries
+                        result_text += f"{key}: {value}\n"
+            
+            # Display confidence factors
+            result_text += "\nConfidence Breakdown:\n"
+            for factor, value in confidence_factors.items():
+                result_text += f"{factor.replace('_', ' ').title()}: {value:.1f}%\n"
         
         self.results_text.insert(1.0, result_text)
 
     def trigger_test_alert(self, alert_type):
-        """Trigger a direct test alert"""
+        """Trigger a direct test alert with confidence metrics"""
         try:
             self.logger.info(f"Triggering test alert: {alert_type}")
             
@@ -274,18 +376,27 @@ class TestInterface:
                 "Test Camera"
             )
             
-            # Create simulated detection result
+            # Get confidence thresholds
+            confidence = self.confidence_threshold_var.get()
+            frames = self.consecutive_frames_var.get()
+            
+            # Create simulated detection result with confidence metrics
             detection_result = {
                 "status": alert_type,
+                "is_owl_present": True,
+                "motion_detected": True,
                 "pixel_change": 50.0,
                 "luminance_change": 40.0,
                 "snapshot_path": "",
                 "lighting_condition": "day",
-                "detection_info": {
-                    "confidence": 0.8,
-                    "is_test": True
-                },
-                "motion_detected": True
+                "owl_confidence": confidence,  # Use UI value
+                "consecutive_owl_frames": frames,  # Use UI value
+                "confidence_factors": {
+                    "shape_confidence": confidence * 0.5,  # Mock values proportional to total
+                    "motion_confidence": confidence * 0.3,
+                    "temporal_confidence": confidence * 0.15,
+                    "camera_confidence": confidence * 0.05
+                }
             }
             
             # Process test alert
@@ -293,13 +404,26 @@ class TestInterface:
             
             # Display result
             result_text = f"Test Alert: {alert_type}\n"
-            result_text += f"Alert Sent: {'Yes' if alert_sent else 'No (blocked by delay)'}"
+            result_text += f"Confidence: {confidence:.1f}%\n"
+            result_text += f"Consecutive Frames: {frames}\n"
+            result_text += f"Alert Sent: {'Yes' if alert_sent else 'No (blocked by rules)'}"
+            
             self.results_text.delete(1.0, tk.END)
             self.results_text.insert(1.0, result_text)
             
         except Exception as e:
             self.logger.error(f"Error triggering test alert: {e}")
             messagebox.showerror("Error", f"Failed to trigger alert: {e}")
+
+    def reset_frame_history(self):
+        """Reset the frame history for testing multiple images"""
+        try:
+            reset_frame_history()
+            self.logger.info("Frame history has been reset")
+            messagebox.showinfo("Reset", "Frame history has been reset successfully")
+        except Exception as e:
+            self.logger.error(f"Error resetting frame history: {e}")
+            messagebox.showerror("Error", f"Failed to reset frame history: {e}")
 
     def log_message(self, message):
         """Log a message to both logger and results display"""

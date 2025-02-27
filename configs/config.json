@@ -4,6 +4,8 @@
         "threshold_percentage": 0.05,
         "luminance_threshold": 40,
         "alert_type": "Owl In Area",
+        "owl_confidence_threshold": 60.0,
+        "consecutive_frames_threshold": 2,
         "lighting_thresholds": {
             "day": 30,
             "civil_twilight": 25,
@@ -23,6 +25,8 @@
         "threshold_percentage": 0.05,
         "luminance_threshold": 35,
         "alert_type": "Owl On Box",
+        "owl_confidence_threshold": 65.0,
+        "consecutive_frames_threshold": 2,
         "lighting_thresholds": {
             "day": 40,
             "civil_twilight": 30,
@@ -42,6 +46,8 @@
         "threshold_percentage": 0.15,
         "luminance_threshold": 10,
         "alert_type": "Owl In Box",
+        "owl_confidence_threshold": 55.0,
+        "consecutive_frames_threshold": 1,
         "lighting_thresholds": {
             "day": 10,
             "civil_twilight": 8,

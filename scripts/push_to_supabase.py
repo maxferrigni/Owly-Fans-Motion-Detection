@@ -1,8 +1,9 @@
 # File: push_to_supabase.py
-# Purpose: Log owl detection data to Supabase database and manage subscribers
+# Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
 
 import os
 import datetime
+import json
 import supabase
 from dotenv import load_dotenv
 
@@ -167,7 +168,10 @@ def update_alert_status(
     email_count=None,
     sms_count=None,
     previous_alert_id=None,
-    priority_override=None
+    priority_override=None,
+    owl_confidence_score=None,
+    consecutive_owl_frames=None,
+    confidence_breakdown=None
 ):
     """
     Update the status of an existing alert entry in Supabase.
@@ -178,6 +182,9 @@ def update_alert_status(
         sms_count (int, optional): Number of SMS notifications sent
         previous_alert_id (int, optional): ID of the previous alert that was overridden
         priority_override (bool, optional): Whether this alert overrides a previous alert
+        owl_confidence_score (float, optional): Confidence score for the owl detection
+        consecutive_owl_frames (int, optional): Number of consecutive frames with owl detection
+        confidence_breakdown (str, optional): String representation of confidence factors
     """
     try:
         # Build update data
@@ -191,6 +198,12 @@ def update_alert_status(
             update_data['previous_alert_id'] = previous_alert_id
         if priority_override is not None:
             update_data['priority_override'] = priority_override
+        if owl_confidence_score is not None:
+            update_data['owl_confidence_score'] = owl_confidence_score
+        if consecutive_owl_frames is not None:
+            update_data['consecutive_owl_frames'] = consecutive_owl_frames
+        if confidence_breakdown is not None:
+            update_data['confidence_breakdown'] = confidence_breakdown
 
         # Only update if we have data
         if update_data:
@@ -206,9 +219,10 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
     """
     Push detection results to the owl_activity_log table in Supabase.
     Checks for duplicates to prevent multiple uploads of the same data.
+    Now includes confidence metrics.
     
     Args:
-        detection_results (dict): Dictionary containing detection results
+        detection_results (dict): Dictionary containing detection results with confidence
         lighting_condition (str, optional): Current lighting condition
         base_image_age (int, optional): Age of base image in seconds
         
@@ -252,14 +266,14 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
             "owl_in_area": False
         }
         
-        # Set the specific alert type to true if motion was detected
-        motion_detected = detection_results.get('motion_detected', False)
+        # Set the specific alert type to true if owl was detected
+        is_owl_present = detection_results.get('is_owl_present', False)
         if field_prefix == "owl_in_box":
-            log_entry["owl_in_box"] = motion_detected
+            log_entry["owl_in_box"] = is_owl_present
         elif field_prefix == "owl_on_box":
-            log_entry["owl_on_box"] = motion_detected
+            log_entry["owl_on_box"] = is_owl_present
         elif field_prefix == "owl_in_area":
-            log_entry["owl_in_area"] = motion_detected
+            log_entry["owl_in_area"] = is_owl_present
         
         # Add metrics specific to this alert type
         pixel_change = float(detection_results.get('pixel_change', 0.0))
@@ -271,6 +285,30 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         # Add image URL if available
         if 'comparison_path' in detection_results:
             log_entry[f"{field_prefix}_image_comparison_url"] = detection_results['comparison_path']
+            
+        # Add confidence metrics
+        owl_confidence = detection_results.get('owl_confidence', 0.0)
+        consecutive_frames = detection_results.get('consecutive_owl_frames', 0)
+        
+        # Add confidence metrics to log entry
+        log_entry["owl_confidence_score"] = owl_confidence
+        log_entry["consecutive_owl_frames"] = consecutive_frames
+        
+        # Format confidence factors for JSONB storage
+        confidence_factors = detection_results.get('confidence_factors', {})
+        if confidence_factors:
+            # Ensure the confidence factors are JSON-serializable
+            try:
+                # Convert to JSON string and back to ensure it's valid
+                json.dumps(confidence_factors)
+                log_entry["confidence_factors"] = confidence_factors
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Could not serialize confidence factors: {e}")
+                # Store a simplified version instead
+                log_entry["confidence_factors"] = {
+                    "error": "Could not serialize original factors",
+                    "owl_confidence": owl_confidence
+                }
         
         # Log the entry for debugging
         logger.debug(f"Prepared log entry for Supabase: {log_entry}")
@@ -279,7 +317,10 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         response = supabase_client.table('owl_activity_log').insert(log_entry).execute()
         
         if response.data and len(response.data) > 0:
-            logger.info(f"Successfully uploaded {alert_type} data to owl_activity_log")
+            logger.info(
+                f"Successfully uploaded {alert_type} data to owl_activity_log "
+                f"with {owl_confidence:.1f}% confidence, {consecutive_frames} consecutive frames"
+            )
             # Store this entry to prevent duplicates
             last_uploaded_entries[entry_key] = response.data[0]
             # Keep only the last 100 entries to prevent memory growth
@@ -300,6 +341,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
 def format_detection_results(detection_result):
     """
     Format detection results into a dictionary suitable for logging to Supabase.
+    Now includes confidence metrics.
     
     Args:
         detection_result (dict): Dictionary containing detection results
@@ -312,14 +354,14 @@ def format_detection_results(detection_result):
         camera = detection_result.get("camera")
         status = detection_result.get("status", "Unknown")
         is_test = detection_result.get("is_test", False)
-        motion_detected = detection_result.get("motion_detected", False)
+        is_owl_present = detection_result.get("is_owl_present", False)
         
         # Ensure numeric metrics are properly formatted
         formatted_entry = {
             "camera": camera,
             "status": status,
             "is_test": is_test,
-            "motion_detected": motion_detected,
+            "is_owl_present": is_owl_present,
             "pixel_change": float(detection_result.get("pixel_change", 0.0)),
             "luminance_change": float(detection_result.get("luminance_change", 0.0)),
             "timestamp": detection_result.get("timestamp")  # Ensure timestamp is preserved
@@ -334,6 +376,11 @@ def format_detection_results(detection_result):
         # Add error message if present
         if "error_message" in detection_result:
             formatted_entry["error_message"] = detection_result["error_message"]
+            
+        # Add confidence metrics
+        formatted_entry["owl_confidence"] = detection_result.get("owl_confidence", 0.0)
+        formatted_entry["consecutive_owl_frames"] = detection_result.get("consecutive_owl_frames", 0)
+        formatted_entry["confidence_factors"] = detection_result.get("confidence_factors", {})
 
         logger.debug(f"Formatted detection results: {formatted_entry}")
         return formatted_entry
@@ -344,13 +391,16 @@ def format_detection_results(detection_result):
             "camera": detection_result.get("camera", "Unknown"),
             "status": "Error",
             "error_message": str(e),
-            "is_test": detection_result.get("is_test", False)
+            "is_test": detection_result.get("is_test", False),
+            "owl_confidence": 0.0,
+            "consecutive_owl_frames": 0,
+            "confidence_factors": {}
         }
 
 if __name__ == "__main__":
     # Test the functionality
     try:
-        logger.info("Testing Supabase logging functionality...")
+        logger.info("Testing Supabase logging functionality with confidence metrics...")
 
         # Test get_subscribers
         email_subscribers = get_subscribers(notification_type="email")
@@ -366,15 +416,24 @@ if __name__ == "__main__":
         else:
             logger.info("No previous Owl In Box alerts found")
 
-        # Test log upload with test data
+        # Test log upload with test data and confidence metrics
         test_detection = {
             "camera": "Test Camera",
             "status": "Owl In Box",
             "is_test": True,
+            "is_owl_present": True,
             "motion_detected": True,
             "pixel_change": 25.5,
             "luminance_change": 30.2,
-            "comparison_path": "https://example.com/test-comparison.jpg"
+            "comparison_path": "https://example.com/test-comparison.jpg",
+            "owl_confidence": 78.5,
+            "consecutive_owl_frames": 3,
+            "confidence_factors": {
+                "shape_confidence": 35.0,
+                "motion_confidence": 25.5,
+                "temporal_confidence": 15.0,
+                "camera_confidence": 3.0
+            }
         }
 
         # Format and send test data
@@ -388,10 +447,12 @@ if __name__ == "__main__":
         if log_entry:
             logger.info("Test log entry created successfully")
             logger.info(f"Log entry ID: {log_entry.get('id')}")
+            logger.info(f"Confidence score: {log_entry.get('owl_confidence_score', 0.0)}")
+            logger.info(f"Consecutive frames: {log_entry.get('consecutive_owl_frames', 0)}")
         else:
             logger.error("Failed to create test log entry")
 
-        logger.info("Supabase logging test complete")
+        logger.info("Supabase logging test with confidence metrics complete")
 
     except Exception as e:
         logger.error(f"Supabase logging test failed: {e}")
