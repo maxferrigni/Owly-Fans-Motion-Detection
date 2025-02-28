@@ -434,7 +434,7 @@ class TestInterface:
             )
             
             # Run the detection with confidence metrics
-            is_owl_present, detection_info = detect_owl_in_box(
+            is_present, info = detect_owl_in_box(
                 self.test_images[camera],
                 self.base_images[camera],
                 camera_config,
@@ -449,12 +449,12 @@ class TestInterface:
                 camera_name=camera,
                 threshold=camera_config["luminance_threshold"],
                 config=camera_config,
-                detection_info=detection_info,
+                detection_info=info,
                 is_test=True
             )
             
             # Display results with confidence metrics
-            self.display_results(is_owl_present, detection_info)
+            self.display_results(is_present, info)
                 
         except Exception as e:
             self.logger.error(f"Error running detection test: {e}")
@@ -585,10 +585,11 @@ class TestInterface:
                 }
             }
             
-            # Process test alert
+            # Process test alert - IMPORTANT: Set is_test=True to bypass confidence checks
             alert_sent = self.alert_manager.process_detection(
                 camera_name,
-                detection_result
+                detection_result,
+                is_test=True  # This is the critical change
             )
             
             # Display result

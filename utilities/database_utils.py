@@ -46,12 +46,15 @@ def get_subscribers(notification_type=None, owl_location=None):
         # Start with base query - always select first
         query = supabase_client.table("subscribers").select("*")
         
-        # Filter by notification type if provided
-        if notification_type:
+        # Check if the columns exist before filtering
+        column_info = get_table_columns("subscribers")
+        
+        # Only filter by notification_type if the column exists
+        if notification_type and "notification_type" in column_info:
             query = query.eq("notification_type", notification_type)
         
-        # Filter by owl location preference if provided
-        if owl_location:
+        # Only filter by owl_locations if the column exists
+        if owl_location and "owl_locations" in column_info:
             query = query.ilike("owl_locations", f"%{owl_location}%")
         
         # Execute the query
@@ -59,7 +62,7 @@ def get_subscribers(notification_type=None, owl_location=None):
         
         # Check if response has data and return
         if hasattr(response, 'data'):
-            logger.info(f"Found {len(response.data)} subscribers for {notification_type} notifications")
+            logger.info(f"Found {len(response.data)} subscribers")
             return response.data
         else:
             logger.warning("No data attribute in Supabase response")
@@ -68,6 +71,32 @@ def get_subscribers(notification_type=None, owl_location=None):
     except Exception as e:
         logger.error(f"Error getting subscribers from Supabase: {e}")
         # Return empty list instead of None to avoid NoneType errors
+        return []
+
+def get_table_columns(table_name):
+    """
+    Get the column names for a table to check if columns exist.
+    
+    Args:
+        table_name (str): Table name to check
+        
+    Returns:
+        list: List of column names
+    """
+    try:
+        # This is a simple way to get column info - might need adjustment based on Supabase API
+        # This selects a single row to examine its structure
+        response = supabase_client.table(table_name).select("*").limit(1).execute()
+        
+        if hasattr(response, 'data') and len(response.data) > 0:
+            # Get column names from the first row
+            return list(response.data[0].keys())
+        else:
+            # If no data, return empty list
+            return []
+            
+    except Exception as e:
+        logger.error(f"Error getting column info for {table_name}: {e}")
         return []
 
 def get_owl_activity_logs(limit=10, camera_name=None):
@@ -118,6 +147,12 @@ def save_custom_threshold(camera_name, threshold_value):
         bool: True if successful, False otherwise
     """
     try:
+        # Check if camera_settings table exists
+        column_info = get_table_columns("camera_settings")
+        if not column_info:
+            logger.warning("camera_settings table does not exist or has no columns")
+            return False
+            
         # Check if a record exists for this camera
         query = supabase_client.table("camera_settings").select("*").eq("camera_name", camera_name)
         response = query.execute()
@@ -157,6 +192,12 @@ def get_custom_thresholds():
         dict: Camera name to threshold value mapping
     """
     try:
+        # Check if camera_settings table exists
+        column_info = get_table_columns("camera_settings")
+        if not column_info:
+            logger.warning("camera_settings table doesn't exist or has no columns")
+            return {}
+            
         # Query camera settings table
         response = supabase_client.table("camera_settings").select("*").execute()
         
