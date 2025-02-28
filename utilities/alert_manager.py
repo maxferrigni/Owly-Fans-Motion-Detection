@@ -4,6 +4,7 @@
 from datetime import datetime, timedelta
 import pytz
 import time
+import threading
 from utilities.logging_utils import get_logger
 from alert_email import send_email_alert
 from alert_email_to_text import send_text_alert
@@ -16,7 +17,7 @@ from push_to_supabase import (
 )
 
 # Import from database_utils
-from utilities.database_utils import get_subscribers, get_custom_thresholds
+from utilities.database_utils import get_subscribers, get_custom_thresholds, check_column_exists
 
 logger = get_logger()
 
@@ -32,8 +33,8 @@ class AlertManager:
         # Cooldown periods for each alert type (in minutes)
         self.COOLDOWN_PERIODS = {
             "Owl In Box": 30,    # 30 minutes between box alerts
-            "Owl On Box": 45,    # 45 minutes between on-box alerts
-            "Owl In Area": 60    # 60 minutes between area alerts
+            "Owl On Box": 30,    # 30 minutes between on-box alerts
+            "Owl In Area": 30    # 30 minutes between area alerts
         }
 
         # Track last alert times locally
@@ -61,6 +62,11 @@ class AlertManager:
             "Wyze Internal Camera": 75.0,  # Inside Box: Higher certainty needed
             "Bindy Patio Camera": 65.0,    # On Box: Medium certainty
             "Upper Patio Camera": 55.0     # Area: Lower certainty acceptable
+        }
+
+        # Cache database column existence to avoid repeated checks
+        self.column_cache = {
+            'alerts.confidence_breakdown': None
         }
         
         # Load any custom thresholds from database
@@ -124,6 +130,91 @@ class AlertManager:
                     return True
         return False
 
+    def _send_email_and_sms_async(self, camera_name, alert_type, alert_entry, confidence_info=None):
+        """
+        Background thread function to send email and SMS alerts.
+        
+        Args:
+            camera_name (str): Name of the camera
+            alert_type (str): Type of alert
+            alert_entry (dict): Alert entry from database
+            confidence_info (dict, optional): Confidence information
+        """
+        try:
+            # Send email alerts in a try block to continue if it fails
+            try:
+                # Get email subscribers
+                email_subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
+                email_count = len(email_subscribers) if email_subscribers else 0
+                logger.info(f"Sending email alerts to {email_count} subscribers")
+                
+                # Send email alert
+                send_email_alert(camera_name, alert_type)
+            except Exception as e:
+                logger.error(f"Error sending email alerts: {e}")
+                email_count = 0
+            
+            # Send SMS alerts in a separate try block
+            try:
+                # Get SMS subscribers
+                sms_subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
+                sms_count = len(sms_subscribers) if sms_subscribers else 0
+                logger.info(f"Sending SMS alerts to {sms_count} subscribers")
+                
+                # Send SMS alert
+                send_text_alert(camera_name, alert_type)
+            except Exception as e:
+                logger.error(f"Error sending SMS alerts: {e}")
+                sms_count = 0
+            
+            # Additional info for alert status update
+            additional_info = {
+                'email_recipients_count': email_count,
+                'sms_recipients_count': sms_count
+            }
+            
+            # Add confidence data if available and if column exists
+            if confidence_info:
+                # Check if owl_confidence_score column exists
+                if check_column_exists('alerts', 'owl_confidence_score'):
+                    additional_info["owl_confidence_score"] = confidence_info.get("owl_confidence", 0.0)
+                
+                # Check if consecutive_owl_frames column exists
+                if check_column_exists('alerts', 'consecutive_owl_frames'):
+                    additional_info["consecutive_owl_frames"] = confidence_info.get("consecutive_owl_frames", 0)
+                
+                # Convert confidence factors to a string representation for logging
+                confidence_factors = confidence_info.get("confidence_factors", {})
+                if confidence_factors:
+                    # Check if confidence_breakdown column exists
+                    if check_column_exists('alerts', 'confidence_breakdown'):
+                        try:
+                            factor_str = ", ".join([f"{k}: {v:.1f}%" for k, v in confidence_factors.items()])
+                            additional_info["confidence_breakdown"] = factor_str
+                        except Exception:
+                            logger.debug("Error formatting confidence_breakdown")
+
+            # Update alert status with notification counts and confidence info
+            try:
+                update_alert_status(
+                    alert_id=alert_entry['id'],
+                    **additional_info
+                )
+            except Exception as e:
+                logger.error(f"Error updating alert status: {e}")
+            
+            # Log completion
+            if confidence_info:
+                logger.info(
+                    f"Alert notifications completed for {alert_type} from {camera_name} "
+                    f"with {confidence_info.get('owl_confidence', 0.0):.1f}% confidence"
+                )
+            else:
+                logger.info(f"Alert notifications completed for {alert_type} from {camera_name}")
+                
+        except Exception as e:
+            logger.error(f"Error in background alert processing: {e}")
+
     def _send_alert(self, camera_name, alert_type, activity_log_id=None, confidence_info=None, is_test=False):
         """
         Send alerts based on alert type and cooldown period.
@@ -157,56 +248,20 @@ class AlertManager:
             alert_entry = create_alert_entry(alert_type, activity_log_id)
 
             if alert_entry:
-                # Send email and SMS alerts
-                send_email_alert(camera_name, alert_type)
-                send_text_alert(camera_name, alert_type)
-
-                # Get subscriber counts for updating alert status
-                try:
-                    email_subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
-                    sms_subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
-                    
-                    email_count = len(email_subscribers) if email_subscribers else 0
-                    sms_count = len(sms_subscribers) if sms_subscribers else 0
-                except Exception as e:
-                    logger.error(f"Error getting subscribers: {e}")
-                    email_count = 0
-                    sms_count = 0
-                
-                # Additional info for alert status update
-                additional_info = {}
-                
-                # Add confidence data if available
-                if confidence_info:
-                    additional_info["owl_confidence_score"] = confidence_info.get("owl_confidence", 0.0)
-                    additional_info["consecutive_owl_frames"] = confidence_info.get("consecutive_owl_frames", 0)
-                    
-                    # Convert confidence factors to a string representation for logging
-                    confidence_factors = confidence_info.get("confidence_factors", {})
-                    if confidence_factors:
-                        # Check if confidence_breakdown column exists before adding
-                        try:
-                            factor_str = ", ".join([f"{k}: {v:.1f}%" for k, v in confidence_factors.items()])
-                            additional_info["confidence_breakdown"] = factor_str
-                        except Exception:
-                            logger.debug("Skipping confidence_breakdown - column may not exist")
-
-                # Update alert status with notification counts and confidence info
-                try:
-                    update_alert_status(
-                        alert_id=alert_entry['id'],
-                        email_count=email_count,
-                        sms_count=sms_count,
-                        **additional_info
-                    )
-                except Exception as e:
-                    logger.error(f"Error updating alert status: {e}")
+                # Start a background thread to send emails and SMS
+                # This prevents the UI from freezing during network operations
+                thread = threading.Thread(
+                    target=self._send_email_and_sms_async,
+                    args=(camera_name, alert_type, alert_entry, confidence_info)
+                )
+                thread.daemon = True  # Make thread exit when main thread exits
+                thread.start()
 
                 # Update last alert time (even for test alerts to prevent spamming)
                 self.last_alert_times[alert_type] = datetime.now(pytz.utc)
                 self.active_alerts[alert_type] = time.time()
                 
-                # Log with confidence information if available
+                # Log alert creation
                 if confidence_info:
                     logger.info(
                         f"{'Test ' if is_test else ''}Alert sent: {alert_type} from {camera_name} "
@@ -329,6 +384,9 @@ class AlertManager:
             "confidence_factors": detection_result.get("confidence_factors", {})
         }
         
+        # Get priority for hierarchy checks
+        priority = self.ALERT_HIERARCHY[alert_type]
+        
         # Check confidence requirements - bypass for test alerts
         if not is_test and not self._check_confidence_requirements(detection_result, camera_name):
             logger.info(f"Alert blocked - Confidence requirements not met for {camera_name}")
@@ -340,7 +398,6 @@ class AlertManager:
             return False
 
         # Determine which alert to send based on hierarchy or if it's a test
-        priority = self.ALERT_HIERARCHY[alert_type]
         if is_test:
             # For tests, just send the alert directly
             alert_sent = self._send_alert(camera_name, alert_type, activity_log_id, confidence_info, is_test=True)

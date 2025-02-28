@@ -551,6 +551,17 @@ class TestInterface:
     def trigger_test_alert(self, alert_type):
         """Trigger a direct test alert with confidence metrics"""
         try:
+            # Disable buttons during processing to prevent double clicks
+            for btn in self.alert_buttons.values():
+                btn.config(state=tk.DISABLED)
+                
+            # Show a "sending" message
+            self.detection_result_var.set(f"SENDING {alert_type.upper()} ALERT...")
+            self.detection_result_label.config(foreground="blue")
+            
+            # Update UI immediately
+            self.parent_frame.update_idletasks()
+            
             self.logger.info(f"Triggering test alert: {alert_type}")
             
             # Get camera name for this alert type
@@ -597,6 +608,8 @@ class TestInterface:
             result_text += f"Confidence: {confidence:.1f}%\n"
             result_text += f"Consecutive Frames: {frames}\n"
             result_text += f"Alert Sent: {'Yes' if alert_sent else 'No (blocked by rules)'}"
+            result_text += f"\n\nNote: Emails and SMS alerts are being sent in the background."
+            result_text += f"\nCheck logs for delivery confirmation."
             
             # Update the detection result label
             if alert_sent:
@@ -631,6 +644,10 @@ class TestInterface:
         except Exception as e:
             self.logger.error(f"Error triggering test alert: {e}")
             messagebox.showerror("Error", f"Failed to trigger alert: {e}")
+        finally:
+            # Re-enable buttons once processing is complete
+            for btn in self.alert_buttons.values():
+                btn.config(state=tk.NORMAL)
 
     def reset_frame_history(self):
         """Reset the frame history for testing multiple images"""

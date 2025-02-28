@@ -31,6 +31,91 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     raise
 
+# Cache for column existence checks to avoid repeated queries
+_column_cache = {}
+
+def get_table_columns(table_name):
+    """
+    Get the column names for a table to check if columns exist.
+    
+    Args:
+        table_name (str): Table name to check
+        
+    Returns:
+        list: List of column names
+    """
+    # Check cache first
+    if table_name in _column_cache:
+        return _column_cache[table_name]
+        
+    try:
+        # This is a simple way to get column info - might need adjustment based on Supabase API
+        # This selects a single row to examine its structure
+        response = supabase_client.table(table_name).select("*").limit(1).execute()
+        
+        if hasattr(response, 'data') and len(response.data) > 0:
+            # Get column names from the first row
+            columns = list(response.data[0].keys())
+            # Cache the result
+            _column_cache[table_name] = columns
+            return columns
+        else:
+            # If no data, try to get table definition instead
+            try:
+                # This is a PostgreSQL-specific approach that might work with Supabase
+                # The query gets column information from the information_schema
+                query = f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'"
+                response = supabase_client.rpc('execute_sql', {'query': query}).execute()
+                
+                if hasattr(response, 'data') and len(response.data) > 0:
+                    columns = [row.get('column_name') for row in response.data]
+                    # Cache the result
+                    _column_cache[table_name] = columns
+                    return columns
+            except Exception as inner_e:
+                logger.debug(f"Could not get column info from schema: {inner_e}")
+            
+            # If all else fails, return empty list
+            _column_cache[table_name] = []
+            return []
+            
+    except Exception as e:
+        logger.error(f"Error getting column info for {table_name}: {e}")
+        _column_cache[table_name] = []
+        return []
+
+def check_column_exists(table_name, column_name):
+    """
+    Check if a specific column exists in a table.
+    
+    Args:
+        table_name (str): Table name to check
+        column_name (str): Column name to check
+        
+    Returns:
+        bool: True if column exists, False otherwise
+    """
+    # Check cache for combined key
+    cache_key = f"{table_name}.{column_name}"
+    if cache_key in _column_cache:
+        return _column_cache[cache_key]
+        
+    try:
+        # Get all columns for this table
+        columns = get_table_columns(table_name)
+        
+        # Check if the requested column exists
+        exists = column_name in columns
+        
+        # Cache the result
+        _column_cache[cache_key] = exists
+        
+        return exists
+    except Exception as e:
+        logger.error(f"Error checking if column {column_name} exists in {table_name}: {e}")
+        _column_cache[cache_key] = False
+        return False
+
 def get_subscribers(notification_type=None, owl_location=None):
     """
     Get subscribers based on notification type and preferences.
@@ -71,32 +156,6 @@ def get_subscribers(notification_type=None, owl_location=None):
     except Exception as e:
         logger.error(f"Error getting subscribers from Supabase: {e}")
         # Return empty list instead of None to avoid NoneType errors
-        return []
-
-def get_table_columns(table_name):
-    """
-    Get the column names for a table to check if columns exist.
-    
-    Args:
-        table_name (str): Table name to check
-        
-    Returns:
-        list: List of column names
-    """
-    try:
-        # This is a simple way to get column info - might need adjustment based on Supabase API
-        # This selects a single row to examine its structure
-        response = supabase_client.table(table_name).select("*").limit(1).execute()
-        
-        if hasattr(response, 'data') and len(response.data) > 0:
-            # Get column names from the first row
-            return list(response.data[0].keys())
-        else:
-            # If no data, return empty list
-            return []
-            
-    except Exception as e:
-        logger.error(f"Error getting column info for {table_name}: {e}")
         return []
 
 def get_owl_activity_logs(limit=10, camera_name=None):
