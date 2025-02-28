@@ -37,6 +37,7 @@ class OwlApp:
         self.script_process = None
         self.local_saving_enabled = tk.BooleanVar(value=True)
         self.capture_interval = tk.IntVar(value=60)  # Default to 60 seconds
+        self.alert_delay = tk.IntVar(value=30)      # Default to 30 minutes
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         # Set style for more immediate button rendering
@@ -153,8 +154,12 @@ class OwlApp:
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=1)
 
-        # Add interval setting control
-        interval_frame = ttk.Frame(control_frame)
+        # Add interval settings frame
+        settings_frame = ttk.LabelFrame(control_frame, text="Timing Settings")
+        settings_frame.pack(fill="x", pady=3, padx=3)
+        
+        # Add capture interval setting
+        interval_frame = ttk.Frame(settings_frame)
         interval_frame.pack(fill="x", pady=2, padx=3)
         
         ttk.Label(
@@ -182,6 +187,37 @@ class OwlApp:
         ttk.Label(
             interval_frame,
             text="(Default: 60 seconds)"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Add alert delay setting
+        alert_delay_frame = ttk.Frame(settings_frame)
+        alert_delay_frame.pack(fill="x", pady=2, padx=3)
+        
+        ttk.Label(
+            alert_delay_frame,
+            text="Alert Delay (minutes):"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        alert_delay_spinner = ttk.Spinbox(
+            alert_delay_frame,
+            from_=5,
+            to=120,
+            increment=5,
+            textvariable=self.alert_delay,
+            width=5
+        )
+        alert_delay_spinner.pack(side=tk.LEFT, padx=5)
+        
+        # Connect the alert delay spinner to the update handler
+        alert_delay_spinner.bind('<FocusOut>', self.update_alert_delay)
+        alert_delay_spinner.bind('<Return>', self.update_alert_delay)
+        # Also update when using the spinbox arrows
+        self.alert_delay.trace_add("write", self.update_alert_delay)
+        
+        # Add status indication for the alert delay
+        ttk.Label(
+            alert_delay_frame,
+            text="(Default: 30 minutes)"
         ).pack(side=tk.LEFT, padx=5)
 
         # Log viewing button in a separate section
@@ -224,6 +260,37 @@ class OwlApp:
             self.log_message(f"Error updating capture interval: {e}", "ERROR")
             # Reset to default on error
             self.capture_interval.set(60)
+            
+    def update_alert_delay(self, *args):
+        """Handle changes to the alert delay"""
+        try:
+            delay = self.alert_delay.get()
+            
+            # Validate delay is within reasonable range
+            if delay < 5:
+                self.alert_delay.set(5)
+                delay = 5
+                self.log_message("Minimum alert delay is 5 minutes", "WARNING")
+            elif delay > 120:
+                self.alert_delay.set(120)
+                delay = 120
+                self.log_message("Maximum alert delay is 120 minutes", "WARNING")
+                
+            # Update alert manager
+            self.alert_manager.set_alert_delay(delay)
+            
+            # Update status panel
+            self.status_panel.update_status(
+                "Alert Delay",
+                f"{delay} min"
+            )
+            
+            self.log_message(f"Alert delay updated to {delay} minutes")
+            
+        except Exception as e:
+            self.log_message(f"Error updating alert delay: {e}", "ERROR")
+            # Reset to default on error
+            self.alert_delay.set(30)
 
     class LogRedirector:
         """Redirects stdout/stderr to log window"""
@@ -346,8 +413,8 @@ class OwlApp:
                 # Use the capture interval from the UI control
                 env['OWL_CAPTURE_INTERVAL'] = str(self.capture_interval.get())
                 
-                # Set default alert delay
-                self.alert_manager.set_alert_delay(30)  # Default to 30 minutes
+                # Set alert delay
+                self.alert_manager.set_alert_delay(self.alert_delay.get())
                 
                 cmd = [sys.executable, self.main_script_path]
                 self.script_process = subprocess.Popen(

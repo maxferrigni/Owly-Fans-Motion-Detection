@@ -180,6 +180,7 @@ class StatusPanel(ttk.LabelFrame):
             ("Alert System", "ready"),
             ("Base Images", "not verified"),
             ("Capture Interval", "60 sec"),  # Added capture interval indicator
+            ("Alert Delay", "30 min"),       # Added alert delay indicator
             ("Last Detection", "none")       # Added for completeness
         ]
         
@@ -187,9 +188,13 @@ class StatusPanel(ttk.LabelFrame):
         indicator_frame = ttk.Frame(self)
         indicator_frame.pack(pady=5, padx=5, fill="x")
         
+        # Calculate rows and columns
+        items_per_row = 3
+        rows = (len(indicators) + items_per_row - 1) // items_per_row
+        
         for i, (label, initial_status) in enumerate(indicators):
-            row = i // 2
-            col = i % 2
+            row = i // items_per_row
+            col = i % items_per_row
             
             indicator_label = ttk.Label(indicator_frame, text=f"{label}:")
             indicator_label.grid(row=row, column=col*2, sticky='w', padx=5, pady=3)
@@ -200,7 +205,7 @@ class StatusPanel(ttk.LabelFrame):
             self.status_labels[label] = status_label
             
         # Configure grid to expand properly
-        for i in range(4):
+        for i in range(items_per_row * 2):
             indicator_frame.columnconfigure(i, weight=1)
 
     def create_control_buttons(self):

@@ -92,6 +92,14 @@ class AlertManager:
                 logger.warning("Alert delay must be at least 1 minute, setting to 1")
                 delay = 1
             self.alert_delay = delay
+            
+            # Update cooldown periods based on the new delay
+            self.COOLDOWN_PERIODS = {
+                "Owl In Box": delay,
+                "Owl On Box": delay,
+                "Owl In Area": delay
+            }
+            
             logger.info(f"Alert delay set to {delay} minutes")
         except ValueError:
             logger.error(f"Invalid alert delay value: {minutes}")
@@ -116,7 +124,7 @@ class AlertManager:
                     return True
         return False
 
-    def _send_alert(self, camera_name, alert_type, activity_log_id=None, confidence_info=None):
+    def _send_alert(self, camera_name, alert_type, activity_log_id=None, confidence_info=None, is_test=False):
         """
         Send alerts based on alert type and cooldown period.
         
@@ -125,87 +133,92 @@ class AlertManager:
             alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
             activity_log_id (int, optional): ID of the corresponding activity log entry
             confidence_info (dict, optional): Confidence information for this alert
+            is_test (bool, optional): Whether this is a test alert
 
         Returns:
             bool: True if alert was sent, False otherwise
         """
         try:
-            # Check alert eligibility based on cooldown period
-            is_eligible, last_alert_data = check_alert_eligibility(
-                alert_type, self.COOLDOWN_PERIODS[alert_type]
-            )
-
-            if is_eligible:
-                # Create a new alert entry in the database with confidence information
-                alert_entry = create_alert_entry(alert_type, activity_log_id)
-
-                if alert_entry:
-                    # Send email and SMS alerts
-                    send_email_alert(camera_name, alert_type)
-                    send_text_alert(camera_name, alert_type)
-
-                    # Get subscriber counts for updating alert status
-                    try:
-                        email_subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
-                        sms_subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
-                        
-                        email_count = len(email_subscribers) if email_subscribers else 0
-                        sms_count = len(sms_subscribers) if sms_subscribers else 0
-                    except Exception as e:
-                        logger.error(f"Error getting subscribers: {e}")
-                        email_count = 0
-                        sms_count = 0
-                    
-                    # Additional info for alert status update
-                    additional_info = {}
-                    
-                    # Add confidence data if available
-                    if confidence_info:
-                        additional_info["owl_confidence_score"] = confidence_info.get("owl_confidence", 0.0)
-                        additional_info["consecutive_owl_frames"] = confidence_info.get("consecutive_owl_frames", 0)
-                        
-                        # Convert confidence factors to a string representation for logging
-                        confidence_factors = confidence_info.get("confidence_factors", {})
-                        if confidence_factors:
-                            # Check if confidence_breakdown column exists before adding
-                            try:
-                                factor_str = ", ".join([f"{k}: {v:.1f}%" for k, v in confidence_factors.items()])
-                                additional_info["confidence_breakdown"] = factor_str
-                            except Exception:
-                                logger.debug("Skipping confidence_breakdown - column may not exist")
-
-                    # Update alert status with notification counts and confidence info
-                    try:
-                        update_alert_status(
-                            alert_id=alert_entry['id'],
-                            email_count=email_count,
-                            sms_count=sms_count,
-                            **additional_info
-                        )
-                    except Exception as e:
-                        logger.error(f"Error updating alert status: {e}")
-
-                    # Update last alert time
-                    self.last_alert_times[alert_type] = datetime.now(pytz.utc)
-                    self.active_alerts[alert_type] = time.time()
-                    
-                    # Log with confidence information if available
-                    if confidence_info:
-                        logger.info(
-                            f"Alert sent: {alert_type} from {camera_name} "
-                            f"with {confidence_info.get('owl_confidence', 0.0):.1f}% confidence "
-                            f"({confidence_info.get('consecutive_owl_frames', 0)} consecutive frames)"
-                        )
-                    else:
-                        logger.info(f"Alert sent: {alert_type} from {camera_name}")
-
-                    return True
-                else:
-                    logger.error(f"Failed to create alert entry for {alert_type}")
+            # Check alert eligibility based on cooldown period - skip for test alerts
+            if not is_test:
+                is_eligible, last_alert_data = check_alert_eligibility(
+                    alert_type, self.COOLDOWN_PERIODS[alert_type]
+                )
+                if not is_eligible:
+                    cooldown_mins = self.COOLDOWN_PERIODS[alert_type]
+                    logger.info(f"Alert for {alert_type} blocked by {cooldown_mins} minute cooldown")
                     return False
             else:
-                cooldown_mins = self.COOLDOWN_PERIODS[alert_type]
-                logger.info(f"Alert for {alert_type} blocked by {cooldown_mins} minute cooldown")
+                # For test alerts, always eligible
+                is_eligible = True
+                logger.info(f"Test alert for {alert_type} - bypassing cooldown check")
+
+            # Create a new alert entry in the database with confidence information
+            alert_entry = create_alert_entry(alert_type, activity_log_id)
+
+            if alert_entry:
+                # Send email and SMS alerts
+                send_email_alert(camera_name, alert_type)
+                send_text_alert(camera_name, alert_type)
+
+                # Get subscriber counts for updating alert status
+                try:
+                    email_subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
+                    sms_subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
+                    
+                    email_count = len(email_subscribers) if email_subscribers else 0
+                    sms_count = len(sms_subscribers) if sms_subscribers else 0
+                except Exception as e:
+                    logger.error(f"Error getting subscribers: {e}")
+                    email_count = 0
+                    sms_count = 0
+                
+                # Additional info for alert status update
+                additional_info = {}
+                
+                # Add confidence data if available
+                if confidence_info:
+                    additional_info["owl_confidence_score"] = confidence_info.get("owl_confidence", 0.0)
+                    additional_info["consecutive_owl_frames"] = confidence_info.get("consecutive_owl_frames", 0)
+                    
+                    # Convert confidence factors to a string representation for logging
+                    confidence_factors = confidence_info.get("confidence_factors", {})
+                    if confidence_factors:
+                        # Check if confidence_breakdown column exists before adding
+                        try:
+                            factor_str = ", ".join([f"{k}: {v:.1f}%" for k, v in confidence_factors.items()])
+                            additional_info["confidence_breakdown"] = factor_str
+                        except Exception:
+                            logger.debug("Skipping confidence_breakdown - column may not exist")
+
+                # Update alert status with notification counts and confidence info
+                try:
+                    update_alert_status(
+                        alert_id=alert_entry['id'],
+                        email_count=email_count,
+                        sms_count=sms_count,
+                        **additional_info
+                    )
+                except Exception as e:
+                    logger.error(f"Error updating alert status: {e}")
+
+                # Update last alert time (even for test alerts to prevent spamming)
+                self.last_alert_times[alert_type] = datetime.now(pytz.utc)
+                self.active_alerts[alert_type] = time.time()
+                
+                # Log with confidence information if available
+                if confidence_info:
+                    logger.info(
+                        f"{'Test ' if is_test else ''}Alert sent: {alert_type} from {camera_name} "
+                        f"with {confidence_info.get('owl_confidence', 0.0):.1f}% confidence "
+                        f"({confidence_info.get('consecutive_owl_frames', 0)} consecutive frames)"
+                    )
+                else:
+                    logger.info(f"{'Test ' if is_test else ''}Alert sent: {alert_type} from {camera_name}")
+
+                return True
+            else:
+                logger.error(f"Failed to create alert entry for {alert_type}")
                 return False
 
         except Exception as e:
@@ -321,30 +334,22 @@ class AlertManager:
             logger.info(f"Alert blocked - Confidence requirements not met for {camera_name}")
             return False
 
-        # Check alert hierarchy
-        priority = self.ALERT_HIERARCHY[alert_type]
+        # Check alert hierarchy - bypass for test alerts
         if not is_test and self._check_alert_hierarchy(alert_type, priority):
             logger.info(f"Alert {alert_type} suppressed by higher priority alert")
             return False
-            
-        # Check cooldown period - bypass for test alerts
-        if not is_test:
-            is_eligible, last_alert = check_alert_eligibility(
-                alert_type, self.COOLDOWN_PERIODS[alert_type]
-            )
-            if not is_eligible:
-                logger.debug(f"Alert {alert_type} blocked by cooldown period")
-                return False
 
-        # Determine which alert to send based on hierarchy
-        if alert_type == "Owl In Box" or is_test:
-            # Always send owl in box alert if it passes checks or is a test
+        # Determine which alert to send based on hierarchy or if it's a test
+        priority = self.ALERT_HIERARCHY[alert_type]
+        if is_test:
+            # For tests, just send the alert directly
+            alert_sent = self._send_alert(camera_name, alert_type, activity_log_id, confidence_info, is_test=True)
+        elif alert_type == "Owl In Box":
+            # Always send owl in box alert if it passes checks
             alert_sent = self._send_alert(camera_name, alert_type, activity_log_id, confidence_info)
-            
         elif alert_type == "Owl On Box" and not self._is_higher_alert_active("Owl In Box"):
             # Send owl on box alert if no active owl in box alert
             alert_sent = self._send_alert(camera_name, alert_type, activity_log_id, confidence_info)
-            
         elif (alert_type == "Owl In Area" and 
                 not self._is_higher_alert_active("Owl On Box") and 
                 not self._is_higher_alert_active("Owl In Box")):
