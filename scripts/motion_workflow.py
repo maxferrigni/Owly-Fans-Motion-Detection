@@ -14,7 +14,7 @@ from utilities.constants import (
     BASE_IMAGES_DIR,
     get_comparison_image_path,
     CAMERA_MAPPINGS,
-    get_base_image_path  # Updated from get_base_image_filename
+    get_base_image_path
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -56,6 +56,12 @@ def initialize_system(camera_configs, is_test=False):
             if "roi" not in config or not config["roi"]:
                 logger.error(f"Missing ROI configuration for {camera_name}")
                 return False
+            
+            # Log confidence thresholds if available
+            if "owl_confidence_threshold" in config:
+                logger.info(f"Confidence threshold for {camera_name}: {config['owl_confidence_threshold']}%")
+            if "consecutive_frames_threshold" in config:
+                logger.info(f"Consecutive frames threshold for {camera_name}: {config['consecutive_frames_threshold']}")
                 
         # Verify base images directory based on local saving setting
         if not os.path.exists(BASE_IMAGES_DIR):
@@ -142,7 +148,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 base_image,
                 config,
                 is_test=is_test,
-                camera_name=camera_name  # Pass camera name for temporal confidence
+                camera_name=camera_name
             )
             
             # Always create comparison image with confidence data
@@ -152,7 +158,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 camera_name,
                 threshold=config["luminance_threshold"] * threshold_multiplier,
                 config=config,
-                detection_info=detection_info,  # Pass detection info with confidence
+                detection_info=detection_info,
                 is_test=is_test,
                 timestamp=timestamp
             )
@@ -167,12 +173,14 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 "confidence_factors": detection_info.get("confidence_factors", {}),
                 "comparison_path": comparison_path,
                 "pixel_change": detection_info.get("pixel_change", 0.0),
-                "luminance_change": detection_info.get("luminance_change", 0.0)
+                "luminance_change": detection_info.get("luminance_change", 0.0),
+                "threshold_used": config.get("owl_confidence_threshold", 60.0)  # Include threshold used
             })
             
             logger.info(
                 f"Detection results for {camera_name}: Owl Present: {is_owl_present}, "
                 f"Confidence: {detection_results['owl_confidence']:.1f}%, "
+                f"Threshold: {detection_results['threshold_used']:.1f}%, "
                 f"Consecutive Frames: {detection_results['consecutive_owl_frames']}"
             )
 
@@ -216,7 +224,8 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             "confidence_factors": {},
             "pixel_change": 0.0,
             "luminance_change": 0.0,
-            "timestamp": datetime.now(PACIFIC_TIME).isoformat()
+            "timestamp": datetime.now(PACIFIC_TIME).isoformat(),
+            "threshold_used": 60.0  # Default threshold
         }
 
 def process_cameras(camera_configs, test_images=None):
@@ -263,7 +272,8 @@ def process_cameras(camera_configs, test_images=None):
                     "owl_confidence": 0.0,
                     "consecutive_owl_frames": 0,
                     "confidence_factors": {},
-                    "timestamp": datetime.now(PACIFIC_TIME).isoformat()
+                    "timestamp": datetime.now(PACIFIC_TIME).isoformat(),
+                    "threshold_used": 60.0  # Default threshold
                 })
         
         return results

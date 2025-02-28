@@ -131,6 +131,10 @@ class AlertManager:
                         additional_info["owl_confidence_score"] = confidence_info.get("owl_confidence", 0.0)
                         additional_info["consecutive_owl_frames"] = confidence_info.get("consecutive_owl_frames", 0)
                         
+                        # Add threshold used for the decision
+                        if "threshold_used" in confidence_info:
+                            additional_info["threshold_used"] = confidence_info["threshold_used"]
+                        
                         # Convert confidence factors to a string representation for logging
                         confidence_factors = confidence_info.get("confidence_factors", {})
                         if confidence_factors:
@@ -208,6 +212,9 @@ class AlertManager:
                 confidence_threshold = config.get("owl_confidence_threshold", confidence_threshold)
                 frames_threshold = config.get("consecutive_frames_threshold", frames_threshold)
             
+            # Store the threshold that was used for later logging
+            detection_result["threshold_used"] = confidence_threshold
+            
             # Check if confidence and frames meet requirements
             if owl_confidence < confidence_threshold:
                 logger.debug(
@@ -262,7 +269,8 @@ class AlertManager:
         confidence_info = {
             "owl_confidence": detection_result.get("owl_confidence", 0.0),
             "consecutive_owl_frames": detection_result.get("consecutive_owl_frames", 0),
-            "confidence_factors": detection_result.get("confidence_factors", {})
+            "confidence_factors": detection_result.get("confidence_factors", {}),
+            "threshold_used": detection_result.get("threshold_used", self.DEFAULT_CONFIDENCE_THRESHOLD)
         }
         
         # Check confidence requirements

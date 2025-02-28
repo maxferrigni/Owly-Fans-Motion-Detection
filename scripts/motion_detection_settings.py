@@ -96,7 +96,33 @@ class MotionDetectionSettings:
             1
         )
         
-        # NOTE: Removed interval_seconds control as it's now a global setting
+        # Create confidence threshold controls (NEW)
+        confidence_frame = ttk.LabelFrame(tab, text="Confidence Thresholds")
+        confidence_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Add confidence threshold slider
+        default_confidence = 60.0
+        if camera == "Wyze Internal Camera":  # Inside Box
+            default_confidence = 75.0
+        elif camera == "Bindy Patio Camera":  # On Box
+            default_confidence = 65.0
+        elif camera == "Upper Patio Camera":  # Area
+            default_confidence = 55.0
+            
+        self.create_parameter_control(
+            confidence_frame, camera,
+            "owl_confidence_threshold", "Confidence Threshold (%)",
+            0.0, 100.0, camera_config.get("owl_confidence_threshold", default_confidence),
+            1.0
+        )
+        
+        # Add consecutive frames threshold
+        self.create_parameter_control(
+            confidence_frame, camera,
+            "consecutive_frames_threshold", "Consecutive Frames",
+            1, 10, camera_config.get("consecutive_frames_threshold", 2),
+            1.0
+        )
         
         # Create motion detection parameter controls
         motion_frame = ttk.LabelFrame(tab, text="Motion Detection Parameters")

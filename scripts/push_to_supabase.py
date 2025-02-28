@@ -171,7 +171,8 @@ def update_alert_status(
     priority_override=None,
     owl_confidence_score=None,
     consecutive_owl_frames=None,
-    confidence_breakdown=None
+    confidence_breakdown=None,
+    threshold_used=None
 ):
     """
     Update the status of an existing alert entry in Supabase.
@@ -185,6 +186,7 @@ def update_alert_status(
         owl_confidence_score (float, optional): Confidence score for the owl detection
         consecutive_owl_frames (int, optional): Number of consecutive frames with owl detection
         confidence_breakdown (str, optional): String representation of confidence factors
+        threshold_used (float, optional): Confidence threshold that was applied
     """
     try:
         # Build update data
@@ -204,6 +206,8 @@ def update_alert_status(
             update_data['consecutive_owl_frames'] = consecutive_owl_frames
         if confidence_breakdown is not None:
             update_data['confidence_breakdown'] = confidence_breakdown
+        if threshold_used is not None:
+            update_data['threshold_used'] = threshold_used
 
         # Only update if we have data
         if update_data:
@@ -214,6 +218,43 @@ def update_alert_status(
 
     except Exception as e:
         logger.error(f"Error updating alert status: {e}")
+
+def format_confidence_factors(confidence_factors):
+    """
+    Format confidence factors to ensure they can be properly serialized to JSON.
+    Extracts only the numeric values we care about.
+    
+    Args:
+        confidence_factors (dict): Raw confidence factors
+        
+    Returns:
+        dict: Cleaned confidence factors with only serializable values
+    """
+    try:
+        # Return early if no confidence factors
+        if not confidence_factors:
+            return {}
+        
+        # Create a new dictionary with only numeric values
+        clean_factors = {}
+        
+        # These are the factors we want to keep
+        expected_factors = [
+            "shape_confidence", 
+            "motion_confidence", 
+            "temporal_confidence", 
+            "camera_confidence"
+        ]
+        
+        for factor in expected_factors:
+            if factor in confidence_factors:
+                # Ensure it's a float (prevents serialization issues)
+                clean_factors[factor] = float(confidence_factors[factor])
+        
+        return clean_factors
+    except Exception as e:
+        logger.error(f"Error formatting confidence factors: {e}")
+        return {}  # Return empty dict on error to prevent issues down the line
 
 def push_log_to_supabase(detection_results, lighting_condition=None, base_image_age=None):
     """
@@ -260,7 +301,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
             "lighting_condition": lighting_condition,
             "base_image_age_seconds": base_image_age,
             
-            # Initialize all boolean flags to false
+            # Initialize all boolean flags to false - specifically using Python booleans
             "owl_in_box": False,
             "owl_on_box": False,
             "owl_in_area": False
@@ -287,33 +328,28 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
             log_entry[f"{field_prefix}_image_comparison_url"] = detection_results['comparison_path']
             
         # Add confidence metrics
-        owl_confidence = detection_results.get('owl_confidence', 0.0)
-        consecutive_frames = detection_results.get('consecutive_owl_frames', 0)
+        owl_confidence = float(detection_results.get('owl_confidence', 0.0))
+        consecutive_frames = int(detection_results.get('consecutive_owl_frames', 0))
+        threshold_used = float(detection_results.get('threshold_used', 60.0))
         
         # Add confidence metrics to log entry
         log_entry["owl_confidence_score"] = owl_confidence
         log_entry["consecutive_owl_frames"] = consecutive_frames
+        log_entry["threshold_used"] = threshold_used
         
-        # Format confidence factors for JSONB storage
+        # Handle confidence factors properly for JSONB storage
         confidence_factors = detection_results.get('confidence_factors', {})
         if confidence_factors:
-            # Ensure the confidence factors are JSON-serializable
-            try:
-                # Convert to JSON string and back to ensure it's valid
-                json.dumps(confidence_factors)
-                log_entry["confidence_factors"] = confidence_factors
-            except (TypeError, ValueError) as e:
-                logger.warning(f"Could not serialize confidence factors: {e}")
-                # Store a simplified version instead
-                log_entry["confidence_factors"] = {
-                    "error": "Could not serialize original factors",
-                    "owl_confidence": owl_confidence
-                }
+            # Clean and format the confidence factors to ensure they're serializable
+            formatted_factors = format_confidence_factors(confidence_factors)
+            
+            # Store as properly formatted JSON
+            log_entry["confidence_factors"] = formatted_factors
         
         # Log the entry for debugging
         logger.debug(f"Prepared log entry for Supabase: {log_entry}")
         
-        # Send to Supabase
+        # Send to Supabase - explicitly using insert to handle nested structures
         response = supabase_client.table('owl_activity_log').insert(log_entry).execute()
         
         if response.data and len(response.data) > 0:
@@ -356,7 +392,7 @@ def format_detection_results(detection_result):
         is_test = detection_result.get("is_test", False)
         is_owl_present = detection_result.get("is_owl_present", False)
         
-        # Ensure numeric metrics are properly formatted
+        # Ensure numeric metrics are properly formatted as floats
         formatted_entry = {
             "camera": camera,
             "status": status,
@@ -364,7 +400,8 @@ def format_detection_results(detection_result):
             "is_owl_present": is_owl_present,
             "pixel_change": float(detection_result.get("pixel_change", 0.0)),
             "luminance_change": float(detection_result.get("luminance_change", 0.0)),
-            "timestamp": detection_result.get("timestamp")  # Ensure timestamp is preserved
+            "timestamp": detection_result.get("timestamp"),  # Preserve timestamp
+            "threshold_used": float(detection_result.get("threshold_used", 60.0))  # Add threshold that was used
         }
         
         # Add image paths if available
@@ -377,10 +414,13 @@ def format_detection_results(detection_result):
         if "error_message" in detection_result:
             formatted_entry["error_message"] = detection_result["error_message"]
             
-        # Add confidence metrics
-        formatted_entry["owl_confidence"] = detection_result.get("owl_confidence", 0.0)
-        formatted_entry["consecutive_owl_frames"] = detection_result.get("consecutive_owl_frames", 0)
-        formatted_entry["confidence_factors"] = detection_result.get("confidence_factors", {})
+        # Add confidence metrics, ensuring they are floats
+        formatted_entry["owl_confidence"] = float(detection_result.get("owl_confidence", 0.0))
+        formatted_entry["consecutive_owl_frames"] = int(detection_result.get("consecutive_owl_frames", 0))
+        
+        # Format confidence factors for consistency and proper serialization
+        confidence_factors = detection_result.get("confidence_factors", {})
+        formatted_entry["confidence_factors"] = format_confidence_factors(confidence_factors)
 
         logger.debug(f"Formatted detection results: {formatted_entry}")
         return formatted_entry
@@ -394,7 +434,8 @@ def format_detection_results(detection_result):
             "is_test": detection_result.get("is_test", False),
             "owl_confidence": 0.0,
             "consecutive_owl_frames": 0,
-            "confidence_factors": {}
+            "confidence_factors": {},
+            "threshold_used": 60.0  # Default threshold
         }
 
 if __name__ == "__main__":
@@ -428,11 +469,13 @@ if __name__ == "__main__":
             "comparison_path": "https://example.com/test-comparison.jpg",
             "owl_confidence": 78.5,
             "consecutive_owl_frames": 3,
+            "threshold_used": 60.0,
             "confidence_factors": {
                 "shape_confidence": 35.0,
                 "motion_confidence": 25.5,
                 "temporal_confidence": 15.0,
-                "camera_confidence": 3.0
+                "camera_confidence": 3.0,
+                "is_valid": True  # Boolean for testing
             }
         }
 
@@ -449,6 +492,18 @@ if __name__ == "__main__":
             logger.info(f"Log entry ID: {log_entry.get('id')}")
             logger.info(f"Confidence score: {log_entry.get('owl_confidence_score', 0.0)}")
             logger.info(f"Consecutive frames: {log_entry.get('consecutive_owl_frames', 0)}")
+            
+            # Test update_alert_status
+            test_alert = create_alert_entry("Owl In Box", log_entry.get('id'))
+            if test_alert:
+                update_alert_status(
+                    test_alert.get('id'),
+                    owl_confidence_score=78.5,
+                    consecutive_owl_frames=3,
+                    confidence_breakdown="shape: 35.0%, motion: 25.5%, temporal: 15.0%, camera: 3.0%",
+                    threshold_used=60.0
+                )
+                logger.info("Alert status updated successfully")
         else:
             logger.error("Failed to create test log entry")
 

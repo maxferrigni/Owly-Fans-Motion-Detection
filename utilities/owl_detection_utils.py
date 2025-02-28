@@ -84,57 +84,36 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             }
 
         logger.info(f"Starting owl detection process (Test Mode: {is_test})")
-        logger.info("Starting image preparation for owl detection")
+        logger.debug("Starting image preparation for owl detection")
 
         # Convert images to grayscale numpy arrays
         new_array = np.array(new_image.convert('L'))
         base_array = np.array(base_image.convert('L'))
 
         # Log image sizes
-        logger.info(f"Image sizes - New: {new_array.shape}, Base: {base_array.shape}")
-
-        # Calculate center point for image division
-        width = new_array.shape[1]  # Shape is (height, width)
-        center_x = width // 2
-
-        # Split the image into left and right compartments
-        left_new = new_array[:, :center_x]
-        right_new = new_array[:, center_x:]
-        left_base = base_array[:, :center_x]
-        right_base = base_array[:, center_x:]
+        logger.debug(f"Image sizes - New: {new_array.shape}, Base: {base_array.shape}")
 
         # Calculate absolute differences between new and base images
-        left_diff = cv2.absdiff(left_new, left_base)
-        right_diff = cv2.absdiff(right_new, right_base)
-
-        # Create full difference array for overall metrics
         full_diff = cv2.absdiff(new_array, base_array)
 
         # Threshold the differences to highlight significant changes
         threshold = config["motion_detection"]["brightness_threshold"]
-        _, left_thresh = cv2.threshold(left_diff, threshold, 255, cv2.THRESH_BINARY)
-        _, right_thresh = cv2.threshold(right_diff, threshold, 255, cv2.THRESH_BINARY)
+        _, binary_mask = cv2.threshold(full_diff, threshold, 255, cv2.THRESH_BINARY)
 
         # Apply noise reduction
-        kernel = np.ones((3,3), np.uint8)
-        left_thresh = cv2.morphologyEx(left_thresh, cv2.MORPH_OPEN, kernel)
-        right_thresh = cv2.morphologyEx(right_thresh, cv2.MORPH_OPEN, kernel)
+        kernel = np.ones((3, 3), np.uint8)
+        binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
 
         # Find contours of the shapes in the thresholded images
-        left_contours, _ = cv2.findContours(
-            left_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        contours, _ = cv2.findContours(
+            binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        right_contours, _ = cv2.findContours(
-            right_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        # Combine contours from both compartments
-        all_contours = left_contours + right_contours
-        total_area = new_array.shape[0] * new_array.shape[1]  # Total image area
-        contour_data = []
 
         # Analyze contours to identify potential owl candidates
-        for contour in all_contours:
+        total_area = new_array.shape[0] * new_array.shape[1]  # Total image area
+        owl_candidates = []
+
+        for contour in contours:
             area = cv2.contourArea(contour)
             area_ratio = area / total_area
             perimeter = cv2.arcLength(contour, True)
@@ -152,18 +131,23 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             brightness_diff = abs(new_mean - base_mean)
 
             # Only add contours that meet minimum criteria for owl shape
+            min_circularity = config["motion_detection"]["min_circularity"]
+            min_aspect_ratio = config["motion_detection"]["min_aspect_ratio"]
+            max_aspect_ratio = config["motion_detection"]["max_aspect_ratio"]
+            min_area_ratio = config["motion_detection"]["min_area_ratio"]
+            
             if (
-                circularity >= config["motion_detection"]["min_circularity"] and
-                config["motion_detection"]["min_aspect_ratio"] <= aspect_ratio <= config["motion_detection"]["max_aspect_ratio"] and
-                area_ratio >= config["motion_detection"]["min_area_ratio"]
+                circularity >= min_circularity and
+                min_aspect_ratio <= aspect_ratio <= max_aspect_ratio and
+                area_ratio >= min_area_ratio
             ):
-                logger.info(
+                logger.debug(
                     f"Potential owl contour found - Area Ratio: {area_ratio:.2f}, "
                     f"Circularity: {circularity:.2f}, "
                     f"Aspect Ratio: {aspect_ratio:.2f}, "
                     f"Brightness Diff: {brightness_diff:.2f}"
                 )
-                contour_data.append({
+                owl_candidates.append({
                     "area_ratio": area_ratio,
                     "circularity": circularity,
                     "aspect_ratio": aspect_ratio,
@@ -177,9 +161,6 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
         std_diff = np.std(full_diff)
         significant_pixels = np.sum(full_diff > threshold) / total_area
 
-        # Prepare detection info with metrics for confidence calculation
-        owl_candidates = [c for c in contour_data if c["area_ratio"] >= config["motion_detection"]["min_area_ratio"]]
-        
         # Prepare region analysis for confidence calculation
         height, width = full_diff.shape
         regions = {
@@ -213,14 +194,15 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
             "is_test": is_test
         }
 
-        # Calculate owl confidence
+        # Calculate owl confidence using imported function
         if camera_name is None:
-            # If camera name not provided, try to infer from config or use a default
             camera_name = "Unknown Camera"
             
+        # Calculate confidence using the specialized function from confidence_utils
         confidence_results = calculate_owl_confidence(detection_info, camera_name, config)
         
-        # Determine if owl is present based on confidence
+        # Determine if owl is present based on confidence scores
+        # This uses the imported function which only checks thresholds
         is_owl_present = is_owl_detected(
             confidence_results["owl_confidence"], 
             camera_name, 
@@ -245,7 +227,7 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, sensitivity=
         return is_owl_present, detection_info
 
     except Exception as e:
-        logger.error(f"Error in owl detection: {e}")
+        logger.error(f"Error in owl detection: {e}", exc_info=True)
         return False, {
             "error": str(e),
             "is_test": is_test,
@@ -278,11 +260,12 @@ if __name__ == "__main__":
             },
             "threshold_percentage": 0.05,
             "luminance_threshold": 40,
-            "owl_confidence_threshold": 60
+            "owl_confidence_threshold": 60.0
         }
 
         # Load test images if available
         try:
+            from PIL import Image
             test_new = Image.open("test_new.jpg")
             test_base = Image.open("test_base.jpg")
 
@@ -296,12 +279,12 @@ if __name__ == "__main__":
             )
 
             logger.info(f"Test detection result: {result}")
-            logger.info(f"Detection info: {info}")
-            logger.info(f"Confidence: {info.get('owl_confidence', 0)}%")
+            logger.info(f"Detection confidence: {info.get('owl_confidence', 0):.1f}%")
+            logger.info(f"Detection factors: {info.get('confidence_factors', {})}")
 
         except FileNotFoundError:
             logger.warning("Test images not found. Create test_new.jpg and test_base.jpg to run tests.")
 
     except Exception as e:
-        logger.error(f"Owl detection test failed: {e}")
+        logger.error(f"Owl detection test failed: {e}", exc_info=True)
         raise
