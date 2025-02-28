@@ -53,14 +53,9 @@ def get_last_alert_time(alert_type):
     """
     try:
         # Fetch the last alert time for the given alert_type
-        response = supabase_client.table('alerts') \
-                                 .select('alert_sent_at') \
-                                 .eq('alert_type', alert_type) \
-                                 .order('alert_sent_at', desc=True) \
-                                 .limit(1) \
-                                 .execute()
+        response = supabase_client.table('alerts').select('alert_sent_at').eq('alert_type', alert_type).order('alert_sent_at', desc=True).limit(1).execute()
         
-        if response.data and len(response.data) > 0:
+        if response and hasattr(response, 'data') and len(response.data) > 0:
             return response.data[0]['alert_sent_at']
         else:
             return None
@@ -84,13 +79,14 @@ def check_alert_eligibility(alert_type, cooldown_minutes):
         last_alert_time = get_last_alert_time(alert_type)
         if last_alert_time:
             # Ensure the timestamp has timezone information
-            if 'Z' in last_alert_time or '+' in last_alert_time:
-                # ISO format with timezone
-                last_alert_time = datetime.datetime.fromisoformat(last_alert_time.replace('Z', '+00:00'))
-            else:
-                # Assume UTC if no timezone info
-                last_alert_time = datetime.datetime.fromisoformat(last_alert_time)
-                last_alert_time = last_alert_time.replace(tzinfo=datetime.timezone.utc)
+            if isinstance(last_alert_time, str):
+                if 'Z' in last_alert_time or '+' in last_alert_time:
+                    # ISO format with timezone
+                    last_alert_time = datetime.datetime.fromisoformat(last_alert_time.replace('Z', '+00:00'))
+                else:
+                    # Assume UTC if no timezone info
+                    last_alert_time = datetime.datetime.fromisoformat(last_alert_time)
+                    last_alert_time = last_alert_time.replace(tzinfo=datetime.timezone.utc)
             
             # Always use timezone-aware now
             now = datetime.datetime.now(datetime.timezone.utc)
@@ -152,7 +148,7 @@ def create_alert_entry(alert_type, activity_log_id=None):
         # Insert into Supabase
         response = supabase_client.table('alerts').insert(alert_data).execute()
         
-        if response.data and len(response.data) > 0:
+        if response and hasattr(response, 'data') and len(response.data) > 0:
             logger.info(f"Created new alert entry for {alert_type}")
             return response.data[0]
         else:
@@ -211,8 +207,11 @@ def update_alert_status(
 
         # Only update if we have data
         if update_data:
-            supabase_client.table('alerts').update(update_data).eq('id', alert_id).execute()
-            logger.info(f"Updated alert status for alert ID {alert_id}")
+            response = supabase_client.table('alerts').update(update_data).eq('id', alert_id).execute()
+            if response and hasattr(response, 'data'):
+                logger.info(f"Updated alert status for alert ID {alert_id}")
+            else:
+                logger.warning(f"Failed to update alert status for alert ID {alert_id}")
         else:
             logger.warning(f"No data provided to update alert ID {alert_id}")
 
@@ -230,31 +229,43 @@ def format_confidence_factors(confidence_factors):
     Returns:
         dict: Cleaned confidence factors with only serializable values
     """
+    # If confidence_factors is None or not a dict, return empty dict
+    if not confidence_factors or not isinstance(confidence_factors, dict):
+        logger.warning(f"Invalid confidence_factors format: {type(confidence_factors)}")
+        return {}
+    
+    # Create a clean dict with only floats
+    clean_factors = {}
+    
+    # These are the factors we want to keep
+    expected_factors = [
+        "shape_confidence", 
+        "motion_confidence", 
+        "temporal_confidence", 
+        "camera_confidence"
+    ]
+    
     try:
-        # Return early if no confidence factors
-        if not confidence_factors:
-            return {}
-        
-        # Create a new dictionary with only numeric values
-        clean_factors = {}
-        
-        # These are the factors we want to keep
-        expected_factors = [
-            "shape_confidence", 
-            "motion_confidence", 
-            "temporal_confidence", 
-            "camera_confidence"
-        ]
-        
         for factor in expected_factors:
             if factor in confidence_factors:
-                # Ensure it's a float (prevents serialization issues)
-                clean_factors[factor] = float(confidence_factors[factor])
+                # Ensure it's a float
+                value = confidence_factors[factor]
+                if isinstance(value, (int, float)):
+                    clean_factors[factor] = float(value)
+                else:
+                    # Try to convert to float if possible
+                    try:
+                        clean_factors[factor] = float(value)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Could not convert {factor}={value} to float")
         
+        # Validate the result is JSON serializable
+        json.dumps(clean_factors)
         return clean_factors
+        
     except Exception as e:
         logger.error(f"Error formatting confidence factors: {e}")
-        return {}  # Return empty dict on error to prevent issues down the line
+        return {}
 
 def push_log_to_supabase(detection_results, lighting_condition=None, base_image_age=None):
     """
@@ -304,7 +315,10 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
             # Initialize all boolean flags to false - specifically using Python booleans
             "owl_in_box": False,
             "owl_on_box": False,
-            "owl_in_area": False
+            "owl_in_area": False,
+            
+            # Store camera name
+            "camera": camera_name
         }
         
         # Set the specific alert type to true if owl was detected
@@ -330,29 +344,29 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         # Add confidence metrics
         owl_confidence = float(detection_results.get('owl_confidence', 0.0))
         consecutive_frames = int(detection_results.get('consecutive_owl_frames', 0))
-        threshold_used = float(detection_results.get('threshold_used', 60.0))
         
         # Add confidence metrics to log entry
         log_entry["owl_confidence_score"] = owl_confidence
         log_entry["consecutive_owl_frames"] = consecutive_frames
-        log_entry["threshold_used"] = threshold_used
         
-        # Handle confidence factors properly for JSONB storage
+        # Get threshold value if available
+        if 'threshold_used' in detection_results:
+            log_entry["confidence_threshold_used"] = float(detection_results.get('threshold_used', 0.0))
+            
+        # Handle confidence factors separately - ensure it's properly serialized
         confidence_factors = detection_results.get('confidence_factors', {})
         if confidence_factors:
-            # Clean and format the confidence factors to ensure they're serializable
+            # Format the confidence factors to ensure they're serializable
             formatted_factors = format_confidence_factors(confidence_factors)
-            
-            # Store as properly formatted JSON
             log_entry["confidence_factors"] = formatted_factors
         
         # Log the entry for debugging
         logger.debug(f"Prepared log entry for Supabase: {log_entry}")
         
-        # Send to Supabase - explicitly using insert to handle nested structures
+        # Send to Supabase - using insert with correct method to handle all data types
         response = supabase_client.table('owl_activity_log').insert(log_entry).execute()
         
-        if response.data and len(response.data) > 0:
+        if response and hasattr(response, 'data') and len(response.data) > 0:
             logger.info(
                 f"Successfully uploaded {alert_type} data to owl_activity_log "
                 f"with {owl_confidence:.1f}% confidence, {consecutive_frames} consecutive frames"
@@ -392,7 +406,7 @@ def format_detection_results(detection_result):
         is_test = detection_result.get("is_test", False)
         is_owl_present = detection_result.get("is_owl_present", False)
         
-        # Ensure numeric metrics are properly formatted as floats
+        # Ensure numeric metrics are properly formatted
         formatted_entry = {
             "camera": camera,
             "status": status,
@@ -400,8 +414,7 @@ def format_detection_results(detection_result):
             "is_owl_present": is_owl_present,
             "pixel_change": float(detection_result.get("pixel_change", 0.0)),
             "luminance_change": float(detection_result.get("luminance_change", 0.0)),
-            "timestamp": detection_result.get("timestamp"),  # Preserve timestamp
-            "threshold_used": float(detection_result.get("threshold_used", 60.0))  # Add threshold that was used
+            "timestamp": detection_result.get("timestamp", datetime.datetime.now().isoformat())
         }
         
         # Add image paths if available
@@ -414,11 +427,15 @@ def format_detection_results(detection_result):
         if "error_message" in detection_result:
             formatted_entry["error_message"] = detection_result["error_message"]
             
-        # Add confidence metrics, ensuring they are floats
+        # Add confidence metrics
         formatted_entry["owl_confidence"] = float(detection_result.get("owl_confidence", 0.0))
         formatted_entry["consecutive_owl_frames"] = int(detection_result.get("consecutive_owl_frames", 0))
         
-        # Format confidence factors for consistency and proper serialization
+        # If threshold was used for detection, include it
+        if "threshold_used" in detection_result:
+            formatted_entry["threshold_used"] = float(detection_result["threshold_used"])
+        
+        # Format confidence factors for consistency using our dedicated function
         confidence_factors = detection_result.get("confidence_factors", {})
         formatted_entry["confidence_factors"] = format_confidence_factors(confidence_factors)
 
@@ -434,8 +451,7 @@ def format_detection_results(detection_result):
             "is_test": detection_result.get("is_test", False),
             "owl_confidence": 0.0,
             "consecutive_owl_frames": 0,
-            "confidence_factors": {},
-            "threshold_used": 60.0  # Default threshold
+            "confidence_factors": {}
         }
 
 if __name__ == "__main__":
@@ -445,10 +461,10 @@ if __name__ == "__main__":
 
         # Test get_subscribers
         email_subscribers = get_subscribers(notification_type="email")
-        logger.info(f"Found {len(email_subscribers)} email subscribers")
+        logger.info(f"Found {len(email_subscribers) if email_subscribers else 0} email subscribers")
 
         sms_subscribers = get_subscribers(notification_type="sms")
-        logger.info(f"Found {len(sms_subscribers)} SMS subscribers")
+        logger.info(f"Found {len(sms_subscribers) if sms_subscribers else 0} SMS subscribers")
 
         # Test last alert time retrieval
         last_alert = get_last_alert_time("Owl In Box")
@@ -492,18 +508,6 @@ if __name__ == "__main__":
             logger.info(f"Log entry ID: {log_entry.get('id')}")
             logger.info(f"Confidence score: {log_entry.get('owl_confidence_score', 0.0)}")
             logger.info(f"Consecutive frames: {log_entry.get('consecutive_owl_frames', 0)}")
-            
-            # Test update_alert_status
-            test_alert = create_alert_entry("Owl In Box", log_entry.get('id'))
-            if test_alert:
-                update_alert_status(
-                    test_alert.get('id'),
-                    owl_confidence_score=78.5,
-                    consecutive_owl_frames=3,
-                    confidence_breakdown="shape: 35.0%, motion: 25.5%, temporal: 15.0%, camera: 3.0%",
-                    threshold_used=60.0
-                )
-                logger.info("Alert status updated successfully")
         else:
             logger.error("Failed to create test log entry")
 

@@ -8,6 +8,7 @@ from PIL import Image
 import pyautogui
 import pytz
 import numpy as np
+import json
 
 # Import utilities
 from utilities.constants import (
@@ -57,16 +58,30 @@ def initialize_system(camera_configs, is_test=False):
                 logger.error(f"Missing ROI configuration for {camera_name}")
                 return False
             
-            # Log confidence thresholds if available
-            if "owl_confidence_threshold" in config:
-                logger.info(f"Confidence threshold for {camera_name}: {config['owl_confidence_threshold']}%")
-            if "consecutive_frames_threshold" in config:
-                logger.info(f"Consecutive frames threshold for {camera_name}: {config['consecutive_frames_threshold']}")
+            # Ensure default confidence threshold is set
+            if "owl_confidence_threshold" not in config:
+                # Set default threshold based on camera type
+                if CAMERA_MAPPINGS.get(camera_name) == "Owl In Box":
+                    config["owl_confidence_threshold"] = 75.0
+                elif CAMERA_MAPPINGS.get(camera_name) == "Owl On Box":
+                    config["owl_confidence_threshold"] = 65.0
+                else:  # Owl In Area
+                    config["owl_confidence_threshold"] = 55.0
+                logger.info(f"Set default confidence threshold for {camera_name}: {config['owl_confidence_threshold']}%")
+                
+            # Ensure consecutive frames threshold is set
+            if "consecutive_frames_threshold" not in config:
+                config["consecutive_frames_threshold"] = 2
                 
         # Verify base images directory based on local saving setting
         if not os.path.exists(BASE_IMAGES_DIR):
             os.makedirs(BASE_IMAGES_DIR, exist_ok=True)
             logger.info(f"Created base images directory: {BASE_IMAGES_DIR}")
+            
+        # Log confidence thresholds
+        threshold_info = {camera: config.get("owl_confidence_threshold", 60.0) 
+                          for camera, config in camera_configs.items()}
+        logger.info(f"Confidence thresholds: {json.dumps(threshold_info)}")
             
         logger.info("Motion detection system initialization complete")
         return True
@@ -132,17 +147,18 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 "camera": camera_name,
                 "is_test": is_test,
                 "status": alert_type,  # Set default status to camera type
-                "motion_detected": False,
+                "is_owl_present": False,
                 "pixel_change": 0.0,
                 "luminance_change": 0.0,
                 "timestamp": timestamp.isoformat(),
                 "owl_confidence": 0.0,
-                "consecutive_owl_frames": 0
+                "consecutive_owl_frames": 0,
+                "threshold_used": config.get("owl_confidence_threshold", 60.0)
             }
             
             logger.debug(f"Processing as {alert_type} type camera")
             
-            # Run owl detection with confidence calculation
+            # Pass camera name to detect_owl_in_box for temporal confidence
             is_owl_present, detection_info = detect_owl_in_box(
                 new_image, 
                 base_image,
@@ -166,7 +182,6 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             # Update detection results with detection info
             detection_results.update({
                 "status": alert_type,
-                "motion_detected": is_owl_present,
                 "is_owl_present": is_owl_present,
                 "owl_confidence": detection_info.get("owl_confidence", 0.0),
                 "consecutive_owl_frames": detection_info.get("consecutive_owl_frames", 0),
@@ -174,14 +189,14 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 "comparison_path": comparison_path,
                 "pixel_change": detection_info.get("pixel_change", 0.0),
                 "luminance_change": detection_info.get("luminance_change", 0.0),
-                "threshold_used": config.get("owl_confidence_threshold", 60.0)  # Include threshold used
+                "threshold_used": config.get("owl_confidence_threshold", 60.0)
             })
             
             logger.info(
                 f"Detection results for {camera_name}: Owl Present: {is_owl_present}, "
                 f"Confidence: {detection_results['owl_confidence']:.1f}%, "
-                f"Threshold: {detection_results['threshold_used']:.1f}%, "
-                f"Consecutive Frames: {detection_results['consecutive_owl_frames']}"
+                f"Consecutive Frames: {detection_results['consecutive_owl_frames']}, "
+                f"Threshold: {detection_results['threshold_used']}%"
             )
 
             # Format the results for database
@@ -217,15 +232,13 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             "status": "Error",
             "error_message": str(e),
             "is_test": is_test if 'is_test' in locals() else False,
-            "motion_detected": False,
             "is_owl_present": False,
             "owl_confidence": 0.0,
             "consecutive_owl_frames": 0,
             "confidence_factors": {},
             "pixel_change": 0.0,
             "luminance_change": 0.0,
-            "timestamp": datetime.now(PACIFIC_TIME).isoformat(),
-            "threshold_used": 60.0  # Default threshold
+            "timestamp": datetime.now(PACIFIC_TIME).isoformat()
         }
 
 def process_cameras(camera_configs, test_images=None):
@@ -267,13 +280,11 @@ def process_cameras(camera_configs, test_images=None):
                     "camera": camera_name,
                     "status": "Error",
                     "error_message": str(e),
-                    "motion_detected": False,
                     "is_owl_present": False,
                     "owl_confidence": 0.0,
                     "consecutive_owl_frames": 0,
                     "confidence_factors": {},
-                    "timestamp": datetime.now(PACIFIC_TIME).isoformat(),
-                    "threshold_used": 60.0  # Default threshold
+                    "timestamp": datetime.now(PACIFIC_TIME).isoformat()
                 })
         
         return results
@@ -281,6 +292,41 @@ def process_cameras(camera_configs, test_images=None):
     except Exception as e:
         logger.error(f"Error in camera processing cycle: {e}")
         raise
+
+def update_thresholds(camera_configs, new_thresholds):
+    """
+    Update confidence thresholds in camera configurations.
+    
+    Args:
+        camera_configs (dict): Camera configuration dictionary
+        new_thresholds (dict): Dictionary of camera names to new threshold values
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        for camera_name, threshold in new_thresholds.items():
+            if camera_name in camera_configs:
+                threshold_value = float(threshold)
+                if 0 <= threshold_value <= 100:
+                    camera_configs[camera_name]["owl_confidence_threshold"] = threshold_value
+                    logger.info(f"Updated confidence threshold for {camera_name} to {threshold_value}%")
+                else:
+                    logger.warning(f"Invalid threshold value for {camera_name}: {threshold_value}. Must be 0-100")
+            else:
+                logger.warning(f"Unknown camera: {camera_name}")
+        
+        # Update alert manager thresholds
+        for camera_name, config in camera_configs.items():
+            threshold = config.get("owl_confidence_threshold")
+            if threshold is not None:
+                alert_manager.set_confidence_threshold(camera_name, threshold)
+                
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating thresholds: {e}")
+        return False
 
 if __name__ == "__main__":
     # Test the motion detection

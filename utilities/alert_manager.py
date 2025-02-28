@@ -16,7 +16,7 @@ from push_to_supabase import (
 )
 
 # Import from database_utils
-from utilities.database_utils import get_subscribers
+from utilities.database_utils import get_subscribers, get_custom_thresholds
 
 logger = get_logger()
 
@@ -56,9 +56,33 @@ class AlertManager:
         # Default alert delay in minutes
         self.alert_delay = 30
         
-        # Default confidence thresholds
-        self.DEFAULT_CONFIDENCE_THRESHOLD = 60.0  # 60% confidence required for alerts
-        self.DEFAULT_CONSECUTIVE_FRAMES_THRESHOLD = 2  # At least 2 consecutive frames required
+        # Default confidence thresholds - can be overridden by config or database
+        self.default_confidence_thresholds = {
+            "Wyze Internal Camera": 75.0,  # Inside Box: Higher certainty needed
+            "Bindy Patio Camera": 65.0,    # On Box: Medium certainty
+            "Upper Patio Camera": 55.0     # Area: Lower certainty acceptable
+        }
+        
+        # Load any custom thresholds from database
+        self.load_custom_thresholds()
+        
+        # Default consecutive frames threshold
+        self.DEFAULT_CONSECUTIVE_FRAMES_THRESHOLD = 2
+
+    def load_custom_thresholds(self):
+        """Load any custom thresholds stored in the database"""
+        try:
+            # Get custom thresholds from database
+            custom_thresholds = get_custom_thresholds()
+            
+            # If we got valid thresholds, update our defaults
+            if custom_thresholds and isinstance(custom_thresholds, dict):
+                for camera, threshold in custom_thresholds.items():
+                    self.default_confidence_thresholds[camera] = threshold
+                    logger.info(f"Loaded custom threshold for {camera}: {threshold}%")
+                    
+        except Exception as e:
+            logger.error(f"Error loading custom thresholds: {e}")
 
     def set_alert_delay(self, minutes):
         """Set the minimum time between alerts in minutes"""
@@ -88,6 +112,7 @@ class AlertManager:
             if other_priority > current_priority and other_type in self.active_alerts:
                 last_alert_time = self.active_alerts[other_type]
                 if current_time - last_alert_time < 300:  # 5 minute window
+                    logger.debug(f"Alert {alert_type} suppressed by higher priority {other_type}")
                     return True
         return False
 
@@ -120,8 +145,11 @@ class AlertManager:
                     send_text_alert(camera_name, alert_type)
 
                     # Get subscriber counts for updating alert status
-                    email_subscribers = len(get_subscribers(notification_type="email", owl_location=alert_type))
-                    sms_subscribers = len(get_subscribers(notification_type="sms", owl_location=alert_type))
+                    email_subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
+                    sms_subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
+                    
+                    email_count = len(email_subscribers) if email_subscribers else 0
+                    sms_count = len(sms_subscribers) if sms_subscribers else 0
                     
                     # Additional info for alert status update
                     additional_info = {}
@@ -130,10 +158,6 @@ class AlertManager:
                     if confidence_info:
                         additional_info["owl_confidence_score"] = confidence_info.get("owl_confidence", 0.0)
                         additional_info["consecutive_owl_frames"] = confidence_info.get("consecutive_owl_frames", 0)
-                        
-                        # Add threshold used for the decision
-                        if "threshold_used" in confidence_info:
-                            additional_info["threshold_used"] = confidence_info["threshold_used"]
                         
                         # Convert confidence factors to a string representation for logging
                         confidence_factors = confidence_info.get("confidence_factors", {})
@@ -144,8 +168,8 @@ class AlertManager:
                     # Update alert status with notification counts and confidence info
                     update_alert_status(
                         alert_id=alert_entry['id'],
-                        email_count=email_subscribers,
-                        sms_count=sms_subscribers,
+                        email_count=email_count,
+                        sms_count=sms_count,
                         **additional_info
                     )
 
@@ -184,6 +208,7 @@ class AlertManager:
         for other_type, timestamp in self.active_alerts.items():
             if (self.ALERT_HIERARCHY.get(other_type, 0) > priority and 
                 current_time - timestamp < 300):  # 5 minute window
+                logger.debug(f"Alert {alert_type} suppressed by active {other_type} alert")
                 return True
         return False
 
@@ -205,15 +230,18 @@ class AlertManager:
             consecutive_frames = detection_result.get("consecutive_owl_frames", 0)
             
             # Get thresholds from config or use defaults
-            confidence_threshold = self.DEFAULT_CONFIDENCE_THRESHOLD
+            confidence_threshold = self.default_confidence_thresholds.get(
+                camera_name, 60.0
+            )
+            
+            # Config can override the default if provided
+            if config and "owl_confidence_threshold" in config:
+                confidence_threshold = config.get("owl_confidence_threshold")
+                
             frames_threshold = self.DEFAULT_CONSECUTIVE_FRAMES_THRESHOLD
             
-            if config:
-                confidence_threshold = config.get("owl_confidence_threshold", confidence_threshold)
+            if config and "consecutive_frames_threshold" in config:
                 frames_threshold = config.get("consecutive_frames_threshold", frames_threshold)
-            
-            # Store the threshold that was used for later logging
-            detection_result["threshold_used"] = confidence_threshold
             
             # Check if confidence and frames meet requirements
             if owl_confidence < confidence_threshold:
@@ -232,7 +260,7 @@ class AlertManager:
                 
             logger.info(
                 f"Alert confidence requirements met: {owl_confidence:.1f}% confidence, "
-                f"{consecutive_frames} consecutive frames"
+                f"{consecutive_frames} consecutive frames for {camera_name}"
             )
             return True
             
@@ -261,7 +289,9 @@ class AlertManager:
             return False
 
         # Check if owl is present (according to detection result)
-        if not detection_result.get("is_owl_present", False) and not detection_result.get("motion_detected", False):
+        is_owl_present = detection_result.get("is_owl_present", False)
+        
+        if not is_owl_present:
             logger.debug(f"No owl detected for {alert_type}, skipping alert")
             return False
             
@@ -269,12 +299,12 @@ class AlertManager:
         confidence_info = {
             "owl_confidence": detection_result.get("owl_confidence", 0.0),
             "consecutive_owl_frames": detection_result.get("consecutive_owl_frames", 0),
-            "confidence_factors": detection_result.get("confidence_factors", {}),
-            "threshold_used": detection_result.get("threshold_used", self.DEFAULT_CONFIDENCE_THRESHOLD)
+            "confidence_factors": detection_result.get("confidence_factors", {})
         }
         
         # Check confidence requirements
         if not self._check_confidence_requirements(detection_result, camera_name):
+            logger.info(f"Alert blocked - Confidence requirements not met for {camera_name}")
             return False
 
         # Check alert hierarchy
@@ -323,11 +353,38 @@ class AlertManager:
             },
             "alert_delay": self.alert_delay,
             "alert_hierarchy": self.ALERT_HIERARCHY.copy(),
-            "confidence_thresholds": {
-                "default_confidence": self.DEFAULT_CONFIDENCE_THRESHOLD,
-                "default_consecutive_frames": self.DEFAULT_CONSECUTIVE_FRAMES_THRESHOLD
-            }
+            "confidence_thresholds": self.default_confidence_thresholds.copy()
         }
+
+    def get_confidence_threshold(self, camera_name):
+        """Get the confidence threshold for a specific camera"""
+        return self.default_confidence_thresholds.get(camera_name, 60.0)
+
+    def set_confidence_threshold(self, camera_name, threshold):
+        """Set a custom confidence threshold for a camera"""
+        try:
+            # Validate threshold
+            threshold = float(threshold)
+            if threshold < 0 or threshold > 100:
+                logger.warning(f"Invalid threshold value: {threshold}. Must be between 0 and 100")
+                return False
+                
+            # Update local threshold
+            self.default_confidence_thresholds[camera_name] = threshold
+            logger.info(f"Set confidence threshold for {camera_name} to {threshold}%")
+            
+            # Try to save to database if available
+            try:
+                from utilities.database_utils import save_custom_threshold
+                save_custom_threshold(camera_name, threshold)
+            except ImportError:
+                logger.debug("Database save function not available, threshold only stored locally")
+                
+            return True
+            
+        except ValueError:
+            logger.error(f"Invalid threshold value: {threshold}. Must be a number")
+            return False
 
 
 if __name__ == "__main__":

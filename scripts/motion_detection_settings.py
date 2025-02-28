@@ -100,29 +100,48 @@ class MotionDetectionSettings:
         confidence_frame = ttk.LabelFrame(tab, text="Confidence Thresholds")
         confidence_frame.pack(fill="x", padx=5, pady=5)
         
-        # Add confidence threshold slider
+        # Get default confidence threshold based on camera type
         default_confidence = 60.0
-        if camera == "Wyze Internal Camera":  # Inside Box
+        if CAMERA_MAPPINGS.get(camera) == "Owl In Box":
             default_confidence = 75.0
-        elif camera == "Bindy Patio Camera":  # On Box
+        elif CAMERA_MAPPINGS.get(camera) == "Owl On Box":
             default_confidence = 65.0
-        elif camera == "Upper Patio Camera":  # Area
+        elif CAMERA_MAPPINGS.get(camera) == "Owl In Area":
             default_confidence = 55.0
             
         self.create_parameter_control(
             confidence_frame, camera,
-            "owl_confidence_threshold", "Confidence Threshold (%)",
+            "owl_confidence_threshold", "Owl Confidence %",
             0.0, 100.0, camera_config.get("owl_confidence_threshold", default_confidence),
             1.0
         )
         
-        # Add consecutive frames threshold
         self.create_parameter_control(
             confidence_frame, camera,
             "consecutive_frames_threshold", "Consecutive Frames",
             1, 10, camera_config.get("consecutive_frames_threshold", 2),
-            1.0
+            1,
+            is_integer=True
         )
+        
+        # Create confidence description frame
+        confidence_desc_frame = ttk.Frame(confidence_frame)
+        confidence_desc_frame.pack(fill="x", padx=5, pady=5)
+        
+        confidence_desc_text = (
+            f"Recommended confidence values:\n"
+            f"• Owl In Box: 70-80%\n"
+            f"• Owl On Box: 60-70%\n"
+            f"• Owl In Area: 50-60%\n"
+            f"Higher values = fewer false positives but may miss detections.\n"
+            f"Lower values = more detections but may have more false positives."
+        )
+        
+        ttk.Label(
+            confidence_desc_frame, 
+            text=confidence_desc_text,
+            wraplength=400
+        ).pack(padx=5, pady=5)
         
         # Create motion detection parameter controls
         motion_frame = ttk.LabelFrame(tab, text="Motion Detection Parameters")
@@ -172,7 +191,7 @@ class MotionDetectionSettings:
 
     def create_parameter_control(self, parent, camera, param_name, label_text, 
                                min_val, max_val, default_val, resolution,
-                               is_motion_param=False):
+                               is_motion_param=False, is_integer=False):
         """Create a labeled scale control for a parameter"""
         frame = ttk.Frame(parent)
         frame.pack(fill="x", padx=5, pady=2)
@@ -194,7 +213,7 @@ class MotionDetectionSettings:
         # Create value entry
         entry = ttk.Entry(frame, width=8)
         entry.pack(side=tk.LEFT)
-        entry.insert(0, str(default_val))
+        entry.insert(0, str(int(default_val) if is_integer else default_val))
         
         # Store original value
         if is_motion_param:
@@ -207,19 +226,23 @@ class MotionDetectionSettings:
         # Update functions
         def update_entry(*args):
             value = var.get()
+            if is_integer:
+                value = int(value)
             entry.delete(0, tk.END)
-            entry.insert(0, f"{value:.2f}")
+            entry.insert(0, f"{value}")
             self.update_config(camera, param_name, value, is_motion_param)
             
         def update_scale(event):
             try:
                 value = float(entry.get())
+                if is_integer:
+                    value = int(value)
                 if min_val <= value <= max_val:
                     var.set(value)
                     self.update_config(camera, param_name, value, is_motion_param)
             except ValueError:
                 entry.delete(0, tk.END)
-                entry.insert(0, f"{var.get():.2f}")
+                entry.insert(0, f"{int(var.get()) if is_integer else var.get():.2f}")
         
         # Bind updates
         var.trace_add("write", update_entry)
@@ -256,6 +279,13 @@ class MotionDetectionSettings:
             text="Reset to Default",
             command=self.reset_to_default
         ).pack(side=tk.LEFT, padx=5)
+        
+        # Apply to running system button (NEW)
+        ttk.Button(
+            button_frame,
+            text="Apply Now",
+            command=self.apply_to_running_system
+        ).pack(side=tk.LEFT, padx=5)
 
     def reset_to_default(self):
         """Reset all parameters to their original values"""
@@ -278,6 +308,53 @@ class MotionDetectionSettings:
         except Exception as e:
             self.logger.error(f"Error resetting settings: {e}")
             messagebox.showerror("Error", f"Failed to reset settings: {e}")
+            
+    def apply_to_running_system(self):
+        """Apply current settings to the running system without restarting"""
+        try:
+            # First save the configuration
+            self.save_config()
+            
+            # Try to communicate with the running system
+            try:
+                # Import motion_workflow here to avoid circular imports
+                from scripts.motion_workflow import update_thresholds
+                
+                # Extract confidence thresholds
+                thresholds = {}
+                for camera, config in self.config.items():
+                    if "owl_confidence_threshold" in config:
+                        thresholds[camera] = config["owl_confidence_threshold"]
+                
+                # Update running system
+                result = update_thresholds(self.config, thresholds)
+                
+                if result:
+                    self.logger.info("Settings applied to running system")
+                    messagebox.showinfo("Success", "Settings applied to running system")
+                else:
+                    messagebox.showwarning("Warning", "Could not apply all settings to running system")
+                    
+            except ImportError:
+                # If motion_workflow isn't available, inform the user
+                self.logger.warning("Could not import motion_workflow module")
+                messagebox.showinfo("Info", "Changes will take effect after restarting motion detection")
+                
+        except Exception as e:
+            self.logger.error(f"Error applying settings: {e}")
+            messagebox.showerror("Error", f"Failed to apply settings: {e}")
+
+    def get_confidence_thresholds(self):
+        """Get all configured confidence thresholds"""
+        try:
+            thresholds = {}
+            for camera, config in self.config.items():
+                if "owl_confidence_threshold" in config:
+                    thresholds[camera] = config["owl_confidence_threshold"]
+            return thresholds
+        except Exception as e:
+            self.logger.error(f"Error getting confidence thresholds: {e}")
+            return {}
 
 if __name__ == "__main__":
     # Test the interface
