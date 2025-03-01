@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pytz
 import time
 import threading
+import os
 from utilities.logging_utils import get_logger
 from alert_email import send_email_alert
 from alert_email_to_text import send_text_alert
@@ -74,6 +75,18 @@ class AlertManager:
         
         # Default consecutive frames threshold
         self.DEFAULT_CONSECUTIVE_FRAMES_THRESHOLD = 2
+        
+        # Read alert settings from environment variables
+        self.alerts_enabled = {
+            'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true',
+            'text': os.environ.get('OWL_TEXT_ALERTS', 'True').lower() == 'true',
+            'email_to_text': os.environ.get('OWL_EMAIL_TO_TEXT_ALERTS', 'True').lower() == 'true'
+        }
+        
+        # Log initial alert settings
+        logger.info(f"Alert settings initialized: Email={self.alerts_enabled['email']}, " +
+                   f"Text={self.alerts_enabled['text']}, " +
+                   f"Email-to-Text={self.alerts_enabled['email_to_text']}")
 
     def load_custom_thresholds(self):
         """Load any custom thresholds stored in the database"""
@@ -130,7 +143,7 @@ class AlertManager:
                     return True
         return False
 
-    def _send_email_and_sms_async(self, camera_name, alert_type, alert_entry, confidence_info=None):
+    def _send_email_and_sms_async(self, camera_name, alert_type, alert_entry, confidence_info=None, is_test=False):
         """
         Background thread function to send email and SMS alerts.
         
@@ -139,38 +152,87 @@ class AlertManager:
             alert_type (str): Type of alert
             alert_entry (dict): Alert entry from database
             confidence_info (dict, optional): Confidence information
+            is_test (bool, optional): Whether this is a test alert
         """
         try:
+            # Refresh alert settings from environment variables (in case they've changed)
+            self.alerts_enabled = {
+                'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true',
+                'text': os.environ.get('OWL_TEXT_ALERTS', 'True').lower() == 'true',
+                'email_to_text': os.environ.get('OWL_EMAIL_TO_TEXT_ALERTS', 'True').lower() == 'true'
+            }
+            
+            # Determine if this is a test message and prepare prefix
+            test_prefix = "TEST: " if is_test else ""
+            
             # Send email alerts in a try block to continue if it fails
-            try:
-                # Get email subscribers
-                email_subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
-                email_count = len(email_subscribers) if email_subscribers else 0
-                logger.info(f"Sending email alerts to {email_count} subscribers")
-                
-                # Send email alert
-                send_email_alert(camera_name, alert_type)
-            except Exception as e:
-                logger.error(f"Error sending email alerts: {e}")
-                email_count = 0
+            email_count = 0
+            if self.alerts_enabled['email']:
+                try:
+                    # Get email subscribers
+                    email_subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
+                    email_count = len(email_subscribers) if email_subscribers else 0
+                    logger.info(f"Sending email alerts to {email_count} subscribers")
+                    
+                    # Send email alert with test prefix if needed
+                    send_email_alert(camera_name, alert_type, is_test=is_test, test_prefix=test_prefix)
+                except Exception as e:
+                    logger.error(f"Error sending email alerts: {e}")
+                    email_count = 0
+            else:
+                logger.info("Email alerts are disabled, skipping")
             
             # Send SMS alerts in a separate try block
-            try:
-                # Get SMS subscribers
-                sms_subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
-                sms_count = len(sms_subscribers) if sms_subscribers else 0
-                logger.info(f"Sending SMS alerts to {sms_count} subscribers")
-                
-                # Send SMS alert
-                send_text_alert(camera_name, alert_type)
-            except Exception as e:
-                logger.error(f"Error sending SMS alerts: {e}")
-                sms_count = 0
+            sms_count = 0
+            if self.alerts_enabled['text']:
+                try:
+                    # Get SMS subscribers
+                    sms_subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
+                    sms_count = len(sms_subscribers) if sms_subscribers else 0
+                    logger.info(f"Sending SMS alerts to {sms_count} subscribers")
+                    
+                    # Send SMS alert with test prefix if needed
+                    send_text_alert(camera_name, alert_type, is_test=is_test, test_prefix=test_prefix)
+                except Exception as e:
+                    logger.error(f"Error sending SMS alerts: {e}")
+                    sms_count = 0
+            else:
+                logger.info("Text alerts are disabled, skipping")
+            
+            # Handle email-to-text alerts separately
+            email_to_text_count = 0
+            if self.alerts_enabled['email_to_text']:
+                try:
+                    # This would typically be inside send_text_alert, but we're keeping it separate
+                    # for clarity in this example
+                    from alert_email_to_text import send_text_via_email
+                    
+                    # Get email-to-text subscribers
+                    subscribers = get_subscribers(notification_type="email_to_text", owl_location=alert_type)
+                    email_to_text_count = len(subscribers) if subscribers else 0
+                    logger.info(f"Sending email-to-text alerts to {email_to_text_count} subscribers")
+                    
+                    if subscribers:
+                        for subscriber in subscribers:
+                            if subscriber.get('phone') and subscriber.get('carrier'):
+                                # Create message with test prefix if needed
+                                message = self._get_alert_message(camera_name, alert_type, is_test)
+                                send_text_via_email(
+                                    subscriber['phone'],
+                                    subscriber['carrier'].lower(),
+                                    message,
+                                    subscriber.get('name')
+                                )
+                except Exception as e:
+                    logger.error(f"Error sending email-to-text alerts: {e}")
+                    email_to_text_count = 0
+            else:
+                logger.info("Email-to-text alerts are disabled, skipping")
             
             # Additional info for alert status update
             additional_info = {
                 'email_recipients_count': email_count,
-                'sms_recipients_count': sms_count
+                'sms_recipients_count': sms_count + email_to_text_count  # Combine both SMS types
             }
             
             # Add confidence data if available and if column exists
@@ -215,6 +277,36 @@ class AlertManager:
         except Exception as e:
             logger.error(f"Error in background alert processing: {e}")
 
+    def _get_alert_message(self, camera_name, alert_type, is_test=False):
+        """
+        Generate alert message text with optional TEST prefix.
+        
+        Args:
+            camera_name (str): Name of the camera
+            alert_type (str): Type of alert
+            is_test (bool): Whether this is a test message
+            
+        Returns:
+            str: Formatted message text
+        """
+        # Add TEST prefix if this is a test message
+        test_prefix = "TEST: " if is_test else ""
+        
+        # Determine the message based on camera name and alert type
+        if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
+            message = (f"{test_prefix}Motion has been detected in the Upper Patio area. "
+                      "Please check the camera feed at www.owly-fans.com")
+        elif camera_name == "Bindy Patio Camera" and alert_type == "Owl On Box":
+            message = (f"{test_prefix}Motion has been detected on the Owl Box. "
+                      "Please check the camera feed at www.owly-fans.com")
+        elif camera_name == "Wyze Internal Camera" and alert_type == "Owl In Box":
+            message = (f"{test_prefix}Motion has been detected in the Owl Box. "
+                      "Please check the camera feed at www.owly-fans.com")
+        else:
+            message = f"{test_prefix}Motion has been detected by {camera_name}! Check www.owly-fans.com"
+            
+        return message
+
     def _send_alert(self, camera_name, alert_type, activity_log_id=None, confidence_info=None, is_test=False):
         """
         Send alerts based on alert type and cooldown period.
@@ -230,6 +322,11 @@ class AlertManager:
             bool: True if alert was sent, False otherwise
         """
         try:
+            # Check if any alert types are enabled
+            if not any(self.alerts_enabled.values()):
+                logger.info("All alert types are disabled, no alerts will be sent")
+                return False
+                
             # Check alert eligibility based on cooldown period - skip for test alerts
             if not is_test:
                 is_eligible, last_alert_data = check_alert_eligibility(
@@ -252,7 +349,7 @@ class AlertManager:
                 # This prevents the UI from freezing during network operations
                 thread = threading.Thread(
                     target=self._send_email_and_sms_async,
-                    args=(camera_name, alert_type, alert_entry, confidence_info)
+                    args=(camera_name, alert_type, alert_entry, confidence_info, is_test)
                 )
                 thread.daemon = True  # Make thread exit when main thread exits
                 thread.start()
@@ -361,6 +458,18 @@ class AlertManager:
         Returns:
             bool: True if an alert was sent, False otherwise
         """
+        # Refresh alert settings from environment variables
+        self.alerts_enabled = {
+            'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true',
+            'text': os.environ.get('OWL_TEXT_ALERTS', 'True').lower() == 'true',
+            'email_to_text': os.environ.get('OWL_EMAIL_TO_TEXT_ALERTS', 'True').lower() == 'true'
+        }
+        
+        # If all alert types are disabled, log and return early
+        if not any(self.alerts_enabled.values()):
+            logger.info("All alert types are disabled, skipping alert processing")
+            return False
+        
         alert_sent = False
         alert_type = detection_result.get("status")
 
@@ -429,7 +538,8 @@ class AlertManager:
             },
             "alert_delay": self.alert_delay,
             "alert_hierarchy": self.ALERT_HIERARCHY.copy(),
-            "confidence_thresholds": self.default_confidence_thresholds.copy()
+            "confidence_thresholds": self.default_confidence_thresholds.copy(),
+            "alert_types_enabled": self.alerts_enabled.copy()
         }
 
     def get_confidence_threshold(self, camera_name):

@@ -37,32 +37,43 @@ except Exception as e:
     logger.error(f"Failed to initialize Twilio client: {e}")
     raise
 
-def send_text_alert(camera_name, alert_type):
+def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
     """
     Send SMS alerts based on camera name and alert type.
     
     Args:
         camera_name (str): Name of the camera that detected motion
         alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
+        is_test (bool, optional): Whether this is a test alert
+        test_prefix (str, optional): Prefix to add for test messages (default "TEST: ")
     """
     try:
+        # Check if text alerts are enabled
+        if os.environ.get('OWL_TEXT_ALERTS', 'True').lower() != 'true':
+            logger.info("Text alerts are disabled, skipping")
+            return
+
+        # If no test_prefix was provided but is_test is True, use default
+        if is_test and not test_prefix:
+            test_prefix = "TEST: "
+
         # Determine the message based on camera name and alert type
         if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
-            message = ("Motion has been detected in the Upper Patio area. "
+            message = (f"{test_prefix}Motion has been detected in the Upper Patio area. "
                        "Please check the camera feed at www.owly-fans.com")
         elif camera_name == "Bindy Patio Camera" and alert_type == "Owl On Box":
-            message = ("Motion has been detected on the Owl Box. "
+            message = (f"{test_prefix}Motion has been detected on the Owl Box. "
                        "Please check the camera feed at www.owly-fans.com")
         elif camera_name == "Wyze Internal Camera" and alert_type == "Owl In Box":
-            message = ("Motion has been detected in the Owl Box. "
+            message = (f"{test_prefix}Motion has been detected in the Owl Box. "
                        "Please check the camera feed at www.owly-fans.com")
         else:
-            message = f"Motion has been detected by {camera_name}! Check www.owly-fans.com"
+            message = f"{test_prefix}Motion has been detected by {camera_name}! Check www.owly-fans.com"
 
         # Get SMS subscribers
         subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
 
-        logger.info(f"Sending SMS alerts to {len(subscribers)} subscribers")
+        logger.info(f"Sending{'test' if is_test else ''} SMS alerts to {len(subscribers)} subscribers")
 
         # Send to each subscriber
         for subscriber in subscribers:
@@ -74,7 +85,7 @@ def send_text_alert(camera_name, alert_type):
                     to=subscriber['phone']
                 )
 
-                logger.info(f"Text alert sent to {subscriber['phone']}: {message_obj.sid}")
+                logger.info(f"{'Test' if is_test else ''} Text alert sent to {subscriber['phone']}: {message_obj.sid}")
 
             except Exception as e:
                 logger.error(f"Failed to send text alert to {subscriber['phone']}: {e}")
@@ -132,12 +143,12 @@ if __name__ == "__main__":
     try:
         logger.info("Testing SMS alert system...")
         
-        # Test case 1: Owl In Box alert
+        # Test case 1: Standard Owl In Box alert
         send_text_alert("Wyze Internal Camera", "Owl In Box")
         time.sleep(2)  # Wait between tests
         
-        # Test case 2: Owl In Area alert
-        send_text_alert("Upper Patio Camera", "Owl In Area")
+        # Test case 2: Test Owl In Area alert
+        send_text_alert("Upper Patio Camera", "Owl In Area", is_test=True)
         
         logger.info("SMS test complete")
         

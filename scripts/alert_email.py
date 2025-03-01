@@ -28,36 +28,47 @@ if not EMAIL_PASSWORD:
     logger.error(error_msg)
     raise ValueError(error_msg)
 
-def send_email_alert(camera_name, alert_type):
+def send_email_alert(camera_name, alert_type, is_test=False, test_prefix=""):
     """
     Send email alerts based on camera name and alert type.
     
     Args:
         camera_name (str): Name of the camera that detected motion
         alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
+        is_test (bool, optional): Whether this is a test alert
+        test_prefix (str, optional): Prefix to add for test messages (default "TEST: ")
     """
     try:
+        # Check if email alerts are enabled
+        if os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() != 'true':
+            logger.info("Email alerts are disabled, skipping")
+            return
+
+        # If no test_prefix was provided but is_test is True, use default
+        if is_test and not test_prefix:
+            test_prefix = "TEST: "
+
         # Determine the subject and body based on camera name and alert type
         if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
-            subject = "ALERT: Owl In The Area"
-            body = ("Motion has been detected in the Upper Patio area. "
+            subject = f"{test_prefix}ALERT: Owl In The Area"
+            body = (f"{test_prefix}Motion has been detected in the Upper Patio area. "
                    "Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
         elif camera_name == "Bindy Patio Camera" and alert_type == "Owl On Box":
-            subject = "ALERT: Owl On The Box"
-            body = ("Motion has been detected on the Owl Box. "
+            subject = f"{test_prefix}ALERT: Owl On The Box"
+            body = (f"{test_prefix}Motion has been detected on the Owl Box. "
                    "Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
         elif camera_name == "Wyze Internal Camera" and alert_type == "Owl In Box":
-            subject = "ALERT: Owl In The Box"
-            body = ("Motion has been detected in the Owl Box. "
+            subject = f"{test_prefix}ALERT: Owl In The Box"
+            body = (f"{test_prefix}Motion has been detected in the Owl Box. "
                    "Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.")
         else:
-            subject = "ALERT: Owl Motion Detected"
-            body = f"Motion has been detected by {camera_name}! Check www.owly-fans.com"
+            subject = f"{test_prefix}ALERT: Owl Motion Detected"
+            body = f"{test_prefix}Motion has been detected by {camera_name}! Check www.owly-fans.com"
 
         # Get email subscribers
         subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
 
-        logger.info(f"Sending email alerts to {len(subscribers)} subscribers")
+        logger.info(f"Sending{'test' if is_test else ''} email alerts to {len(subscribers)} subscribers")
         
         # Send to each subscriber
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -95,7 +106,7 @@ def send_email_alert(camera_name, alert_type):
 
                     # Send the email
                     server.send_message(msg)
-                    logger.info(f"Email alert sent successfully to {to_email}")
+                    logger.info(f"{'Test' if is_test else ''} Email alert sent successfully to {to_email}")
 
                 except Exception as e:
                     logger.error(f"Failed to send email to {to_email}: {e}")
@@ -106,13 +117,18 @@ def send_email_alert(camera_name, alert_type):
     except smtplib.SMTPConnectError as e:
         logger.error(f"Connection error: {e}")
     except Exception as e:
-        logger.error(f"Unexpected error sending email to {to_email}: {e}")
+        logger.error(f"Unexpected error sending email: {e}")
 
 if __name__ == "__main__":
     # Test email functionality
     try:
         logger.info("Testing email alert system...")
+        # Test standard alert
         send_email_alert("Upper Patio Camera", "Owl In Area")
-        logger.info("Email test complete")
+        logger.info("Standard email test complete")
+        
+        # Test with TEST prefix
+        send_email_alert("Upper Patio Camera", "Owl In Area", is_test=True)
+        logger.info("Test-prefixed email test complete")
     except Exception as e:
         logger.error(f"Email test failed: {e}")

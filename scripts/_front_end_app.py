@@ -38,6 +38,12 @@ class OwlApp:
         self.local_saving_enabled = tk.BooleanVar(value=True)
         self.capture_interval = tk.IntVar(value=60)  # Default to 60 seconds
         self.alert_delay = tk.IntVar(value=30)      # Default to 30 minutes
+        
+        # Add alert toggle variables
+        self.email_alerts_enabled = tk.BooleanVar(value=True)
+        self.text_alerts_enabled = tk.BooleanVar(value=True)
+        self.email_to_text_alerts_enabled = tk.BooleanVar(value=True)
+        
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         # Set style for more immediate button rendering
@@ -154,6 +160,42 @@ class OwlApp:
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=1)
 
+        # Add Alert Settings frame
+        alert_settings_frame = ttk.LabelFrame(control_frame, text="Alert Settings")
+        alert_settings_frame.pack(fill="x", pady=3, padx=3)
+        
+        # Create a grid for alert checkboxes
+        alert_checkbox_frame = ttk.Frame(alert_settings_frame)
+        alert_checkbox_frame.pack(fill="x", pady=2, padx=3)
+        
+        # Add Email Alerts checkbox
+        ttk.Checkbutton(
+            alert_checkbox_frame,
+            text="Email Alerts",
+            variable=self.email_alerts_enabled,
+            command=self.toggle_email_alerts
+        ).grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        
+        # Add Text Alerts checkbox
+        ttk.Checkbutton(
+            alert_checkbox_frame,
+            text="Text Alerts (SMS)",
+            variable=self.text_alerts_enabled,
+            command=self.toggle_text_alerts
+        ).grid(row=0, column=1, padx=5, pady=2, sticky="w")
+        
+        # Add Email-to-Text Alerts checkbox
+        ttk.Checkbutton(
+            alert_checkbox_frame,
+            text="Email-to-Text Alerts",
+            variable=self.email_to_text_alerts_enabled,
+            command=self.toggle_email_to_text_alerts
+        ).grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        
+        # Make columns expand evenly
+        alert_checkbox_frame.columnconfigure(0, weight=1)
+        alert_checkbox_frame.columnconfigure(1, weight=1)
+
         # Add interval settings frame
         settings_frame = ttk.LabelFrame(control_frame, text="Timing Settings")
         settings_frame.pack(fill="x", pady=3, padx=3)
@@ -229,6 +271,48 @@ class OwlApp:
             text="View Logs",
             command=lambda: self.log_window.show()
         ).pack(pady=2)  # Reduced padding
+
+    def toggle_email_alerts(self):
+        """Handle email alerts toggle"""
+        is_enabled = self.email_alerts_enabled.get()
+        self.log_message(f"Email alerts {'enabled' if is_enabled else 'disabled'}")
+        
+        # Set environment variable for child processes
+        os.environ['OWL_EMAIL_ALERTS'] = str(is_enabled)
+        
+        # Update status panel
+        self.status_panel.update_status(
+            "Email Alerts",
+            "enabled" if is_enabled else "disabled"
+        )
+
+    def toggle_text_alerts(self):
+        """Handle text alerts toggle"""
+        is_enabled = self.text_alerts_enabled.get()
+        self.log_message(f"Text alerts {'enabled' if is_enabled else 'disabled'}")
+        
+        # Set environment variable for child processes
+        os.environ['OWL_TEXT_ALERTS'] = str(is_enabled)
+        
+        # Update status panel
+        self.status_panel.update_status(
+            "Text Alerts",
+            "enabled" if is_enabled else "disabled"
+        )
+
+    def toggle_email_to_text_alerts(self):
+        """Handle email-to-text alerts toggle"""
+        is_enabled = self.email_to_text_alerts_enabled.get()
+        self.log_message(f"Email-to-text alerts {'enabled' if is_enabled else 'disabled'}")
+        
+        # Set environment variable for child processes
+        os.environ['OWL_EMAIL_TO_TEXT_ALERTS'] = str(is_enabled)
+        
+        # Update status panel
+        self.status_panel.update_status(
+            "Email-to-Text",
+            "enabled" if is_enabled else "disabled"
+        )
 
     def update_capture_interval(self, *args):
         """Handle changes to the capture interval"""
@@ -412,6 +496,11 @@ class OwlApp:
                 env['OWL_LOCAL_SAVING'] = str(self.local_saving_enabled.get())
                 # Use the capture interval from the UI control
                 env['OWL_CAPTURE_INTERVAL'] = str(self.capture_interval.get())
+                
+                # Add the alert setting environment variables
+                env['OWL_EMAIL_ALERTS'] = str(self.email_alerts_enabled.get())
+                env['OWL_TEXT_ALERTS'] = str(self.text_alerts_enabled.get())
+                env['OWL_EMAIL_TO_TEXT_ALERTS'] = str(self.email_to_text_alerts_enabled.get())
                 
                 # Set alert delay
                 self.alert_manager.set_alert_delay(self.alert_delay.get())

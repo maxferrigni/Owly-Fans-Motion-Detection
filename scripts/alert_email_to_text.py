@@ -28,7 +28,7 @@ if not EMAIL_PASSWORD:
     logger.error(error_msg)
     raise ValueError(error_msg)
 
-# Update the CARRIER_EMAIL_GATEWAYS dictionary:
+# Carrier gateway mappings
 CARRIER_EMAIL_GATEWAYS = {
     "verizon": "vtext.com",
     "att": "txt.att.net",
@@ -38,8 +38,8 @@ CARRIER_EMAIL_GATEWAYS = {
     "cricket": "sms.mycricket.com",
     "metro": "mymetropcs.com",
     "googlefi": "msg.fi.google.com",
-    "spectrum": "messaging.spectrum.com",  # Try this alternative domain
-    "charter": "charter.net"               # Keep the original as an option
+    "spectrum": "messaging.spectrum.com",  # Updated to use spectrum.com domain
+    "charter": "charter.net"               # Keep original as fallback
 }
 
 def send_text_via_email(phone_number, carrier, message, recipient_name=None):
@@ -53,6 +53,11 @@ def send_text_via_email(phone_number, carrier, message, recipient_name=None):
         recipient_name (str, optional): Recipient's name for personalization
     """
     try:
+        # Check if email-to-text alerts are enabled
+        if os.environ.get('OWL_EMAIL_TO_TEXT_ALERTS', 'True').lower() != 'true':
+            logger.info("Email-to-text alerts are disabled, skipping")
+            return
+
         # Check if carrier is supported
         if carrier not in CARRIER_EMAIL_GATEWAYS:
             logger.error(f"Unsupported carrier: {carrier}")
@@ -72,7 +77,7 @@ def send_text_via_email(phone_number, carrier, message, recipient_name=None):
 
             # Personalize message if name is available
             if recipient_name:
-                message = f"Dear {recipient_name},\\n\\n{message}"
+                message = f"Dear {recipient_name},\n\n{message}"
 
             msg.attach(MIMEText(message, "plain"))
             server.send_message(msg)
@@ -82,39 +87,61 @@ def send_text_via_email(phone_number, carrier, message, recipient_name=None):
     except Exception as e:
         logger.error(f"Error sending text alert to {phone_number} ({carrier}): {e}")
 
-def send_text_alert(camera_name, alert_type):
+def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
     """
     Send SMS alerts based on camera name and alert type.
     
     Args:
         camera_name (str): Name of the camera that detected motion
         alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
+        is_test (bool, optional): Whether this is a test alert
+        test_prefix (str, optional): Prefix to add for test messages (default "TEST: ")
     """
     try:
+        # Check if email-to-text alerts are enabled
+        if os.environ.get('OWL_EMAIL_TO_TEXT_ALERTS', 'True').lower() != 'true':
+            logger.info("Email-to-text alerts are disabled, skipping")
+            return
+
+        # If no test_prefix was provided but is_test is True, use default
+        if is_test and not test_prefix:
+            test_prefix = "TEST: "
+
         # Determine the message based on camera name and alert type
         if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
-            message = ("Motion has been detected in the Upper Patio area. "
+            message = (f"{test_prefix}Motion has been detected in the Upper Patio area. "
                        "Please check the camera feed at www.owly-fans.com")
         elif camera_name == "Bindy Patio Camera" and alert_type == "Owl On Box":
-            message = ("Motion has been detected on the Owl Box. "
+            message = (f"{test_prefix}Motion has been detected on the Owl Box. "
                        "Please check the camera feed at www.owly-fans.com")
         elif camera_name == "Wyze Internal Camera" and alert_type == "Owl In Box":
-            message = ("Motion has been detected in the Owl Box. "
+            message = (f"{test_prefix}Motion has been detected in the Owl Box. "
                        "Please check the camera feed at www.owly-fans.com")
         else:
-            message = f"Motion has been detected by {camera_name}! Check www.owly-fans.com"
+            message = f"{test_prefix}Motion has been detected by {camera_name}! Check www.owly-fans.com"
 
         # Get SMS subscribers
-        subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
+        subscribers = get_subscribers(notification_type="email_to_text", owl_location=alert_type)
 
-        logger.info(f"Sending SMS alerts to {len(subscribers)} subscribers")
+        logger.info(f"Sending{'test' if is_test else ''} email-to-text alerts to {len(subscribers)} subscribers")
         
         # Send to each subscriber
         for subscriber in subscribers:
             if subscriber.get('phone') and subscriber.get('carrier'):
+                # Format phone number to remove "+" and country code for certain carriers
+                phone = subscriber['phone']
+                carrier = subscriber['carrier'].lower()
+                
+                # For Spectrum/Charter, use only the 10-digit number (no + or country code)
+                if carrier in ["spectrum", "charter"]:
+                    # Remove any non-digit characters and ensure it's 10 digits only
+                    phone = ''.join(filter(str.isdigit, phone))
+                    if len(phone) == 11 and phone.startswith('1'):
+                        phone = phone[1:]  # Remove leading 1 if present
+                
                 send_text_via_email(
-                    subscriber['phone'],
-                    subscriber['carrier'].lower(),
+                    phone,
+                    carrier,
                     message,
                     subscriber.get('name')
                 )
@@ -132,15 +159,26 @@ if __name__ == "__main__":
         logger.info("Testing email-to-text alert system...")
         
         # Test subscribers from database
-        subscribers = get_subscribers(notification_type="sms")
+        subscribers = get_subscribers(notification_type="email_to_text")
         if subscribers:
-            test_sub = subscribers
+            test_sub = subscribers[0]  # Use first subscriber for test
+            
+            # Test standard message
             send_text_via_email(
                 test_sub['phone'],
                 test_sub['carrier'].lower(),
                 "This is a test alert from Owl Monitor system.",
                 test_sub.get('name')
             )
+            
+            # Test with TEST prefix
+            send_text_alert(
+                "Wyze Internal Camera", 
+                "Owl In Box",
+                is_test=True,
+                test_prefix="TEST: "
+            )
+            
             logger.info("Email-to-text test complete")
         else:
             logger.warning("No test subscribers found")
