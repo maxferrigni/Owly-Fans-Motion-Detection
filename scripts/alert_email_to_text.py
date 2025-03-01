@@ -38,8 +38,8 @@ CARRIER_EMAIL_GATEWAYS = {
     "cricket": "sms.mycricket.com",
     "metro": "mymetropcs.com",
     "googlefi": "msg.fi.google.com",
-    "spectrum": "messaging.spectrum.com",  # Updated to use spectrum.com domain
-    "charter": "charter.net"               # Keep original as fallback
+    "spectrum": "messaging.spectrum.com",  # Updated domain
+    "charter": "charter.net"               # Keep original as an option
 }
 
 def send_text_via_email(phone_number, carrier, message, recipient_name=None):
@@ -62,6 +62,18 @@ def send_text_via_email(phone_number, carrier, message, recipient_name=None):
         if carrier not in CARRIER_EMAIL_GATEWAYS:
             logger.error(f"Unsupported carrier: {carrier}")
             return
+
+        # Format phone number - remove any '+' or country code prefix for most carriers
+        if phone_number.startswith('+'):
+            # Remove '+' and country code (usually '1' for US numbers)
+            if len(phone_number) > 10 and phone_number.startswith('+1'):
+                phone_number = phone_number[2:]  # Remove '+1'
+            else:
+                phone_number = phone_number[1:]  # Just remove '+'
+
+        # Ensure the number has exactly 10 digits for US carriers
+        if len(phone_number) > 10:
+            phone_number = phone_number[-10:]  # Take last 10 digits
 
         # Construct the email address for the gateway
         to_email = f"{phone_number}@{CARRIER_EMAIL_GATEWAYS[carrier]}"
@@ -89,23 +101,19 @@ def send_text_via_email(phone_number, carrier, message, recipient_name=None):
 
 def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
     """
-    Send SMS alerts based on camera name and alert type.
+    Send SMS alerts via email-to-text gateway based on camera name and alert type.
     
     Args:
         camera_name (str): Name of the camera that detected motion
         alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
         is_test (bool, optional): Whether this is a test alert
-        test_prefix (str, optional): Prefix to add for test messages (default "TEST: ")
+        test_prefix (str, optional): Prefix to add for test alerts (e.g., "TEST: ")
     """
     try:
         # Check if email-to-text alerts are enabled
         if os.environ.get('OWL_EMAIL_TO_TEXT_ALERTS', 'True').lower() != 'true':
             logger.info("Email-to-text alerts are disabled, skipping")
             return
-
-        # If no test_prefix was provided but is_test is True, use default
-        if is_test and not test_prefix:
-            test_prefix = "TEST: "
 
         # Determine the message based on camera name and alert type
         if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
@@ -122,26 +130,18 @@ def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
 
         # Get SMS subscribers
         subscribers = get_subscribers(notification_type="email_to_text", owl_location=alert_type)
+        if not subscribers:
+            # Fall back to standard SMS subscribers if no specific email-to-text ones
+            subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
 
-        logger.info(f"Sending{'test' if is_test else ''} email-to-text alerts to {len(subscribers)} subscribers")
+        logger.info(f"Sending {'test ' if is_test else ''}email-to-text alerts to {len(subscribers)} subscribers")
         
         # Send to each subscriber
         for subscriber in subscribers:
             if subscriber.get('phone') and subscriber.get('carrier'):
-                # Format phone number to remove "+" and country code for certain carriers
-                phone = subscriber['phone']
-                carrier = subscriber['carrier'].lower()
-                
-                # For Spectrum/Charter, use only the 10-digit number (no + or country code)
-                if carrier in ["spectrum", "charter"]:
-                    # Remove any non-digit characters and ensure it's 10 digits only
-                    phone = ''.join(filter(str.isdigit, phone))
-                    if len(phone) == 11 and phone.startswith('1'):
-                        phone = phone[1:]  # Remove leading 1 if present
-                
                 send_text_via_email(
-                    phone,
-                    carrier,
+                    subscriber['phone'],
+                    subscriber['carrier'].lower(),
                     message,
                     subscriber.get('name')
                 )
@@ -158,31 +158,14 @@ if __name__ == "__main__":
     try:
         logger.info("Testing email-to-text alert system...")
         
-        # Test subscribers from database
-        subscribers = get_subscribers(notification_type="email_to_text")
-        if subscribers:
-            test_sub = subscribers[0]  # Use first subscriber for test
-            
-            # Test standard message
-            send_text_via_email(
-                test_sub['phone'],
-                test_sub['carrier'].lower(),
-                "This is a test alert from Owl Monitor system.",
-                test_sub.get('name')
-            )
-            
-            # Test with TEST prefix
-            send_text_alert(
-                "Wyze Internal Camera", 
-                "Owl In Box",
-                is_test=True,
-                test_prefix="TEST: "
-            )
-            
-            logger.info("Email-to-text test complete")
-        else:
-            logger.warning("No test subscribers found")
-            
+        # Test regular alert
+        send_text_alert("Wyze Internal Camera", "Owl In Box")
+        
+        # Test with test prefix
+        send_text_alert("Upper Patio Camera", "Owl In Area", is_test=True, test_prefix="TEST: ")
+        
+        logger.info("Email-to-text test complete")
+        
     except Exception as e:
         logger.error(f"Email-to-text test failed: {e}")
         raise

@@ -45,17 +45,13 @@ def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
         camera_name (str): Name of the camera that detected motion
         alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
         is_test (bool, optional): Whether this is a test alert
-        test_prefix (str, optional): Prefix to add for test messages (default "TEST: ")
+        test_prefix (str, optional): Prefix to add for test alerts (e.g., "TEST: ")
     """
     try:
         # Check if text alerts are enabled
         if os.environ.get('OWL_TEXT_ALERTS', 'True').lower() != 'true':
             logger.info("Text alerts are disabled, skipping")
             return
-
-        # If no test_prefix was provided but is_test is True, use default
-        if is_test and not test_prefix:
-            test_prefix = "TEST: "
 
         # Determine the message based on camera name and alert type
         if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
@@ -73,19 +69,24 @@ def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
         # Get SMS subscribers
         subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
 
-        logger.info(f"Sending{'test' if is_test else ''} SMS alerts to {len(subscribers)} subscribers")
+        logger.info(f"Sending {'test ' if is_test else ''}SMS alerts to {len(subscribers)} subscribers")
 
         # Send to each subscriber
         for subscriber in subscribers:
             try:
+                # Format phone number for Twilio
+                phone_number = subscriber['phone']
+                if not phone_number.startswith('+'):
+                    phone_number = '+' + phone_number
+
                 # Create and send the SMS message
                 message_obj = twilio_client.messages.create(
                     body=message,
                     from_=TWILIO_PHONE_NUMBER,
-                    to=subscriber['phone']
+                    to=phone_number
                 )
 
-                logger.info(f"{'Test' if is_test else ''} Text alert sent to {subscriber['phone']}: {message_obj.sid}")
+                logger.info(f"{'Test ' if is_test else ''}Text alert sent to {subscriber['phone']}: {message_obj.sid}")
 
             except Exception as e:
                 logger.error(f"Failed to send text alert to {subscriber['phone']}: {e}")
@@ -143,12 +144,12 @@ if __name__ == "__main__":
     try:
         logger.info("Testing SMS alert system...")
         
-        # Test case 1: Standard Owl In Box alert
+        # Test case 1: Regular alert
         send_text_alert("Wyze Internal Camera", "Owl In Box")
         time.sleep(2)  # Wait between tests
         
-        # Test case 2: Test Owl In Area alert
-        send_text_alert("Upper Patio Camera", "Owl In Area", is_test=True)
+        # Test case 2: Test alert with prefix
+        send_text_alert("Upper Patio Camera", "Owl In Area", is_test=True, test_prefix="TEST: ")
         
         logger.info("SMS test complete")
         
