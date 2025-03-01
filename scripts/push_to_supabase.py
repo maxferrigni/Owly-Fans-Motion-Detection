@@ -340,19 +340,20 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         if "base_image_age_seconds" in table_columns:
             log_entry["base_image_age_seconds"] = base_image_age
         
-        # Initialize owl detection flags if columns exist - Use integers instead of booleans
-        for owl_location in ["owl_in_box", "owl_on_box", "owl_in_area"]:
-            if owl_location in table_columns:
-                log_entry[owl_location] = 0  # Use 0 instead of False for JSON serialization
+        # Initialize owl detection flags directly
+        log_entry["owl_in_box"] = 0  # Use 0 instead of False for JSON serialization
+        log_entry["owl_on_box"] = 0
+        log_entry["owl_in_area"] = 0
         
-        # Set the camera if column exists
-        if "camera" in table_columns:
-            log_entry["camera"] = camera_name
-        
-        # Set the specific alert type to 1 if owl was detected and column exists
+        # Set the appropriate flag to 1 if owl was detected
         is_owl_present = detection_results.get('is_owl_present', False)
-        if field_prefix in table_columns:
-            log_entry[field_prefix] = 1 if is_owl_present else 0  # Use 1/0 instead of True/False
+        if is_owl_present:
+            if camera_name == "Wyze Internal Camera":
+                log_entry["owl_in_box"] = 1
+            elif camera_name == "Bindy Patio Camera":
+                log_entry["owl_on_box"] = 1
+            elif camera_name == "Upper Patio Camera":
+                log_entry["owl_in_area"] = 1
         
         # Add metrics specific to this alert type if columns exist
         pixel_change = float(detection_results.get('pixel_change', 0.0))
