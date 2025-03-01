@@ -28,7 +28,7 @@ if not EMAIL_PASSWORD:
     logger.error(error_msg)
     raise ValueError(error_msg)
 
-# Carrier gateway mappings
+# Update the CARRIER_EMAIL_GATEWAYS dictionary:
 CARRIER_EMAIL_GATEWAYS = {
     "verizon": "vtext.com",
     "att": "txt.att.net",
@@ -38,7 +38,8 @@ CARRIER_EMAIL_GATEWAYS = {
     "cricket": "sms.mycricket.com",
     "metro": "mymetropcs.com",
     "googlefi": "msg.fi.google.com",
-    "spectrum": "charter.net",
+    "spectrum": "messaging.spectrum.com",  # Try this alternative domain
+    "charter": "charter.net"               # Keep the original as an option
 }
 
 def send_text_via_email(phone_number, carrier, message, recipient_name=None):
