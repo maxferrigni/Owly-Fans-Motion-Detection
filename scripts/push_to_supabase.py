@@ -171,8 +171,8 @@ def create_alert_entry(alert_type, activity_log_id=None):
 
 def update_alert_status(
     alert_id,
-    email_count=None,
-    sms_count=None,
+    email_recipients_count=None,
+    sms_recipients_count=None,
     previous_alert_id=None,
     priority_override=None,
     owl_confidence_score=None,
@@ -185,8 +185,8 @@ def update_alert_status(
 
     Args:
         alert_id (int): ID of the alert entry to update
-        email_count (int, optional): Number of email notifications sent
-        sms_count (int, optional): Number of SMS notifications sent
+        email_recipients_count (int, optional): Number of email notifications sent
+        sms_recipients_count (int, optional): Number of SMS notifications sent
         previous_alert_id (int, optional): ID of the previous alert that was overridden
         priority_override (bool, optional): Whether this alert overrides a previous alert
         owl_confidence_score (float, optional): Confidence score for the owl detection
@@ -198,11 +198,11 @@ def update_alert_status(
         # Build update data, checking each column exists before adding it
         update_data = {}
         
-        if email_count is not None and check_column_exists("alerts", "email_recipients_count"):
-            update_data['email_recipients_count'] = email_count
+        if email_recipients_count is not None and check_column_exists("alerts", "email_recipients_count"):
+            update_data['email_recipients_count'] = email_recipients_count
             
-        if sms_count is not None and check_column_exists("alerts", "sms_recipients_count"):
-            update_data['sms_recipients_count'] = sms_count
+        if sms_recipients_count is not None and check_column_exists("alerts", "sms_recipients_count"):
+            update_data['sms_recipients_count'] = sms_recipients_count
             
         if previous_alert_id is not None and check_column_exists("alerts", "previous_alert_id"):
             update_data['previous_alert_id'] = previous_alert_id
@@ -340,20 +340,15 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         if "base_image_age_seconds" in table_columns:
             log_entry["base_image_age_seconds"] = base_image_age
         
-        # Initialize owl detection flags directly
-        log_entry["owl_in_box"] = 0  # Use 0 instead of False for JSON serialization
-        log_entry["owl_on_box"] = 0
-        log_entry["owl_in_area"] = 0
+        # Initialize owl detection flags if columns exist - Use integers instead of booleans
+        for owl_location in ["owl_in_box", "owl_on_box", "owl_in_area"]:
+            if owl_location in table_columns:
+                log_entry[owl_location] = 0  # Use 0 instead of False for JSON serialization
         
-        # Set the appropriate flag to 1 if owl was detected
+        # Set the specific alert type to 1 if owl was detected and column exists
         is_owl_present = detection_results.get('is_owl_present', False)
-        if is_owl_present:
-            if camera_name == "Wyze Internal Camera":
-                log_entry["owl_in_box"] = 1
-            elif camera_name == "Bindy Patio Camera":
-                log_entry["owl_on_box"] = 1
-            elif camera_name == "Upper Patio Camera":
-                log_entry["owl_in_area"] = 1
+        if field_prefix in table_columns:
+            log_entry[field_prefix] = 1 if is_owl_present else 0  # Use 1/0 instead of True/False
         
         # Add metrics specific to this alert type if columns exist
         pixel_change = float(detection_results.get('pixel_change', 0.0))
