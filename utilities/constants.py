@@ -9,7 +9,7 @@ from datetime import datetime
 import pytz
 
 # Base directory path definition
-BASE_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection"
+BASE_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection_Dev"
 
 # Directory structure
 LOCAL_FILES_DIR = os.path.join(BASE_DIR, "20_Local_Files")
