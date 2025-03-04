@@ -15,7 +15,7 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 # Import utilities and modules
-from utilities.constants import SCRIPTS_DIR, ensure_directories_exist
+from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, BASE_DIR
 from utilities.logging_utils import get_logger
 from utilities.alert_manager import AlertManager
 from motion_detection_settings import MotionDetectionSettings
@@ -32,6 +32,16 @@ class OwlApp:
         self.root.geometry("900x600+-1920+0")  # Reduced height to 600
         self.root.update_idletasks()
         self.root.resizable(True, True)
+        
+        # Add environment indicator
+        is_dev = "Dev" in BASE_DIR
+        self.env_label = ttk.Label(
+            self.root,
+            text="DEV ENVIRONMENT" if is_dev else "PRODUCTION",
+            font=("Arial", 12, "bold"),
+            foreground="red" if is_dev else "green"
+        )
+        self.env_label.pack(side="top", pady=5)
 
         # Initialize variables
         self.script_process = None
@@ -442,11 +452,55 @@ class OwlApp:
             return
 
         try:
-            self.log_message("Resetting local repository and pulling latest updates...")
+            # Check if we're in DEV environment
+            is_dev = "Dev" in BASE_DIR
+            branch = "dev" if is_dev else "main"
+            
+            self.log_message(f"Updating system from {branch} branch...")
             original_dir = os.getcwd()
             os.chdir(os.path.dirname(SCRIPTS_DIR))
 
             try:
+                # First fetch to get all remote branches
+                result_fetch = subprocess.run(
+                    ["git", "fetch"],
+                    capture_output=True,
+                    text=True
+                )
+                self.log_message("Fetching latest branches and changes...")
+                
+                # Check if the branch exists locally
+                result_branch_check = subprocess.run(
+                    ["git", "branch", "--list", branch],
+                    capture_output=True,
+                    text=True
+                )
+                
+                # If branch doesn't exist locally, but exists remotely, create it
+                if not result_branch_check.stdout.strip():
+                    self.log_message(f"Creating {branch} branch from origin/{branch}...")
+                    result_branch_create = subprocess.run(
+                        ["git", "checkout", "-b", branch, f"origin/{branch}"],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result_branch_create.returncode != 0:
+                        self.log_message(f"Error creating {branch} branch: {result_branch_create.stderr}", "ERROR")
+                        messagebox.showerror("Update Failed", f"Failed to create {branch} branch. Check logs for details.")
+                        return
+                else:
+                    # Branch exists, check it out
+                    result_checkout = subprocess.run(
+                        ["git", "checkout", branch],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result_checkout.returncode != 0:
+                        self.log_message(f"Error checking out {branch} branch: {result_checkout.stderr}", "ERROR")
+                        messagebox.showerror("Update Failed", f"Failed to checkout {branch} branch. Check logs for details.")
+                        return
+                
+                self.log_message(f"Now on {branch} branch, resetting and pulling latest changes...")
                 result_reset = subprocess.run(
                     ["git", "reset", "--hard"],
                     capture_output=True,
@@ -462,17 +516,17 @@ class OwlApp:
                 self.log_message(result_clean.stdout)
 
                 result_pull = subprocess.run(
-                    ["git", "pull"],
+                    ["git", "pull", "origin", branch],
                     capture_output=True,
                     text=True
                 )
 
                 if result_pull.returncode == 0:
-                    self.log_message("Git pull successful. Restarting application...")
+                    self.log_message(f"Git pull from {branch} successful. Restarting application...")
                     self.restart_application()
                 else:
-                    self.log_message(f"Git pull failed: {result_pull.stderr}", "ERROR")
-                    messagebox.showerror("Update Failed", "Git pull failed. Check logs for details.")
+                    self.log_message(f"Git pull from {branch} failed: {result_pull.stderr}", "ERROR")
+                    messagebox.showerror("Update Failed", f"Git pull from {branch} failed. Check logs for details.")
             finally:
                 os.chdir(original_dir)
         except Exception as e:
