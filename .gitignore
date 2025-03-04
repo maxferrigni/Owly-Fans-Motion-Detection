@@ -23,6 +23,7 @@ wheels/
 # Environment variables
 .env
 .env.txt
+.env.*
 
 # IDE
 .idea/
@@ -43,6 +44,7 @@ ehthumbs.db
 /Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/20_Local_Files/
 /Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/20_Input_Files/
 /Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection/30_Output_Files/
+**/20_Local_Files/
 
 # Logs and data files
 *.log
@@ -51,6 +53,7 @@ ehthumbs.db
 *.xls
 *.json
 *.txt
+**/logs/
 
 # Media files
 *.jpg
