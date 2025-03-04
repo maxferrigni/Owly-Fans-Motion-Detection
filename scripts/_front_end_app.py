@@ -222,7 +222,7 @@ class OwlApp:
         interval_spinner = ttk.Spinbox(
             interval_frame,
             from_=10,
-            to=300,
+            to=600,
             increment=10,
             textvariable=self.capture_interval,
             width=5
@@ -334,9 +334,9 @@ class OwlApp:
                 self.capture_interval.set(10)
                 interval = 10
                 self.log_message("Minimum capture interval is 10 seconds", "WARNING")
-            elif interval > 300:
-                self.capture_interval.set(300)
-                interval = 300
+            elif interval > 600:
+                self.capture_interval.set(600)
+                interval = 600
                 self.log_message("Maximum capture interval is 300 seconds", "WARNING")
                 
             # Update environment variable for child processes
