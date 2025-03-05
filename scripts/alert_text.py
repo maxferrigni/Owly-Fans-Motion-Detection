@@ -1,5 +1,10 @@
 # File: alert_text.py
 # Purpose: Handle SMS text message alerts for the owl monitoring system
+#
+# March 4, 2025 Update - Version 1.1.0
+# - Added support for multiple owl detection scenarios
+# - Updated to include image URLs in text messages
+# - Enhanced alert messaging based on priority system
 
 import os
 from twilio.rest import Client
@@ -8,6 +13,7 @@ import time
 
 # Import utilities
 from utilities.logging_utils import get_logger
+from utilities.constants import ALERT_PRIORITIES
 
 # Corrected import: from database_utils
 from utilities.database_utils import get_subscribers
@@ -37,15 +43,16 @@ except Exception as e:
     logger.error(f"Failed to initialize Twilio client: {e}")
     raise
 
-def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
+def send_text_alert(camera_name, alert_type, is_test=False, test_prefix="", image_url=None):
     """
     Send SMS alerts based on camera name and alert type.
     
     Args:
         camera_name (str): Name of the camera that detected motion
-        alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
+        alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area", etc.)
         is_test (bool, optional): Whether this is a test alert
         test_prefix (str, optional): Prefix to add for test alerts (e.g., "TEST: ")
+        image_url (str, optional): URL to the comparison image (added in v1.1.0)
     """
     try:
         # Check if text alerts are enabled
@@ -53,7 +60,11 @@ def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
             logger.info("Text alerts are disabled, skipping")
             return
 
+        # Get priority level for better logging
+        priority_level = ALERT_PRIORITIES.get(alert_type, 1)
+
         # Determine the message based on camera name and alert type
+        # Enhanced in v1.1.0 to support multiple owl detection scenarios
         if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
             message = (f"{test_prefix}Motion has been detected in the Upper Patio area. "
                        "Please check the camera feed at www.owly-fans.com")
@@ -63,13 +74,27 @@ def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
         elif camera_name == "Wyze Internal Camera" and alert_type == "Owl In Box":
             message = (f"{test_prefix}Motion has been detected in the Owl Box. "
                        "Please check the camera feed at www.owly-fans.com")
+        elif alert_type == "Two Owls":
+            message = (f"{test_prefix}Two owls have been detected in the area! "
+                      "Please check the camera feed at www.owly-fans.com")
+        elif alert_type == "Two Owls In Box":
+            message = (f"{test_prefix}Two owls have been detected in the box! "
+                      "Please check the camera feed at www.owly-fans.com")
+        elif alert_type == "Eggs Or Babies":
+            message = (f"{test_prefix}Eggs or babies may have been detected in the box! "
+                      "Please check the camera feed at www.owly-fans.com")
         else:
             message = f"{test_prefix}Motion has been detected by {camera_name}! Check www.owly-fans.com"
+
+        # Add image URL if provided - New in v1.1.0
+        if image_url:
+            message += f"\nView image: {image_url}"
 
         # Get SMS subscribers
         subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
 
         logger.info(f"Sending {'test ' if is_test else ''}SMS alerts to {len(subscribers)} subscribers")
+        logger.info(f"Alert type: {alert_type} (Priority: {priority_level})")
 
         # Send to each subscriber
         for subscriber in subscribers:
@@ -106,7 +131,7 @@ def is_valid_phone_number(phone_number):
     """
     # Check length (10 digits for US numbers, 11 digits starting with 1)
     if len(phone_number) == 10:
-        return True  # Assuming US numbers (10 digits starting with 1)
+        return True  # Assuming US numbers (10 digits)
     elif len(phone_number) == 11 and phone_number.startswith('1'):
         return True
     return False
@@ -144,12 +169,16 @@ if __name__ == "__main__":
     try:
         logger.info("Testing SMS alert system...")
         
-        # Test case 1: Regular alert
-        send_text_alert("Wyze Internal Camera", "Owl In Box")
+        # Test case 1: Regular alert with image URL
+        test_image_url = "https://project-dev-123.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_image.jpg"
+        send_text_alert("Wyze Internal Camera", "Owl In Box", image_url=test_image_url)
         time.sleep(2)  # Wait between tests
         
         # Test case 2: Test alert with prefix
         send_text_alert("Upper Patio Camera", "Owl In Area", is_test=True, test_prefix="TEST: ")
+        
+        # Test case 3: Multiple owl alert
+        send_text_alert("Wyze Internal Camera", "Two Owls In Box", is_test=True, test_prefix="TEST: ")
         
         logger.info("SMS test complete")
         
