@@ -56,7 +56,7 @@ class OwlApp:
         self.alert_manager = AlertManager()
         self.logger = get_logger()
 
-        # Add environment and version labels
+        # Add environment indicator and version
         self.env_label = ttk.Label(
             self.root,
             text="DEV ENVIRONMENT" if "Dev" in BASE_DIR else "PRODUCTION",
@@ -555,20 +555,12 @@ class OwlApp:
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}", "ERROR")
 
-def refresh_logs(self):
-    """Refresh log display with script output"""
-    try:
-        while self.script_process and self.script_process.stdout:
-            line = self.script_process.stdout.readline()
-            if line.strip():
-                self.log_message(line.strip())
-                
-        # This is important - if we get here, the process has ended
-        if self.script_process:
-            self.script_process = None
-            self.stop_button.config(state=tk.DISABLED)
-            self.status_panel.update_status("Motion Detection", "stopped")
-            self.log_message("Motion detection script ended", "WARNING")
-            
-    except Exception as e:
-        self.log_message(f"Error reading logs: {e}", "ERROR")
+    def refresh_logs(self):
+        """Refresh log display with script output"""
+        try:
+            while self.script_process and self.script_process.stdout:
+                line = self.script_process.stdout.readline()
+                if line.strip():
+                    self.log_message(line.strip())
+        except Exception as e:
+            self.log_message(f"Error reading logs: {e}", "ERROR")
