@@ -7,9 +7,16 @@ import pandas as pd
 import logging
 from datetime import datetime
 import pytz
+from dotenv import load_dotenv
 
-# Base directory path definition
-BASE_DIR = "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection"
+# Load environment variables
+load_dotenv()
+
+# Version information
+VERSION = "1.0.1"
+
+# Base directory path from environment variables with fallback
+BASE_DIR = os.getenv("BASE_DIR", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection")
 
 # Directory structure
 LOCAL_FILES_DIR = os.path.join(BASE_DIR, "20_Local_Files")
