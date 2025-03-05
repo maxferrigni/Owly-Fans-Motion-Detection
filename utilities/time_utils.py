@@ -1,11 +1,10 @@
 # File: utilities/time_utils.py
 # Purpose: Determine optimal lighting conditions for base image capture and motion detection
 #
-# March 4, 2025 Update - Version 1.1.0
-# - Simplified lighting conditions to only true day and true night
-# - Added transition period detection for improved base image handling
-# - Added day/night transition detection for after action reports
-# - Added support for tracking lighting condition changes
+# March 5, 2025 Update - Version 1.2.0
+# - Enhanced should_generate_after_action_report() with time-based fallback
+# - Added database integration for report tracking
+# - Reduced excessive error checking
 
 from datetime import datetime, timedelta, date
 import pytz
@@ -15,6 +14,9 @@ import json
 import time
 from utilities.configs_loader import load_sunrise_sunset_data
 from utilities.logging_utils import get_logger
+
+# Import database utility for report time tracking
+from utilities.database_utils import get_last_report_time
 
 # Initialize logger
 logger = get_logger()
@@ -136,70 +138,65 @@ def get_current_lighting_condition():
             'night' - Full darkness (true_night)
             'transition' - Dawn or dusk periods
     """
-    try:
-        current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
+    current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
+    
+    # Check if cached condition is still valid
+    if (_lighting_condition_cache['timestamp'] and 
+        _lighting_condition_cache['condition'] and
+        current_time - _lighting_condition_cache['timestamp'] < _lighting_condition_cache['cache_duration']):
         
-        # Check if cached condition is still valid
-        if (_lighting_condition_cache['timestamp'] and 
-            _lighting_condition_cache['condition'] and
-            current_time - _lighting_condition_cache['timestamp'] < _lighting_condition_cache['cache_duration']):
+        logger.debug("Using cached lighting condition")
+        return _lighting_condition_cache['condition']
+        
+    # Get detailed condition
+    detailed_condition = _get_detailed_lighting_condition()
+    
+    # Map detailed condition to simplified condition for v1.1.0
+    condition_mapping = {
+        'true_day': 'day',
+        'true_night': 'night',
+        'dawn': 'transition',
+        'dusk': 'transition',
+        'unknown': 'transition'  # Default to transition if unknown
+    }
+    
+    # Get simplified condition
+    condition = condition_mapping.get(detailed_condition, 'transition')
+    
+    # Check if lighting condition has changed
+    previous_condition = _lighting_condition_cache.get('condition')
+    if previous_condition != condition:
+        # Store previous condition for transition tracking
+        _lighting_condition_cache['previous_condition'] = previous_condition
+        
+        # Record the start time of this new lighting condition
+        _base_image_timing_cache['stable_period_start'][condition] = current_time
+        
+        # If transitioning between day and night or vice versa, record for after action report
+        if previous_condition in ['day', 'night'] and condition in ['day', 'night'] and previous_condition != condition:
+            _detailed_lighting_info['last_transition_end'] = current_time
+            logger.info(f"Major lighting transition detected: {previous_condition} to {condition}")
+        elif previous_condition and condition == 'transition':
+            _detailed_lighting_info['last_transition_start'] = current_time
+            logger.info(f"Entering transition period from {previous_condition}")
+        
+        # Record day/night period starts
+        if condition == 'day':
+            _detailed_lighting_info['last_day_period'] = current_time
+        elif condition == 'night':
+            _detailed_lighting_info['last_night_period'] = current_time
             
-            logger.debug("Using cached lighting condition")
-            return _lighting_condition_cache['condition']
-            
-        # Get detailed condition
-        detailed_condition = _get_detailed_lighting_condition()
+        # Record transition time for base image capture logic
+        _base_image_timing_cache['last_transition_time'] = current_time
         
-        # Map detailed condition to simplified condition for v1.1.0
-        condition_mapping = {
-            'true_day': 'day',
-            'true_night': 'night',
-            'dawn': 'transition',
-            'dusk': 'transition',
-            'unknown': 'transition'  # Default to transition if unknown
-        }
-        
-        # Get simplified condition
-        condition = condition_mapping.get(detailed_condition, 'transition')
-        
-        # Check if lighting condition has changed
-        previous_condition = _lighting_condition_cache.get('condition')
-        if previous_condition != condition:
-            # Store previous condition for transition tracking
-            _lighting_condition_cache['previous_condition'] = previous_condition
-            
-            # Record the start time of this new lighting condition
-            _base_image_timing_cache['stable_period_start'][condition] = current_time
-            
-            # If transitioning between day and night or vice versa, record for after action report
-            if previous_condition in ['day', 'night'] and condition in ['day', 'night'] and previous_condition != condition:
-                _detailed_lighting_info['last_transition_end'] = current_time
-                logger.info(f"Major lighting transition detected: {previous_condition} to {condition}")
-            elif previous_condition and condition == 'transition':
-                _detailed_lighting_info['last_transition_start'] = current_time
-                logger.info(f"Entering transition period from {previous_condition}")
-            
-            # Record day/night period starts
-            if condition == 'day':
-                _detailed_lighting_info['last_day_period'] = current_time
-            elif condition == 'night':
-                _detailed_lighting_info['last_night_period'] = current_time
-                
-            # Record transition time for base image capture logic
-            _base_image_timing_cache['last_transition_time'] = current_time
-            
-            logger.info(f"Lighting condition changed from {previous_condition} to {condition}")
-        
-        # Update cache
-        _lighting_condition_cache['timestamp'] = current_time
-        _lighting_condition_cache['condition'] = condition
-        
-        logger.debug(f"New lighting condition calculated: {condition} (detailed: {detailed_condition})")
-        return condition
-        
-    except Exception as e:
-        logger.error(f"Error determining lighting condition: {e}")
-        return 'transition'  # Default to transition in case of error
+        logger.info(f"Lighting condition changed from {previous_condition} to {condition}")
+    
+    # Update cache
+    _lighting_condition_cache['timestamp'] = current_time
+    _lighting_condition_cache['condition'] = condition
+    
+    logger.debug(f"New lighting condition calculated: {condition} (detailed: {detailed_condition})")
+    return condition
 
 def get_lighting_info():
     """
@@ -208,24 +205,20 @@ def get_lighting_info():
     Returns:
         dict: Dictionary containing current lighting information
     """
-    try:
-        condition = get_current_lighting_condition()
-        detailed_condition = _get_detailed_lighting_condition()
-        sun_data = _get_cached_sun_data()
-        
-        # Enhanced lighting info for v1.1.0
-        return {
-            'condition': condition,
-            'detailed_condition': detailed_condition,
-            'sun_data': sun_data,
-            'cache_time': _lighting_condition_cache['timestamp'],
-            'previous_condition': _lighting_condition_cache.get('previous_condition'),
-            'is_transition': condition == 'transition',
-            'last_transition_time': _base_image_timing_cache.get('last_transition_time')
-        }
-    except Exception as e:
-        logger.error(f"Error getting lighting info: {e}")
-        return None
+    condition = get_current_lighting_condition()
+    detailed_condition = _get_detailed_lighting_condition()
+    sun_data = _get_cached_sun_data()
+    
+    # Enhanced lighting info for v1.1.0
+    return {
+        'condition': condition,
+        'detailed_condition': detailed_condition,
+        'sun_data': sun_data,
+        'cache_time': _lighting_condition_cache['timestamp'],
+        'previous_condition': _lighting_condition_cache.get('previous_condition'),
+        'is_transition': condition == 'transition',
+        'last_transition_time': _base_image_timing_cache.get('last_transition_time')
+    }
 
 def is_lighting_condition_stable():
     """
@@ -235,28 +228,23 @@ def is_lighting_condition_stable():
     Returns:
         bool: True if lighting condition is stable
     """
-    try:
-        current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
-        condition = get_current_lighting_condition()
-        
-        # In v1.1.0, only day and night are considered stable
-        if condition == 'transition':
-            logger.debug("Currently in transition period, not stable for base image capture")
-            return False
-        
-        # If we don't have a record of when this condition started, it's not stable yet
-        if condition not in _base_image_timing_cache['stable_period_start']:
-            return False
-            
-        # Check if we've been in this lighting condition long enough
-        stable_start = _base_image_timing_cache['stable_period_start'][condition]
-        stable_duration = current_time - stable_start
-        
-        return stable_duration >= _base_image_timing_cache['min_stable_period']
-        
-    except Exception as e:
-        logger.error(f"Error checking lighting stability: {e}")
+    current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
+    condition = get_current_lighting_condition()
+    
+    # In v1.1.0, only day and night are considered stable
+    if condition == 'transition':
+        logger.debug("Currently in transition period, not stable for base image capture")
         return False
+    
+    # If we don't have a record of when this condition started, it's not stable yet
+    if condition not in _base_image_timing_cache['stable_period_start']:
+        return False
+        
+    # Check if we've been in this lighting condition long enough
+    stable_start = _base_image_timing_cache['stable_period_start'][condition]
+    stable_duration = current_time - stable_start
+    
+    return stable_duration >= _base_image_timing_cache['min_stable_period']
 
 def should_capture_base_image():
     """
@@ -266,37 +254,32 @@ def should_capture_base_image():
     Returns:
         bool: True if optimal time for base image capture
     """
-    try:
-        current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
-        condition = get_current_lighting_condition()
-        
-        # If lighting condition is transition or unknown, don't capture
-        if condition == 'transition':
-            logger.debug("In transition period, skipping base image capture")
-            return False
-            
-        # Only capture during stable lighting conditions
-        if not is_lighting_condition_stable():
-            logger.debug(f"Lighting condition {condition} not stable yet, skipping base image capture")
-            return False
-        
-        # Check if we've recently captured for this lighting condition
-        if condition in _base_image_timing_cache['last_capture_time']:
-            last_capture = _base_image_timing_cache['last_capture_time'][condition]
-            time_since_last = current_time - last_capture
-            
-            if time_since_last < _base_image_timing_cache['min_capture_interval']:
-                logger.debug(f"Too soon since last {condition} base image capture ({time_since_last}), skipping")
-                return False
-        
-        # If we get here, it's a good time to capture
-        logger.info(f"Optimal time for base image capture during stable {condition} conditions")
-        _base_image_timing_cache['last_capture_time'][condition] = current_time
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error checking base image capture timing: {e}")
+    current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
+    condition = get_current_lighting_condition()
+    
+    # If lighting condition is transition or unknown, don't capture
+    if condition == 'transition':
+        logger.debug("In transition period, skipping base image capture")
         return False
+        
+    # Only capture during stable lighting conditions
+    if not is_lighting_condition_stable():
+        logger.debug(f"Lighting condition {condition} not stable yet, skipping base image capture")
+        return False
+    
+    # Check if we've recently captured for this lighting condition
+    if condition in _base_image_timing_cache['last_capture_time']:
+        last_capture = _base_image_timing_cache['last_capture_time'][condition]
+        time_since_last = current_time - last_capture
+        
+        if time_since_last < _base_image_timing_cache['min_capture_interval']:
+            logger.debug(f"Too soon since last {condition} base image capture ({time_since_last}), skipping")
+            return False
+    
+    # If we get here, it's a good time to capture
+    logger.info(f"Optimal time for base image capture during stable {condition} conditions")
+    _base_image_timing_cache['last_capture_time'][condition] = current_time
+    return True
 
 def record_base_image_capture(lighting_condition):
     """
@@ -360,44 +343,71 @@ def is_transition_period():
 def should_generate_after_action_report():
     """
     Determine if it's time to generate an after action report.
-    Added in v1.1.0 to support after action reports at day/night transitions.
+    Updated in v1.2.0 to include time-based fallback.
     
     Reports should be generated when:
     1. Completed a transition from day to night or night to day
-    2. Haven't generated a report recently
+    2. Haven't generated a report recently (time-based fallback)
     
     Returns:
         bool: True if a report should be generated
     """
+    # Get current condition
+    current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
+    condition = get_current_lighting_condition()
+    previous_condition = _lighting_condition_cache.get('previous_condition')
+    
+    # Only consider major transitions (day to night or night to day)
+    # Skip if we're in a transition period
+    if condition == 'transition':
+        logger.debug("Currently in transition period, not generating report")
+        return False
+        
+    # Check if we just completed a transition
+    if (previous_condition == 'transition' and 
+        condition in ['day', 'night'] and
+        _detailed_lighting_info['last_transition_end']):
+        
+        logger.info(f"Transition complete from transition to {condition}, should generate report")
+        return True
+    
+    # [NEW in v1.2.0] Time-based fallback: Check when the last report was generated
+    last_report_time = get_last_report_time()
+    
+    # If no report has ever been generated, definitely generate one
+    if not last_report_time:
+        logger.info("No previous report found, should generate report")
+        return True
+    
+    # If we have a last report time, check if it's been more than 24 hours
     try:
-        # Get current condition
-        current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
-        condition = get_current_lighting_condition()
-        previous_condition = _lighting_condition_cache.get('previous_condition')
+        # Parse datetime if it's a string
+        if isinstance(last_report_time, str):
+            try:
+                last_report_time = datetime.fromisoformat(last_report_time.replace('Z', '+00:00'))
+            except ValueError:
+                # If parsing fails, use a fallback time that will trigger report
+                last_report_time = current_time - timedelta(hours=25)
         
-        # Only consider major transitions (day to night or night to day)
-        # Skip if we're in a transition period
-        if condition == 'transition':
-            return False
+        # Ensure last_report_time has timezone info for comparison
+        if last_report_time.tzinfo is None:
+            last_report_time = pytz.UTC.localize(last_report_time)
             
-        # Check if we just completed a transition
-        if (previous_condition == 'transition' and 
-            condition in ['day', 'night'] and
-            _detailed_lighting_info['last_transition_end']):
-            
-            # Check when last report was generated
-            last_report = _detailed_lighting_info.get('last_after_action_report')
-            
-            # If no previous report or report was a while ago
-            if not last_report or (current_time - last_report) > timedelta(hours=8):
-                logger.info(f"Transition complete from transition to {condition}, should generate report")
-                return True
-                
-        return False
+        # Convert to Pacific time for comparison
+        last_report_pacific = last_report_time.astimezone(pytz.timezone('America/Los_Angeles'))
         
+        # Check if it's been more than 24 hours since the last report
+        if (current_time - last_report_pacific) > timedelta(hours=24):
+            logger.info("More than 24 hours since last report, should generate report")
+            return True
+            
     except Exception as e:
-        logger.error(f"Error checking for after action report: {e}")
-        return False
+        # On error, generate a report to be safe
+        logger.error(f"Error checking last report time: {e}")
+        return True
+    
+    # No need to generate a report
+    return False
 
 def record_after_action_report():
     """
@@ -416,31 +426,26 @@ def get_session_duration():
     Returns:
         timedelta: Duration of current session
     """
-    try:
-        current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
-        condition = get_current_lighting_condition()
-        
-        # Use the appropriate period start time
-        if condition == 'day':
+    current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
+    condition = get_current_lighting_condition()
+    
+    # Use the appropriate period start time
+    if condition == 'day':
+        start_time = _detailed_lighting_info.get('last_day_period')
+    elif condition == 'night':
+        start_time = _detailed_lighting_info.get('last_night_period')
+    else:
+        # For transitions, use the previous major period
+        if _lighting_condition_cache.get('previous_condition') == 'day':
             start_time = _detailed_lighting_info.get('last_day_period')
-        elif condition == 'night':
-            start_time = _detailed_lighting_info.get('last_night_period')
         else:
-            # For transitions, use the previous major period
-            if _lighting_condition_cache.get('previous_condition') == 'day':
-                start_time = _detailed_lighting_info.get('last_day_period')
-            else:
-                start_time = _detailed_lighting_info.get('last_night_period')
+            start_time = _detailed_lighting_info.get('last_night_period')
+    
+    # If no start time recorded, default to 12 hours
+    if not start_time:
+        return timedelta(hours=12)
         
-        # If no start time recorded, default to 12 hours
-        if not start_time:
-            return timedelta(hours=12)
-            
-        return current_time - start_time
-        
-    except Exception as e:
-        logger.error(f"Error calculating session duration: {e}")
-        return timedelta(hours=12)  # Default 12 hours on error
+    return current_time - start_time
 
 if __name__ == "__main__":
     # Test the timing functions

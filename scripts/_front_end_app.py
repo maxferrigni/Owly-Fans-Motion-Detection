@@ -1,11 +1,11 @@
 # File: _front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 4, 2025 Update - Version 1.1.0
-# - Added transition period indicators for lighting conditions
-# - Enhanced status display for base image captures
-# - Added support for after action reports
-# - Improved UI feedback for lighting conditions
+# March 5, 2025 Update - Version 1.2.0
+# - Added "Force Report" button to bypass condition checks
+# - Improved report UI with database-driven report history
+# - Removed local report file storage and viewing
+# - Added report ID display for better tracking
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -13,7 +13,9 @@ import subprocess
 import threading
 import os
 import sys
+import json
 from datetime import datetime, timedelta
+import pytz
 
 # Add parent directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +32,7 @@ from utilities.time_utils import (
     get_lighting_info, 
     should_generate_after_action_report
 )
+from utilities.database_utils import get_recent_reports
 from motion_detection_settings import MotionDetectionSettings
 from test_interface import TestInterface
 from capture_base_images import notify_transition_period
@@ -80,6 +83,9 @@ class OwlApp:
         self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
         self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
         self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
+        
+        # Add accent style for Force Report button - v1.2.0
+        self.style.configure('Accent.TButton', font=('Arial', 10, 'bold'), foreground='red')
 
         # Initialize managers
         self.alert_manager = AlertManager()
@@ -183,7 +189,7 @@ class OwlApp:
         test_scroll.pack(fill="both", expand=True)
         self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
         
-        # Create reports interface - New in v1.1.0
+        # Create reports interface - New in v1.1.0, Updated in v1.2.0
         self.create_reports_interface()
 
     def create_control_panel(self):
@@ -374,7 +380,7 @@ class OwlApp:
         ).pack(side=tk.RIGHT, padx=5, pady=2)
 
     def create_reports_interface(self):
-        """Create reports interface tab - New in v1.1.0"""
+        """Create reports interface tab - Updated in v1.2.0 to use database instead of local files"""
         reports_frame = ttk.LabelFrame(self.report_tab, text="After Action Reports")
         reports_frame.pack(fill="both", expand=True, pady=5, padx=5)
         
@@ -389,7 +395,7 @@ class OwlApp:
         • Detection durations
         • Activity summaries
         
-        Reports are sent to all subscribers.
+        Reports are sent to all subscribers and tracked in the database.
         """
         
         ttk.Label(
@@ -399,43 +405,53 @@ class OwlApp:
             justify=tk.LEFT
         ).pack(pady=10, padx=10, anchor=tk.W)
         
-        # Add buttons frame
+        # Add buttons frame with new Force Report button
         buttons_frame = ttk.Frame(reports_frame)
         buttons_frame.pack(fill="x", pady=5)
         
-        # Generate report button
+        # Generate report button (renamed to be clearer)
         ttk.Button(
             buttons_frame,
-            text="Generate Report Now",
+            text="Generate Report",
             command=self.manual_report_generation
         ).pack(side=tk.LEFT, padx=5)
         
-        # View last report button
+        # NEW: Force Report button that bypasses all condition checks
         ttk.Button(
             buttons_frame,
-            text="View Last Report",
-            command=self.view_last_report
+            text="Force Report",
+            command=self.force_report_generation,
+            style='Accent.TButton'  # Use accent style to highlight it's different
         ).pack(side=tk.LEFT, padx=5)
+        
+        # Add refresh button
+        ttk.Button(
+            buttons_frame,
+            text="Refresh History",
+            command=self.load_report_history
+        ).pack(side=tk.RIGHT, padx=5)
         
         # Add report history frame
         history_frame = ttk.LabelFrame(reports_frame, text="Report History")
         history_frame.pack(fill="both", expand=True, pady=5)
         
-        # Create treeview for report history
-        columns = ('date', 'time', 'alerts', 'session_type')
+        # Create treeview for report history - Updated columns for database-driven approach
+        columns = ('report_id', 'date', 'type', 'recipients', 'alerts')
         self.reports_tree = ttk.Treeview(history_frame, columns=columns, show='headings')
         
         # Define headings
-        self.reports_tree.heading('date', text='Date')
-        self.reports_tree.heading('time', text='Time')
+        self.reports_tree.heading('report_id', text='Report ID')
+        self.reports_tree.heading('date', text='Date/Time')
+        self.reports_tree.heading('type', text='Type')
+        self.reports_tree.heading('recipients', text='Recipients')
         self.reports_tree.heading('alerts', text='Alerts')
-        self.reports_tree.heading('session_type', text='Session Type')
         
         # Define columns
-        self.reports_tree.column('date', width=100)
-        self.reports_tree.column('time', width=100)
-        self.reports_tree.column('alerts', width=100)
-        self.reports_tree.column('session_type', width=150)
+        self.reports_tree.column('report_id', width=150)
+        self.reports_tree.column('date', width=150)
+        self.reports_tree.column('type', width=100)
+        self.reports_tree.column('recipients', width=80)
+        self.reports_tree.column('alerts', width=60)
         
         # Add scrollbar
         scrollbar = ttk.Scrollbar(history_frame, orient=tk.VERTICAL, command=self.reports_tree.yview)
@@ -445,9 +461,72 @@ class OwlApp:
         self.reports_tree.pack(side=tk.LEFT, fill="both", expand=True)
         scrollbar.pack(side=tk.RIGHT, fill="y")
         
-        # Double-click to view report
-        self.reports_tree.bind("<Double-1>", self.on_report_double_click)
-    
+        # Double-click to view report details
+        self.reports_tree.bind("<Double-1>", self.show_report_details)
+        
+        # Load initial report history
+        self.load_report_history()
+
+    def load_report_history(self):
+        """Load report history from database - New in v1.2.0"""
+        try:
+            # Clear existing items
+            for item in self.reports_tree.get_children():
+                self.reports_tree.delete(item)
+                
+            # Get recent reports from database (limit to 20)
+            reports = get_recent_reports(20)
+            
+            if not reports:
+                # Add a placeholder item if no reports
+                self.reports_tree.insert('', 'end', values=('No reports', '', '', '', ''))
+                return
+                
+            # Add reports to treeview
+            for report in reports:
+                # Parse created_at timestamp
+                try:
+                    timestamp = datetime.fromisoformat(report.get('created_at').replace('Z', '+00:00'))
+                    formatted_date = timestamp.strftime('%Y-%m-%d %H:%M')
+                except (ValueError, AttributeError):
+                    formatted_date = "Unknown"
+                    
+                # Get report type with friendly name
+                report_type = report.get('report_type', 'unknown')
+                if report_type == 'after_action':
+                    type_display = 'Auto'
+                elif report_type == 'manual':
+                    type_display = 'Manual'
+                else:
+                    type_display = report_type.capitalize()
+                    
+                # Extract total alerts from summary_data if available
+                total_alerts = 0
+                if report.get('summary_data'):
+                    try:
+                        summary = json.loads(report.get('summary_data'))
+                        total_alerts = summary.get('total_alerts', 0)
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+                        
+                # Insert into treeview
+                self.reports_tree.insert(
+                    '', 'end',
+                    values=(
+                        report.get('report_id', 'Unknown'),
+                        formatted_date,
+                        type_display,
+                        report.get('recipient_count', 0),
+                        total_alerts
+                    )
+                )
+                
+            # Sort by date (newest first)
+            self.reports_tree.config(height=min(len(reports), 10))
+            
+        except Exception as e:
+            self.log_message(f"Error loading report history: {e}", "ERROR")
+
     def check_lighting_condition(self):
         """
         Periodically check for lighting condition changes.
@@ -503,7 +582,7 @@ class OwlApp:
                 
                 # Check if we should generate an after action report
                 if self.after_action_reports_enabled.get() and should_generate_after_action_report():
-                    self.log_message("Generating after action report due to major lighting transition")
+                    self.log_message("Generating after action report due to lighting transition")
                     self.generate_after_action_report()
                 
                 # Update stored values
@@ -616,7 +695,7 @@ class OwlApp:
             messagebox.showerror("Error", f"Failed to capture base images: {e}")
     
     def manual_report_generation(self):
-        """Handle manual report generation button press - New in v1.1.0"""
+        """Handle manual report generation button press - Updated in v1.2.0"""
         try:
             # Ask for confirmation
             if messagebox.askyesno(
@@ -630,8 +709,52 @@ class OwlApp:
             self.log_message(f"Error generating report: {e}", "ERROR")
             messagebox.showerror("Error", f"Failed to generate report: {e}")
     
+    def force_report_generation(self):
+        """
+        Force generation of an after action report regardless of conditions - New in v1.2.0
+        This bypasses all timing checks and always generates a report
+        """
+        try:
+            # Show a more detailed confirmation
+            if messagebox.askyesno(
+                "Force Report Generation",
+                "This will FORCE an after action report to be generated and sent\n"
+                "regardless of timing conditions.\n\n"
+                "Are you sure you want to continue?",
+                icon='warning'
+            ):
+                # Get alert statistics
+                alert_stats = self.alert_manager.get_alert_statistics()
+                
+                # Call with is_manual=True to indicate this is a forced report
+                report_result = generate_after_action_report(alert_stats, is_manual=True)
+                
+                if report_result and report_result.get('success'):
+                    self.log_message(f"Report forced successfully: {report_result.get('report_id')}")
+                    
+                    # Reset alert statistics
+                    self.alert_manager.reset_alert_stats()
+                    
+                    # Reload report history
+                    self.load_report_history()
+                    
+                    # Show success message
+                    messagebox.showinfo(
+                        "Report Generated",
+                        f"Report {report_result.get('report_id')} was generated and sent to "
+                        f"{report_result.get('recipient_count', 0)} subscribers."
+                    )
+                else:
+                    error_msg = report_result.get('error', 'Unknown error') if report_result else 'Failed to generate report'
+                    self.log_message(f"Error forcing report: {error_msg}", "ERROR")
+                    messagebox.showerror("Error", f"Failed to generate report: {error_msg}")
+                
+        except Exception as e:
+            self.log_message(f"Error forcing report: {e}", "ERROR")
+            messagebox.showerror("Error", f"Failed to generate report: {e}")
+    
     def generate_after_action_report(self):
-        """Generate and send after action report - New in v1.1.0"""
+        """Generate and send after action report - Updated in v1.2.0"""
         try:
             # Get alert statistics from alert manager
             alert_stats = self.alert_manager.get_alert_statistics()
@@ -640,18 +763,19 @@ class OwlApp:
             report_result = generate_after_action_report(alert_stats, is_manual=True)
             
             if report_result and report_result.get('success'):
-                self.log_message("After action report generated and sent successfully")
+                self.log_message(f"After action report generated and sent successfully: {report_result.get('report_id')}")
                 
                 # Reset alert statistics
                 self.alert_manager.reset_alert_stats()
                 
-                # Add to report history
-                self.add_report_to_history(report_result)
+                # Reload report history to show the new report
+                self.load_report_history()
                 
                 # Show success message
                 messagebox.showinfo(
                     "Report Generated",
-                    f"After action report generated and sent to {report_result.get('recipient_count', 0)} subscribers."
+                    f"After action report {report_result.get('report_id')} generated and sent to "
+                    f"{report_result.get('recipient_count', 0)} subscribers."
                 )
             else:
                 error_msg = report_result.get('error', 'Unknown error') if report_result else 'Failed to generate report'
@@ -662,89 +786,83 @@ class OwlApp:
             self.log_message(f"Error generating report: {e}", "ERROR")
             messagebox.showerror("Error", f"Failed to generate report: {e}")
     
-    def add_report_to_history(self, report_data):
-        """Add a new report to the history treeview - New in v1.1.0"""
-        try:
-            # Format data for treeview
-            date_str = datetime.now().strftime('%Y-%m-%d')
-            time_str = datetime.now().strftime('%H:%M:%S')
-            alerts = str(report_data.get('total_alerts', 0))
-            session_type = report_data.get('session_type', 'Manual')
-            
-            # Insert at the top of the treeview
-            self.reports_tree.insert('', 0, values=(date_str, time_str, alerts, session_type))
-            
-        except Exception as e:
-            self.log_message(f"Error adding report to history: {e}", "ERROR")
-    
-    def view_last_report(self):
-        """View the latest after action report - New in v1.1.0"""
-        try:
-            # Try to open the last report file
-            import os
-            reports_dir = os.path.join(BASE_DIR, "20_Local_Files", "reports")
-            
-            if not os.path.exists(reports_dir):
-                messagebox.showinfo("No Reports", "No reports have been generated yet.")
-                return
-                
-            # List all report files and sort by modification time
-            report_files = [os.path.join(reports_dir, f) for f in os.listdir(reports_dir) if f.endswith('.html')]
-            
-            if not report_files:
-                messagebox.showinfo("No Reports", "No report files found.")
-                return
-                
-            # Get the most recent file
-            latest_report = max(report_files, key=os.path.getmtime)
-            
-            # Try to open with default browser
-            import webbrowser
-            webbrowser.open(f"file://{latest_report}")
-            
-        except Exception as e:
-            self.log_message(f"Error viewing report: {e}", "ERROR")
-            messagebox.showerror("Error", f"Failed to view report: {e}")
-    
-    def on_report_double_click(self, event):
-        """Handle double-click on report in treeview - New in v1.1.0"""
+    def show_report_details(self, event):
+        """Show details for a selected report - New in v1.2.0"""
         try:
             # Get selected item
             selected_item = self.reports_tree.focus()
             if not selected_item:
                 return
                 
-            # Get values
+            # Get report ID
             values = self.reports_tree.item(selected_item, 'values')
-            if not values:
+            if not values or values[0] == 'No reports':
                 return
                 
-            # Attempt to find the report based on date and time
-            date_str, time_str = values[0], values[1]
-            formatted_datetime = f"{date_str}_{time_str.replace(':', '')}"
+            report_id = values[0]
             
-            # Look for file with matching timestamp
-            import os
-            reports_dir = os.path.join(BASE_DIR, "20_Local_Files", "reports")
+            # Create details window
+            details_window = tk.Toplevel(self.root)
+            details_window.title(f"Report Details: {report_id}")
+            details_window.geometry("500x400")
+            details_window.transient(self.root)
             
-            if not os.path.exists(reports_dir):
-                messagebox.showinfo("No Reports", "Reports directory not found.")
-                return
-                
-            # Try to find a matching report
-            matching_files = [f for f in os.listdir(reports_dir) 
-                             if f.endswith('.html') and formatted_datetime in f]
+            # Add details frame
+            details_frame = ttk.Frame(details_window, padding=10)
+            details_frame.pack(fill="both", expand=True)
             
-            if matching_files:
-                # Open the first matching file
-                import webbrowser
-                report_path = os.path.join(reports_dir, matching_files[0])
-                webbrowser.open(f"file://{report_path}")
-            else:
-                messagebox.showinfo("Report Not Found", "Could not find the report file.")
-                
+            # Show report ID and basic info
+            ttk.Label(
+                details_frame,
+                text=f"Report ID: {report_id}",
+                font=("Arial", 12, "bold")
+            ).pack(anchor="w", pady=(0, 10))
+            
+            ttk.Label(
+                details_frame,
+                text=f"Date: {values[1]}",
+                font=("Arial", 10)
+            ).pack(anchor="w", pady=2)
+            
+            ttk.Label(
+                details_frame,
+                text=f"Type: {values[2]}",
+                font=("Arial", 10)
+            ).pack(anchor="w", pady=2)
+            
+            ttk.Label(
+                details_frame,
+                text=f"Recipients: {values[3]}",
+                font=("Arial", 10)
+            ).pack(anchor="w", pady=2)
+            
+            ttk.Label(
+                details_frame,
+                text=f"Total Alerts: {values[4]}",
+                font=("Arial", 10)
+            ).pack(anchor="w", pady=2)
+            
+            # Add note about email
+            ttk.Separator(details_frame).pack(fill="x", pady=10)
+            
+            ttk.Label(
+                details_frame,
+                text="Note: The full report was sent via email to all subscribers.\n"
+                "Check your email for the complete report with detailed statistics.",
+                font=("Arial", 10, "italic"),
+                wraplength=450
+            ).pack(anchor="w", pady=10)
+            
+            # Add close button
+            ttk.Button(
+                details_frame,
+                text="Close",
+                command=details_window.destroy
+            ).pack(side="bottom", pady=10)
+            
         except Exception as e:
-            self.log_message(f"Error opening report: {e}", "ERROR")
+            self.log_message(f"Error showing report details: {e}", "ERROR")
+            messagebox.showerror("Error", f"Failed to show report details: {e}")
 
     def update_capture_interval(self, *args):
         """Handle changes to the capture interval"""
@@ -837,11 +955,6 @@ class OwlApp:
         try:
             self.log_message("Verifying directory structure...")
             ensure_directories_exist()
-            
-            # Add reports directory in v1.1.0
-            reports_dir = os.path.join(BASE_DIR, "20_Local_Files", "reports")
-            os.makedirs(reports_dir, exist_ok=True)
-            
             self.log_message("Directory verification complete")
         except Exception as e:
             self.log_message(f"Error verifying directories: {e}", "ERROR")

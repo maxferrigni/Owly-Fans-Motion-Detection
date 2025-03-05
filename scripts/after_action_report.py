@@ -1,27 +1,27 @@
 # File: scripts/after_action_report.py
 # Purpose: Generate and send after action reports at day/night transitions
 #
-# Added in v1.1.0 - March 4, 2025
-# - Generates summary reports of owl activity at day/night transitions
-# - Includes alert counts, duration statistics, and activity summaries
-# - Sends reports to all subscribers via email
+# March 5, 2025 Update - Version 1.2.0
+# - Removed local file storage for reports
+# - Added report_id generation for tracking
+# - Enhanced report generation with fallback mechanism
+# - Added database tracking for reports
 
 import os
 import datetime
 import pytz
-import time
-import html
+import random
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import smtplib
-import json
 
 # Import utilities
 from utilities.logging_utils import get_logger
-from utilities.constants import ALERT_PRIORITIES, BASE_DIR
+from utilities.constants import ALERT_PRIORITIES
 from utilities.time_utils import record_after_action_report, get_lighting_info
-from utilities.database_utils import get_subscribers
+from utilities.database_utils import get_subscribers, log_report_to_database, get_last_report_time
 
 # Initialize logger
 logger = get_logger()
@@ -33,9 +33,16 @@ load_dotenv()
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "owlyfans01@gmail.com")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")  # Google App Password
 
-# Ensure reports directory exists
-REPORTS_DIR = os.path.join(BASE_DIR, "20_Local_Files", "reports")
-os.makedirs(REPORTS_DIR, exist_ok=True)
+def generate_report_id():
+    """
+    Generate a unique ID for a report with format: OWLR-YYYYMMDD-HHMMSS-XXX
+    
+    Returns:
+        str: Unique report identifier
+    """
+    timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    random_suffix = ''.join(random.choices('0123456789ABCDEF', k=3))
+    return f"OWLR-{timestamp}-{random_suffix}"
 
 def format_duration(minutes, seconds):
     """
@@ -57,13 +64,14 @@ def format_duration(minutes, seconds):
     else:
         return f"{minutes} minute{'s' if minutes > 1 else ''}, {seconds} seconds"
 
-def generate_html_report(stats, session_type="Day-to-Night Transition"):
+def generate_html_report(stats, session_type="Day-to-Night Transition", report_id=None):
     """
     Generate an HTML after action report from the provided statistics.
     
     Args:
         stats (dict): Alert statistics from alert_manager.get_alert_statistics()
         session_type (str): Type of session/transition being reported
+        report_id (str, optional): Report ID for reference
         
     Returns:
         str: HTML content of the report
@@ -178,12 +186,18 @@ def generate_html_report(stats, session_type="Day-to-Night Transition"):
                 top: 5px;
                 font-size: 0.8em;
             }}
+            .report-id {{
+                font-size: 0.8em;
+                color: #7f8c8d;
+                text-align: right;
+            }}
         </style>
     </head>
     <body>
         <div class="header">
             <h1>Owl Monitoring After Action Report</h1>
             <h3>{session_type} - {time_range}</h3>
+            {f'<p class="report-id">Report ID: {report_id}</p>' if report_id else ''}
         </div>
         
         <div class="summary-box">
@@ -286,44 +300,13 @@ def generate_html_report(stats, session_type="Day-to-Night Transition"):
     
     return html_content
 
-def save_report_to_file(html_content, session_type="DayNight"):
-    """
-    Save the report to a local HTML file.
-    
-    Args:
-        html_content (str): HTML content of the report
-        session_type (str): Type of session for filename
-        
-    Returns:
-        str: Path to the saved file
-    """
-    try:
-        # Generate filename with timestamp
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        session_type_clean = session_type.replace(" ", "").replace("-", "To")
-        filename = f"OwlReport_{session_type_clean}_{timestamp}.html"
-        
-        # Full path to save file
-        file_path = os.path.join(REPORTS_DIR, filename)
-        
-        # Save the file
-        with open(file_path, 'w') as f:
-            f.write(html_content)
-            
-        logger.info(f"Report saved to {file_path}")
-        return file_path
-        
-    except Exception as e:
-        logger.error(f"Error saving report to file: {e}")
-        return None
-
-def send_report_to_subscribers(html_content, report_file, session_type="Day-to-Night Transition"):
+def send_report_to_subscribers(html_content, report_id, session_type="Day-to-Night Transition"):
     """
     Send the report via email to all subscribers.
     
     Args:
         html_content (str): HTML content of the report
-        report_file (str): Path to the saved report file
+        report_id (str): Unique identifier for the report
         session_type (str): Type of session for email subject
         
     Returns:
@@ -348,7 +331,7 @@ def send_report_to_subscribers(html_content, report_file, session_type="Day-to-N
             return {"success": False, "error": "No subscribers", "recipient_count": 0}
             
         # Prepare email
-        subject = f"Owl Monitoring - After Action Report ({session_type})"
+        subject = f"Owl Monitoring - After Action Report ({session_type}) [ID: {report_id}]"
         
         # Create email server connection
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -383,6 +366,7 @@ def send_report_to_subscribers(html_content, report_file, session_type="Day-to-N
                     <p>{greeting}</p>
                     <p>Please find attached the latest after action report for owl activity during the recent {session_type.lower()}.</p>
                     <p>This report summarizes all owl activity detected during the session.</p>
+                    <p><small>Report ID: {report_id}</small></p>
                 </body>
                 </html>
                 """
@@ -397,13 +381,13 @@ def send_report_to_subscribers(html_content, report_file, session_type="Day-to-N
                 server.send_message(msg)
                 sent_count += 1
                 logger.debug(f"Report sent to {to_email}")
-                
+            
             # Log results
             logger.info(f"After action report sent to {sent_count} subscribers")
             return {
                 "success": True, 
                 "recipient_count": sent_count,
-                "report_file": report_file,
+                "report_id": report_id,
                 "session_type": session_type
             }
                 
@@ -453,40 +437,108 @@ def generate_after_action_report(alert_stats, is_manual=False):
         dict: Results of the operation
     """
     try:
+        # Generate a unique report ID
+        report_id = generate_report_id()
+        
         # Determine session type
         session_type = determine_session_type()
         if is_manual:
             session_type = "Manual Report"
             
         # Generate HTML content
-        html_content = generate_html_report(alert_stats, session_type)
+        html_content = generate_html_report(alert_stats, session_type, report_id)
         
-        # Save to file
-        report_file = save_report_to_file(html_content, session_type)
+        # Send to subscribers
+        result = send_report_to_subscribers(html_content, report_id, session_type)
         
-        if report_file:
-            # Send to subscribers
-            result = send_report_to_subscribers(html_content, report_file, session_type)
-            
+        if result.get("success", False):
             # Record that we generated a report
             record_after_action_report()
             
+            # Store report metadata in database
+            report_data = {
+                "report_id": report_id,
+                "report_type": "after_action" if not is_manual else "manual",
+                "is_manual": is_manual,
+                "recipient_count": result.get("recipient_count", 0),
+                "summary_data": json.dumps(alert_stats),
+                "start_timestamp": alert_stats.get("session_start"),
+                "end_timestamp": alert_stats.get("session_end")
+            }
+            
+            # Log report to database
+            log_report_to_database(report_data)
+            
             # Return combined results
             return {
-                "success": result.get("success", False),
-                "report_file": report_file,
+                "success": True,
+                "report_id": report_id,
                 "recipient_count": result.get("recipient_count", 0),
                 "session_type": session_type,
                 "total_alerts": alert_stats.get("total_alerts", 0),
                 "timestamp": datetime.datetime.now().isoformat()
             }
         else:
-            logger.error("Failed to save report to file")
-            return {"success": False, "error": "Failed to save report"}
+            logger.error(f"Failed to send report: {result.get('error', 'Unknown error')}")
+            return {"success": False, "error": result.get('error', 'Failed to send report')}
             
     except Exception as e:
         logger.error(f"Error generating after action report: {e}")
         return {"success": False, "error": str(e)}
+
+def ensure_report_generated(alert_stats, max_age_hours=24):
+    """
+    Ensure a report is generated at least once per day regardless of transitions.
+    
+    Args:
+        alert_stats (dict): Alert statistics for the report
+        max_age_hours (int): Maximum hours since last report
+        
+    Returns:
+        dict or None: Report results if generated, None otherwise
+    """
+    try:
+        # Get the last report timestamp
+        last_report_time = get_last_report_time()
+        current_time = datetime.datetime.now(pytz.timezone('America/Los_Angeles'))
+        
+        # If no last report or it's been more than max_age_hours
+        if not last_report_time:
+            logger.info("No previous report found, generating daily report")
+            return generate_after_action_report(alert_stats, is_manual=False)
+            
+        # Parse timestamp if it's a string
+        if isinstance(last_report_time, str):
+            try:
+                last_report_time = datetime.datetime.fromisoformat(last_report_time.replace('Z', '+00:00'))
+            except ValueError:
+                # If parsing fails, use a fallback time
+                last_report_time = current_time - datetime.timedelta(hours=max_age_hours+1)
+        
+        # Make sure timestamps are timezone-aware
+        if last_report_time.tzinfo is None:
+            last_report_time = pytz.UTC.localize(last_report_time)
+            
+        # Convert to Pacific time for comparison
+        last_report_pacific = last_report_time.astimezone(pytz.timezone('America/Los_Angeles'))
+        
+        # Check if too much time has passed since last report
+        time_diff = current_time - last_report_pacific
+        if time_diff.total_seconds() > max_age_hours * 3600:
+            logger.info(f"No report generated in past {max_age_hours} hours, forcing generation")
+            return generate_after_action_report(alert_stats, is_manual=False)
+            
+        # No report needed
+        logger.debug(f"Last report was {time_diff.total_seconds()/3600:.1f} hours ago, no daily report needed")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error ensuring report generation: {e}")
+        # Failsafe - generate report on error to be safe
+        try:
+            return generate_after_action_report(alert_stats, is_manual=False)
+        except:
+            return None
 
 if __name__ == "__main__":
     # Test the functionality
@@ -516,11 +568,18 @@ if __name__ == "__main__":
             "session_end": datetime.datetime.now().isoformat()
         }
         
+        # Test the daily report check
+        ensure_result = ensure_report_generated(test_stats)
+        if ensure_result:
+            logger.info(f"Daily report check generated a report: {ensure_result.get('report_id')}")
+        else:
+            logger.info("Daily report check did not generate a report (not needed)")
+        
         # Generate test report
         result = generate_after_action_report(test_stats, is_manual=True)
         
         if result.get("success"):
-            logger.info(f"Test report successfully generated: {result.get('report_file')}")
+            logger.info(f"Test report successfully generated: {result.get('report_id')}")
             logger.info(f"Sent to {result.get('recipient_count')} subscribers")
         else:
             logger.error(f"Test report generation failed: {result.get('error')}")

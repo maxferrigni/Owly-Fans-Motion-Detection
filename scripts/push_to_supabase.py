@@ -1,15 +1,15 @@
 # File: push_to_supabase.py
 # Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
 #
-# March 4, 2025 Update - Version 1.1.0
-# - Updated to support new alert priority system and multiple owl detection
-# - Added image URL handling for alerts
-# - Enhanced logging with detailed detection information
-# - Added support for after action reporting
+# March 5, 2025 Update - Version 1.2.0
+# - Added generate_alert_id() function for unique alert tracking
+# - Updated create_alert_entry to include alert_id and trigger_condition
+# - Streamlined database operations and error handling
 
 import os
 import datetime
 import json
+import random
 import supabase
 from dotenv import load_dotenv
 
@@ -49,6 +49,20 @@ except Exception as e:
 # Track uploaded entries to prevent duplicates
 last_uploaded_entries = {}
 
+# Cache for column existence checks to avoid repeated queries
+_column_cache = {}
+
+def generate_alert_id():
+    """
+    Generate a unique ID for an alert with format: OWL-YYYYMMDD-HHMMSS-XXX
+    
+    Returns:
+        str: Unique alert identifier
+    """
+    timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    random_suffix = ''.join(random.choices('0123456789ABCDEF', k=3))
+    return f"OWL-{timestamp}-{random_suffix}"
+
 def get_last_alert_time(alert_type):
     """
     Retrieve the last time a specific alert was sent from Supabase.
@@ -70,9 +84,7 @@ def get_last_alert_time(alert_type):
         
         if response and hasattr(response, 'data') and len(response.data) > 0:
             return response.data[0]['alert_sent_at']
-        else:
-            return None
-
+        return None
     except Exception as e:
         logger.error(f"Error getting last alert time: {e}")
         return None
@@ -90,55 +102,63 @@ def check_alert_eligibility(alert_type, cooldown_minutes):
     """
     try:
         last_alert_time = get_last_alert_time(alert_type)
-        if last_alert_time:
-            # Ensure the timestamp has timezone information
-            if isinstance(last_alert_time, str):
-                if 'Z' in last_alert_time or '+' in last_alert_time:
-                    # ISO format with timezone
-                    last_alert_time = datetime.datetime.fromisoformat(last_alert_time.replace('Z', '+00:00'))
-                else:
-                    # Assume UTC if no timezone info
-                    last_alert_time = datetime.datetime.fromisoformat(last_alert_time)
-                    last_alert_time = last_alert_time.replace(tzinfo=datetime.timezone.utc)
-            
-            # Always use timezone-aware now
-            now = datetime.datetime.now(datetime.timezone.utc)
-            
-            # Calculate time difference and check against cooldown
-            time_diff = now - last_alert_time
-            if time_diff < datetime.timedelta(minutes=cooldown_minutes):
-                return False, {'last_alert_time': last_alert_time}
-            else:
-                return True, {'last_alert_time': last_alert_time}
-        else:
+        if not last_alert_time:
             return True, None
-
+            
+        # Ensure the timestamp has timezone information
+        if isinstance(last_alert_time, str):
+            if 'Z' in last_alert_time or '+' in last_alert_time:
+                # ISO format with timezone
+                last_alert_time = datetime.datetime.fromisoformat(last_alert_time.replace('Z', '+00:00'))
+            else:
+                # Assume UTC if no timezone info
+                last_alert_time = datetime.datetime.fromisoformat(last_alert_time)
+                last_alert_time = last_alert_time.replace(tzinfo=datetime.timezone.utc)
+        
+        # Always use timezone-aware now
+        now = datetime.datetime.now(datetime.timezone.utc)
+        
+        # Calculate time difference and check against cooldown
+        time_diff = now - last_alert_time
+        if time_diff < datetime.timedelta(minutes=cooldown_minutes):
+            return False, {'last_alert_time': last_alert_time}
+        return True, {'last_alert_time': last_alert_time}
     except Exception as e:
         logger.error(f"Error checking alert eligibility: {e}")
         return False, None
 
-def create_alert_entry(alert_type, activity_log_id=None):
+def create_alert_entry(alert_type, activity_log_id=None, alert_id=None, trigger_condition=None):
     """
     Create a new alert entry in Supabase.
+    Updated in v1.2.0 to include alert_id and trigger_condition.
 
     Args:
         alert_type (str): Type of alert
         activity_log_id (int, optional): ID of the related activity log entry
+        alert_id (str, optional): Unique identifier for the alert (generated if not provided)
+        trigger_condition (str, optional): What triggered this alert
 
     Returns:
         dict or None: The created alert entry or None if creation failed
     """
     try:
+        # Generate alert_id if not provided
+        if not alert_id:
+            alert_id = generate_alert_id()
+            
+        # Set trigger condition to alert type if not provided
+        if not trigger_condition:
+            trigger_condition = f"Motion detection: {alert_type}"
+            
         # Check if alerts table exists with required columns
         if not check_column_exists("alerts", "alert_type"):
             logger.warning("Required columns missing in alerts table")
             return None
             
-        # Set priority based on alert type - Updated in v1.1.0 to use ALERT_PRIORITIES
+        # Set priority based on alert type
         priority = ALERT_PRIORITIES.get(alert_type, 1)  # Default to lowest priority
         
         # Set cooldown minutes based on priority (higher priority = shorter cooldown)
-        # This is configured in alert_manager.py but we need a default here
         if priority >= 5:  # Highest priority (eggs/babies or two owls in box)
             base_cooldown_minutes = 10
         elif priority >= 4:  # High priority (multiple owls)
@@ -150,15 +170,17 @@ def create_alert_entry(alert_type, activity_log_id=None):
         now = datetime.datetime.now(datetime.timezone.utc)
         cooldown_ends_at = now + datetime.timedelta(minutes=base_cooldown_minutes)
         
-        # Create new alert entry - using integers for boolean values to avoid serialization issues
+        # Create new alert entry
         alert_data = {
+            'alert_id': alert_id,
             'alert_type': alert_type,
             'alert_priority': priority,
             'alert_sent': 1,  # Use 1 instead of True
             'alert_sent_at': now.isoformat(),
             'base_cooldown_minutes': base_cooldown_minutes,
             'cooldown_ends_at': cooldown_ends_at.isoformat(),
-            'suppressed': 0  # Use 0 instead of False
+            'suppressed': 0,  # Use 0 instead of False
+            'trigger_condition': trigger_condition
         }
         
         # Add activity log ID if provided and the column exists
@@ -169,12 +191,11 @@ def create_alert_entry(alert_type, activity_log_id=None):
         response = supabase_client.table('alerts').insert(alert_data).execute()
         
         if response and hasattr(response, 'data') and len(response.data) > 0:
-            logger.info(f"Created new alert entry for {alert_type} (priority {priority})")
+            logger.info(f"Created new alert entry: {alert_id} for {alert_type} (priority {priority})")
             return response.data[0]
-        else:
-            logger.error("Failed to create alert entry in Supabase")
-            return None
-
+        
+        logger.error("Failed to create alert entry in Supabase")
+        return None
     except Exception as e:
         logger.error(f"Error creating alert entry: {e}")
         return None
@@ -189,7 +210,7 @@ def update_alert_status(
     consecutive_owl_frames=None,
     confidence_breakdown=None,
     threshold_used=None,
-    comparison_image_url=None  # Added in v1.1.0
+    comparison_image_url=None
 ):
     """
     Update the status of an existing alert entry in Supabase.
@@ -204,7 +225,7 @@ def update_alert_status(
         consecutive_owl_frames (int, optional): Number of consecutive frames with owl detection
         confidence_breakdown (str, optional): String representation of confidence factors
         threshold_used (float, optional): Confidence threshold that was applied
-        comparison_image_url (str, optional): URL to the comparison image (added in v1.1.0)
+        comparison_image_url (str, optional): URL to the comparison image
     """
     try:
         # Build update data, checking each column exists before adding it
@@ -235,7 +256,6 @@ def update_alert_status(
         if threshold_used is not None and check_column_exists("alerts", "threshold_used"):
             update_data['threshold_used'] = threshold_used
             
-        # Added in v1.1.0 - Store image URL with alert
         if comparison_image_url is not None and check_column_exists("alerts", "comparison_image_url"):
             update_data['comparison_image_url'] = comparison_image_url
 
@@ -248,7 +268,6 @@ def update_alert_status(
                 logger.warning(f"Failed to update alert status for alert ID {alert_id}")
         else:
             logger.warning(f"No data provided to update alert ID {alert_id}")
-
     except Exception as e:
         logger.error(f"Error updating alert status: {e}")
 
@@ -478,9 +497,6 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         if not log_entry:
             logger.warning("No valid columns to log to owl_activity_log")
             return None
-            
-        # Log the entry for debugging
-        logger.debug(f"Prepared log entry for Supabase: {log_entry}")
         
         # Ensure everything is JSON serializable by pre-validating
         try:
@@ -518,10 +534,9 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
                 for key in keys_to_remove:
                     del last_uploaded_entries[key]
             return response.data[0]
-        else:
-            logger.error("Failed to insert into owl_activity_log")
-            return None
-
+        
+        logger.error("Failed to insert into owl_activity_log")
+        return None
     except Exception as e:
         logger.error(f"Failed to upload log to Supabase: {e}")
         return None
@@ -593,7 +608,6 @@ def format_detection_results(detection_result):
 
         logger.debug(f"Formatted detection results: {formatted_entry}")
         return formatted_entry
-
     except Exception as e:
         logger.error(f"Error formatting detection results: {e}")
         return {
@@ -640,7 +654,7 @@ def get_alert_statistics(days=1):
             "period_start": start_time_str,
             "period_end": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "total_alerts": 0,
-            "alerts_by_type": {},
+            "alert_counts": {},
             "average_confidence": {}
         }
         
@@ -653,7 +667,7 @@ def get_alert_statistics(days=1):
                 
                 if response and hasattr(response, 'data') and len(response.data) > 0:
                     count = response.data[0].get('count', 0)
-                    stats["alerts_by_type"][alert_type] = count
+                    stats["alert_counts"][alert_type] = count
                     stats["total_alerts"] += count
                     
                 # Get average confidence if the column exists
@@ -665,54 +679,36 @@ def get_alert_statistics(days=1):
                         avg = avg_response.data[0].get('avg', 0)
                         if avg:
                             stats["average_confidence"][alert_type] = float(avg)
-                
             except Exception as e:
                 logger.error(f"Error getting statistics for {alert_type}: {e}")
         
         return stats
-        
     except Exception as e:
         logger.error(f"Error getting alert statistics: {e}")
         return {}
 
 if __name__ == "__main__":
     try:
-        # Basic configuration for testing
-        logger.info("Testing Supabase logging functionality with confidence metrics...")
-
-        # Test multiple owl detection
-        test_detection_multiple = {
-            "camera": "Test Camera",
-            "status": "Two Owls In Box",
-            "is_test": True,
-            "is_owl_present": True,
-            "multiple_owls": True,
-            "owl_count": 2,
-            "pixel_change": 30.5,
-            "luminance_change": 35.2,
-            "owl_confidence": 85.5,
-            "consecutive_owl_frames": 3,
-            "confidence_factors": {
-                "shape_confidence": 35.0,
-                "motion_confidence": 30.5,
-                "temporal_confidence": 15.0,
-                "camera_confidence": 5.0
-            },
-            "comparison_path": "/path/to/local/image.jpg"
-        }
+        # Test the alert ID generation
+        logger.info("Testing alert ID generation...")
+        for _ in range(3):
+            alert_id = generate_alert_id()
+            logger.info(f"Generated alert ID: {alert_id}")
         
-        # Format and test upload
-        formatted_multiple = format_detection_results(test_detection_multiple)
+        # Test create_alert_entry with alert ID
+        test_alert_id = generate_alert_id()
+        test_alert = create_alert_entry(
+            alert_type="Owl In Box",
+            alert_id=test_alert_id,
+            trigger_condition="Test Trigger"
+        )
         
-        # Don't actually upload in test mode, just verify formatting
-        logger.info(f"Formatted multiple owl detection: {formatted_multiple}")
-        
-        # Test statistics retrieval for after action report
-        stats = get_alert_statistics(days=7)  # Get stats for last week
-        logger.info(f"Alert statistics: {stats}")
-        
+        if test_alert:
+            logger.info(f"Successfully created test alert with ID: {test_alert_id}")
+        else:
+            logger.error("Failed to create test alert")
+            
         logger.info("Supabase push test complete")
-        
     except Exception as e:
         logger.error(f"Test failed: {e}")
         raise

@@ -1,11 +1,10 @@
 # File: utilities/database_utils.py
 # Purpose: Centralize database operations for the Owl Monitoring System
 #
-# March 4, 2025 Update - Version 1.1.0
-# - Added support for multiple owl detection
-# - Added functions to retrieve activity statistics for after action reports
-# - Enhanced subscriber management for all alert types
-# - Added report logging functions
+# March 5, 2025 Update - Version 1.2.0
+# - Added functions for report tracking in database
+# - Added admin subscriber identification 
+# - Streamlined error handling and removed redundant checks
 
 import os
 from datetime import datetime, timedelta
@@ -27,10 +26,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET")
 
 # Validate credentials
-if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET]):
-    error_msg = "Supabase credentials are missing. Check the .env file."
-    logger.error(error_msg)
-    raise ValueError(error_msg)
+if not all([SUPABASE_URL, SUPABASE_KEY]):
+    logger.error("Supabase credentials are missing. Check the .env file.")
+    raise ValueError("Supabase credentials are missing")
 
 # Initialize Supabase client
 try:
@@ -58,36 +56,26 @@ def get_table_columns(table_name):
         return _column_cache[table_name]
         
     try:
-        # This is a simple way to get column info - might need adjustment based on Supabase API
         # This selects a single row to examine its structure
         response = supabase_client.table(table_name).select("*").limit(1).execute()
         
         if hasattr(response, 'data') and len(response.data) > 0:
             # Get column names from the first row
             columns = list(response.data[0].keys())
-            # Cache the result
             _column_cache[table_name] = columns
             return columns
-        else:
-            # If no data, try to get table definition instead
-            try:
-                # This is a PostgreSQL-specific approach that might work with Supabase
-                # The query gets column information from the information_schema
-                query = f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'"
-                response = supabase_client.rpc('execute_sql', {'query': query}).execute()
-                
-                if hasattr(response, 'data') and len(response.data) > 0:
-                    columns = [row.get('column_name') for row in response.data]
-                    # Cache the result
-                    _column_cache[table_name] = columns
-                    return columns
-            except Exception as inner_e:
-                logger.debug(f"Could not get column info from schema: {inner_e}")
+        
+        # If no data, try to get table definition
+        query = f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'"
+        response = supabase_client.rpc('execute_sql', {'query': query}).execute()
+        
+        if hasattr(response, 'data') and len(response.data) > 0:
+            columns = [row.get('column_name') for row in response.data]
+            _column_cache[table_name] = columns
+            return columns
             
-            # If all else fails, return empty list
-            _column_cache[table_name] = []
-            return []
-            
+        _column_cache[table_name] = []
+        return []
     except Exception as e:
         logger.error(f"Error getting column info for {table_name}: {e}")
         _column_cache[table_name] = []
@@ -109,21 +97,16 @@ def check_column_exists(table_name, column_name):
     if cache_key in _column_cache:
         return _column_cache[cache_key]
         
-    try:
-        # Get all columns for this table
-        columns = get_table_columns(table_name)
-        
-        # Check if the requested column exists
-        exists = column_name in columns
-        
-        # Cache the result
-        _column_cache[cache_key] = exists
-        
-        return exists
-    except Exception as e:
-        logger.error(f"Error checking if column {column_name} exists in {table_name}: {e}")
-        _column_cache[cache_key] = False
-        return False
+    # Get all columns for this table
+    columns = get_table_columns(table_name)
+    
+    # Check if the requested column exists
+    exists = column_name in columns
+    
+    # Cache the result
+    _column_cache[cache_key] = exists
+    
+    return exists
 
 def get_subscribers(notification_type=None, owl_location=None):
     """
@@ -137,19 +120,15 @@ def get_subscribers(notification_type=None, owl_location=None):
         list: List of subscriber records
     """
     try:
-        # Start with base query - always select first
+        # Start with base query
         query = supabase_client.table("subscribers").select("*")
         
-        # Check if the columns exist before filtering
-        column_info = get_table_columns("subscribers")
-        
         # Only filter by notification_type if the column exists
-        if notification_type and "notification_type" in column_info:
+        if notification_type and check_column_exists("subscribers", "notification_type"):
             query = query.eq("notification_type", notification_type)
         
         # Only filter by owl_locations if the column exists
-        # In v1.1.0, we now handle the new alert types (Two Owls, etc.)
-        if owl_location and "owl_locations" in column_info:
+        if owl_location and check_column_exists("subscribers", "owl_locations"):
             # For backward compatibility, also check old owl location types
             if owl_location in ["Two Owls", "Two Owls In Box", "Eggs Or Babies"]:
                 # For new alert types, include subscribers who have the base type
@@ -162,23 +141,48 @@ def get_subscribers(notification_type=None, owl_location=None):
         # Execute the query
         response = query.execute()
         
-        # Check if response has data and return
         if hasattr(response, 'data'):
             logger.info(f"Found {len(response.data)} subscribers for {notification_type} alerts")
             return response.data
-        else:
-            logger.warning("No data attribute in Supabase response")
-            return []
-
-    except Exception as e:
-        logger.error(f"Error getting subscribers from Supabase: {e}")
-        # Return empty list instead of None to avoid NoneType errors
         return []
+    except Exception as e:
+        logger.error(f"Error getting subscribers: {e}")
+        return []
+
+def get_admin_subscribers():
+    """
+    Get subscribers marked as Owly Admins.
+    Added in v1.2.0 for admin notification system.
+    
+    Returns:
+        list: List of admin subscriber records
+    """
+    try:
+        # Check if the is_admin column exists
+        if not check_column_exists("subscribers", "is_admin"):
+            logger.warning("is_admin column does not exist in subscribers table")
+            # Fall back to a specific admin email if column doesn't exist
+            return [{"email": "maxferrigni@gmail.com", "name": "Max Ferrigni"}]
+        
+        # Query for admin subscribers
+        response = supabase_client.table("subscribers").select("*").eq("is_admin", True).execute()
+        
+        if hasattr(response, 'data') and response.data:
+            logger.info(f"Found {len(response.data)} admin subscribers")
+            return response.data
+            
+        # If no admins found, fall back to a specific admin
+        logger.warning("No admin subscribers found, using default admin")
+        return [{"email": "maxferrigni@gmail.com", "name": "Max Ferrigni"}]
+        
+    except Exception as e:
+        logger.error(f"Error getting admin subscribers: {e}")
+        # Fall back to a specific admin email on error
+        return [{"email": "maxferrigni@gmail.com", "name": "Max Ferrigni"}]
 
 def get_owl_activity_logs(start_time=None, end_time=None, limit=100, camera_name=None):
     """
     Get owl activity logs within a time range.
-    Enhanced in v1.1.0 to support after action reports.
     
     Args:
         start_time (datetime, optional): Start time for filtering logs
@@ -190,7 +194,7 @@ def get_owl_activity_logs(start_time=None, end_time=None, limit=100, camera_name
         list: List of activity log records
     """
     try:
-        # Start with base query - always select first
+        # Start with base query
         query = supabase_client.table("owl_activity_log").select("*")
         
         # Filter by camera if provided
@@ -199,14 +203,10 @@ def get_owl_activity_logs(start_time=None, end_time=None, limit=100, camera_name
         
         # Filter by time range if provided
         if start_time:
-            # Convert to ISO format for Supabase
-            start_time_iso = start_time.isoformat()
-            query = query.gte("created_at", start_time_iso)
+            query = query.gte("created_at", start_time.isoformat())
             
         if end_time:
-            # Convert to ISO format for Supabase
-            end_time_iso = end_time.isoformat()
-            query = query.lte("created_at", end_time_iso)
+            query = query.lte("created_at", end_time.isoformat())
         
         # Order by timestamp descending and limit results
         query = query.order("created_at", desc=True).limit(limit)
@@ -214,13 +214,9 @@ def get_owl_activity_logs(start_time=None, end_time=None, limit=100, camera_name
         # Execute query
         response = query.execute()
         
-        # Check if response has data
         if hasattr(response, 'data'):
             return response.data
-        else:
-            logger.warning("No data attribute in Supabase response")
-            return []
-            
+        return []
     except Exception as e:
         logger.error(f"Error getting owl activity logs: {e}")
         return []
@@ -228,7 +224,6 @@ def get_owl_activity_logs(start_time=None, end_time=None, limit=100, camera_name
 def get_activity_stats(start_time=None, hours=12):
     """
     Get activity statistics for after action reports.
-    New in v1.1.0 to support after action reporting.
     
     Args:
         start_time (datetime, optional): Start time for statistics, defaults to hours ago
@@ -276,7 +271,7 @@ def get_activity_stats(start_time=None, hours=12):
                 stats["Owl In Box"] += 1
                 stats["total_detections"] += 1
             
-            # Check for multi-owl detections (added in v1.1.0)
+            # Check for multi-owl detections
             if check_column_exists("owl_activity_log", "two_owls") and log.get("two_owls") == 1:
                 stats["Two Owls"] += 1
                 stats["total_detections"] += 1
@@ -290,7 +285,6 @@ def get_activity_stats(start_time=None, hours=12):
                 stats["total_detections"] += 1
                 
         return stats
-        
     except Exception as e:
         logger.error(f"Error getting activity statistics: {e}")
         return {
@@ -300,97 +294,94 @@ def get_activity_stats(start_time=None, hours=12):
             "period_end": datetime.now(pytz.utc).isoformat()
         }
 
-def log_after_action_report(report_data):
+def log_report_to_database(report_data):
     """
-    Log after action report generation to Supabase.
-    New in v1.1.0 to track report generation.
+    Log report generation to database. 
+    Added in v1.2.0 for report tracking.
     
     Args:
-        report_data (dict): Report data including statistics
+        report_data (dict): Report metadata including:
+            - report_id: Unique identifier
+            - report_type: "after_action", "daily", "manual"
+            - is_manual: Boolean indicating manual generation
+            - recipient_count: Number of email recipients
+            - summary_data: JSON string of report statistics
+            - start_timestamp: Start of reporting period
+            - end_timestamp: End of reporting period
         
     Returns:
         dict or None: The created log entry or None if failed
     """
     try:
-        # Check if the reports table exists
-        if not check_column_exists("reports", "created_at"):
-            logger.warning("Reports table doesn't exist or is missing required columns")
-            
-            # Try to create the table if it doesn't exist
-            try:
-                # This is a simplistic approach - in a real system, you'd manage migrations properly
-                create_table_query = """
-                CREATE TABLE IF NOT EXISTS reports (
-                    id SERIAL PRIMARY KEY,
-                    created_at TIMESTAMPTZ DEFAULT NOW(),
-                    report_type TEXT,
-                    recipient_count INTEGER,
-                    start_time TIMESTAMPTZ,
-                    end_time TIMESTAMPTZ,
-                    total_detections INTEGER,
-                    statistics JSONB,
-                    report_url TEXT
-                );
-                """
-                supabase_client.rpc('execute_sql', {'query': create_table_query}).execute()
-                logger.info("Created reports table")
-            except Exception as e:
-                logger.error(f"Failed to create reports table: {e}")
-                return None
-                
-        # Prepare log entry
-        now = datetime.now(pytz.utc)
-        log_entry = {
-            "created_at": now.isoformat(),
-            "report_type": report_data.get("report_type", "after_action"),
-            "recipient_count": report_data.get("recipient_count", 0),
-            "start_time": report_data.get("period_start"),
-            "end_time": report_data.get("period_end"),
-            "total_detections": report_data.get("total_detections", 0),
-            "statistics": json.dumps(report_data.get("statistics", {})),
-            "report_url": report_data.get("report_url")
-        }
-        
-        # Insert into Supabase
-        response = supabase_client.table("reports").insert(log_entry).execute()
-        
-        if hasattr(response, 'data') and response.data and len(response.data) > 0:
-            logger.info(f"After action report logged successfully")
-            return response.data[0]
-        else:
-            logger.error("Failed to log after action report")
+        # Check if reports table exists with required columns
+        if not check_column_exists("reports", "report_id"):
+            logger.warning("reports table doesn't exist or missing report_id column")
             return None
             
+        # Ensure timestamps are in ISO format
+        if 'created_at' not in report_data:
+            report_data['created_at'] = datetime.now(pytz.utc).isoformat()
+            
+        # Insert report into database
+        response = supabase_client.table("reports").insert(report_data).execute()
+        
+        if hasattr(response, 'data') and len(response.data) > 0:
+            logger.info(f"Report {report_data.get('report_id')} logged successfully")
+            return response.data[0]
+        
+        logger.error("Failed to log report to database")
+        return None
     except Exception as e:
-        logger.error(f"Error logging after action report: {e}")
+        logger.error(f"Error logging report to database: {e}")
         return None
 
-def get_recent_reports(limit=10):
+def get_last_report_time():
     """
-    Get recent after action reports.
-    New in v1.1.0 to support the reports interface.
+    Get the creation time of the most recent report.
+    Added in v1.2.0 for report scheduling.
+    
+    Returns:
+        str or None: ISO timestamp of the last report or None if no reports
+    """
+    try:
+        # Check if reports table exists
+        if not check_column_exists("reports", "created_at"):
+            logger.warning("reports table doesn't exist or missing created_at column")
+            return None
+            
+        # Query for the most recent report
+        response = supabase_client.table("reports").select("created_at").order("created_at", desc=True).limit(1).execute()
+        
+        if hasattr(response, 'data') and len(response.data) > 0:
+            return response.data[0]['created_at']
+        return None
+    except Exception as e:
+        logger.error(f"Error getting last report time: {e}")
+        return None
+
+def get_recent_reports(limit=20):
+    """
+    Get recent reports for display in the UI.
+    Added in v1.2.0 for report history view.
     
     Args:
         limit (int): Maximum number of reports to retrieve
         
     Returns:
-        list: List of report records
+        list: List of recent report records
     """
     try:
         # Check if reports table exists
         if not check_column_exists("reports", "created_at"):
-            logger.warning("Reports table doesn't exist or is missing required columns")
+            logger.warning("reports table doesn't exist or missing created_at column")
             return []
             
-        # Query reports
+        # Query for recent reports
         response = supabase_client.table("reports").select("*").order("created_at", desc=True).limit(limit).execute()
         
         if hasattr(response, 'data'):
             return response.data
-        else:
-            logger.warning("No data attribute in Supabase response")
-            return []
-            
+        return []
     except Exception as e:
         logger.error(f"Error getting recent reports: {e}")
         return []
@@ -408,14 +399,12 @@ def save_custom_threshold(camera_name, threshold_value):
     """
     try:
         # Check if camera_settings table exists
-        column_info = get_table_columns("camera_settings")
-        if not column_info:
+        if not check_column_exists("camera_settings", "camera_name"):
             logger.warning("camera_settings table does not exist or has no columns")
             return False
             
         # Check if a record exists for this camera
-        query = supabase_client.table("camera_settings").select("*").eq("camera_name", camera_name)
-        response = query.execute()
+        response = supabase_client.table("camera_settings").select("*").eq("camera_name", camera_name).execute()
         
         if hasattr(response, 'data') and len(response.data) > 0:
             # Update existing record
@@ -439,7 +428,6 @@ def save_custom_threshold(camera_name, threshold_value):
             logger.info(f"Created new confidence threshold for {camera_name}: {threshold_value}%")
             
         return True
-        
     except Exception as e:
         logger.error(f"Error saving custom threshold for {camera_name}: {e}")
         return False
@@ -453,8 +441,7 @@ def get_custom_thresholds():
     """
     try:
         # Check if camera_settings table exists
-        column_info = get_table_columns("camera_settings")
-        if not column_info:
+        if not check_column_exists("camera_settings", "camera_name"):
             logger.warning("camera_settings table doesn't exist or has no columns")
             return {}
             
@@ -469,86 +456,49 @@ def get_custom_thresholds():
                     thresholds[row["camera_name"]] = row["owl_confidence_threshold"]
                     
         return thresholds
-        
     except Exception as e:
         logger.error(f"Error getting custom thresholds: {e}")
         return {}
-
-def get_multiple_owl_settings():
-    """
-    Get settings for multiple owl detection.
-    New in v1.1.0 to support multiple owl detection.
-    
-    Returns:
-        dict: Settings for multiple owl detection
-    """
-    try:
-        # Check if settings table exists and has multiple_owl_settings column
-        if not check_column_exists("settings", "multiple_owl_settings"):
-            logger.warning("multiple_owl_settings not found in settings table")
-            # Return default settings
-            return {
-                "enabled": True,
-                "confidence_boost": 10.0,  # Boost confidence score for multiple owls
-                "minimum_confidence": 50.0  # Minimum base confidence to consider multiple owls
-            }
-            
-        # Query settings
-        response = supabase_client.table("settings").select("multiple_owl_settings").limit(1).execute()
-        
-        if hasattr(response, 'data') and len(response.data) > 0 and "multiple_owl_settings" in response.data[0]:
-            settings_json = response.data[0]["multiple_owl_settings"]
-            
-            # Parse JSON if it's a string
-            if isinstance(settings_json, str):
-                try:
-                    settings = json.loads(settings_json)
-                    return settings
-                except json.JSONDecodeError:
-                    logger.error("Invalid JSON in multiple_owl_settings")
-            elif isinstance(settings_json, dict):
-                return settings_json
-                
-        # Return default settings if no valid settings found
-        return {
-            "enabled": True,
-            "confidence_boost": 10.0,
-            "minimum_confidence": 50.0
-        }
-            
-    except Exception as e:
-        logger.error(f"Error getting multiple owl settings: {e}")
-        # Return default settings on error
-        return {
-            "enabled": True,
-            "confidence_boost": 10.0,
-            "minimum_confidence": 50.0
-        }
 
 if __name__ == "__main__":
     # Test database functions
     try:
         logger.info("Testing database utility functions...")
         
-        # Test get_subscribers with new alert types
-        email_subscribers = get_subscribers(notification_type="email", owl_location="Two Owls In Box")
-        logger.info(f"Found {len(email_subscribers) if email_subscribers else 0} email subscribers for Two Owls In Box")
+        # Test report tracking functions
+        test_report_id = f"OWLR-{datetime.now().strftime('%Y%m%d%H%M%S')}-TEST"
         
-        # Test activity stats
-        hours_ago = 24
-        stats = get_activity_stats(hours=hours_ago)
-        logger.info(f"Found {stats.get('total_detections', 0)} detections in the last {hours_ago} hours")
-        logger.info(f"Owl In Box detections: {stats.get('Owl In Box', 0)}")
-        logger.info(f"Owl On Box detections: {stats.get('Owl On Box', 0)}")
-        logger.info(f"Owl In Area detections: {stats.get('Owl In Area', 0)}")
+        # Create test report data
+        test_report = {
+            "report_id": test_report_id,
+            "report_type": "manual",
+            "is_manual": True,
+            "recipient_count": 1,
+            "summary_data": json.dumps({"total_alerts": 5, "alert_counts": {"Owl In Box": 3, "Owl On Box": 2}}),
+            "start_timestamp": (datetime.now() - timedelta(hours=24)).isoformat(),
+            "end_timestamp": datetime.now().isoformat()
+        }
         
-        # Test recent reports
-        reports = get_recent_reports(5)
-        logger.info(f"Found {len(reports)} recent reports")
+        # Test logging report
+        report_result = log_report_to_database(test_report)
+        if report_result:
+            logger.info(f"Successfully logged test report: {test_report_id}")
+        else:
+            logger.warning("Failed to log test report")
+            
+        # Test retrieving last report time
+        last_time = get_last_report_time()
+        logger.info(f"Last report time: {last_time}")
         
-        # Test multiple owl settings
-        owl_settings = get_multiple_owl_settings()
-        logger.info(f"Multiple owl detection enabled: {owl_settings.get('enabled', False)}")
+        # Test retrieving recent reports
+        recent_reports = get_recent_reports(5)
+        logger.info(f"Found {len(recent_reports)} recent reports")
+        
+        # Test admin subscribers
+        admins = get_admin_subscribers()
+        logger.info(f"Found {len(admins)} admin subscribers")
+        for admin in admins:
+            logger.info(f"Admin: {admin.get('name')} ({admin.get('email')})")
         
         logger.info("Database utility tests complete")
     except Exception as e:

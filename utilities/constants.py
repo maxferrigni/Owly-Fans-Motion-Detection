@@ -1,11 +1,11 @@
 # File: utilities/constants.py
 # Purpose: Centralized path management and validation for the Owl Monitoring System
 # 
-# March 4, 2025 Update - Version 1.1.0
-# - Updated version number
-# - Added alert priority constants for single/multiple owls
-# - Updated Supabase bucket configuration to use separate buckets for detections and base images
-# - Added detection folder structure for owl_detections bucket
+# March 5, 2025 Update - Version 1.2.0
+# - Updated version number to 1.2.0
+# - Added alert tracking support
+# - Removed local report file storage
+# - Added admin notification support
 
 import os
 import json
@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Version information
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # Base directory path from environment variables with fallback
 BASE_DIR = os.getenv("BASE_DIR", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection")
@@ -102,6 +102,19 @@ DETECTION_FOLDERS = {
     "Two Owls In Box": "two_owls_in_box",
     "Eggs Or Babies": "eggs_or_babies"
 }
+
+# Default environment variables - Added in v1.2.0
+DEFAULT_ENV_VARS = {
+    "OWL_AFTER_ACTION_REPORTS": "True",  # Ensure reports are enabled by default
+    "OWL_EMAIL_ALERTS": "True",
+    "OWL_TEXT_ALERTS": "True",
+    "OWL_EMAIL_TO_TEXT_ALERTS": "True"
+}
+
+# Set default environment variables if not already set
+for var_name, default_value in DEFAULT_ENV_VARS.items():
+    if os.environ.get(var_name) is None:
+        os.environ[var_name] = default_value
 
 def get_comparison_image_path(camera_name, alert_type=None, temp=False, timestamp=None):
     """
