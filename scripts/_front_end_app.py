@@ -1,5 +1,11 @@
 # File: _front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
+#
+# March 4, 2025 Update - Version 1.1.0
+# - Added transition period indicators for lighting conditions
+# - Enhanced status display for base image captures
+# - Added support for after action reports
+# - Improved UI feedback for lighting conditions
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -7,7 +13,7 @@ import subprocess
 import threading
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Add parent directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,8 +24,18 @@ sys.path.append(parent_dir)
 from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, VERSION, BASE_DIR
 from utilities.logging_utils import get_logger
 from utilities.alert_manager import AlertManager
+from utilities.time_utils import (
+    get_current_lighting_condition, 
+    is_transition_period, 
+    get_lighting_info, 
+    should_generate_after_action_report
+)
 from motion_detection_settings import MotionDetectionSettings
 from test_interface import TestInterface
+from capture_base_images import notify_transition_period
+
+# Import after action report generator - New in v1.1.0
+from after_action_report import generate_after_action_report
 
 # Import GUI panels
 from _front_end_panels import LogWindow, StatusPanel
@@ -44,6 +60,14 @@ class OwlApp:
         self.text_alerts_enabled = tk.BooleanVar(value=True)
         self.email_to_text_alerts_enabled = tk.BooleanVar(value=True)
         
+        # Added in v1.1.0 - After action report variables
+        self.after_action_reports_enabled = tk.BooleanVar(value=True)
+        
+        # Lighting condition tracker - Added in v1.1.0
+        self.current_lighting_condition = get_current_lighting_condition()
+        self.last_lighting_check = datetime.now()
+        self.in_transition = is_transition_period()
+        
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         # Set style for more immediate button rendering
@@ -51,12 +75,17 @@ class OwlApp:
         self.style.configure('TButton', font=('Arial', 10))
         self.style.configure('TFrame', padding=2)  # Reduced padding
         self.style.configure('TLabelframe', padding=3)  # Reduced padding
+        
+        # Add custom styles for lighting indicators - v1.1.0
+        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
+        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
+        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
 
         # Initialize managers
         self.alert_manager = AlertManager()
         self.logger = get_logger()
 
-        # Add environment indicator and version
+        # Add environment and version labels
         self.env_label = ttk.Label(
             self.root,
             text="DEV ENVIRONMENT" if "Dev" in BASE_DIR else "PRODUCTION",
@@ -72,6 +101,31 @@ class OwlApp:
             font=("Arial", 8)
         )
         self.version_label.pack(side="top", pady=2)
+        
+        # Add lighting condition indicator - New in v1.1.0
+        self.lighting_frame = ttk.Frame(self.root)
+        self.lighting_frame.pack(side="top", pady=3)
+        
+        ttk.Label(
+            self.lighting_frame,
+            text="Lighting: "
+        ).pack(side=tk.LEFT)
+        
+        self.lighting_indicator = ttk.Label(
+            self.lighting_frame,
+            text=self.current_lighting_condition.upper(),
+            style=f"{self.current_lighting_condition.capitalize()}.TLabel"
+        )
+        self.lighting_indicator.pack(side=tk.LEFT)
+        
+        # Add transition warning if needed
+        if self.in_transition:
+            ttk.Label(
+                self.lighting_frame,
+                text=" (Base images paused during transition)",
+                font=("Arial", 8, "italic"),
+                foreground="orange"
+            ).pack(side=tk.LEFT)
 
         # Create main container
         self.main_container = ttk.Frame(self.root)
@@ -85,11 +139,13 @@ class OwlApp:
         self.control_tab = ttk.Frame(self.notebook)
         self.settings_tab = ttk.Frame(self.notebook)
         self.test_tab = ttk.Frame(self.notebook)
+        self.report_tab = ttk.Frame(self.notebook)  # New in v1.1.0
 
         # Add tabs to notebook
         self.notebook.add(self.control_tab, text="Control")
         self.notebook.add(self.settings_tab, text="Settings")
         self.notebook.add(self.test_tab, text="Test")
+        self.notebook.add(self.report_tab, text="Reports")  # New in v1.1.0
 
         # Initialize components
         self.initialize_components()
@@ -101,6 +157,9 @@ class OwlApp:
         # Verify directories
         self.verify_directories()
         self.log_message("GUI initialized and ready", "INFO")
+        
+        # Start periodic lighting condition check - New in v1.1.0
+        self.root.after(10000, self.check_lighting_condition)  # Check every 10 seconds
 
     def initialize_components(self):
         """Initialize all GUI components"""
@@ -123,6 +182,9 @@ class OwlApp:
         test_scroll = ttk.Frame(self.test_tab)
         test_scroll.pack(fill="both", expand=True)
         self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
+        
+        # Create reports interface - New in v1.1.0
+        self.create_reports_interface()
 
     def create_control_panel(self):
         """Create main control panel"""
@@ -209,6 +271,14 @@ class OwlApp:
             command=self.toggle_email_to_text_alerts
         ).grid(row=1, column=0, padx=5, pady=2, sticky="w")
         
+        # Add After Action Reports checkbox - New in v1.1.0
+        ttk.Checkbutton(
+            alert_checkbox_frame,
+            text="After Action Reports",
+            variable=self.after_action_reports_enabled,
+            command=self.toggle_after_action_reports
+        ).grid(row=1, column=1, padx=5, pady=2, sticky="w")
+        
         # Make columns expand evenly
         alert_checkbox_frame.columnconfigure(0, weight=1)
         alert_checkbox_frame.columnconfigure(1, weight=1)
@@ -287,7 +357,166 @@ class OwlApp:
             log_frame,
             text="View Logs",
             command=lambda: self.log_window.show()
-        ).pack(pady=2)  # Reduced padding
+        ).pack(side=tk.LEFT, pady=2)  # Reduced padding
+        
+        # Manual base image capture button - Enhanced in v1.1.0
+        ttk.Button(
+            log_frame,
+            text="Capture Base Images",
+            command=self.manual_base_image_capture
+        ).pack(side=tk.RIGHT, pady=2)  # Reduced padding
+        
+        # Manual report generation button - New in v1.1.0
+        ttk.Button(
+            log_frame,
+            text="Generate Report",
+            command=self.manual_report_generation
+        ).pack(side=tk.RIGHT, padx=5, pady=2)
+
+    def create_reports_interface(self):
+        """Create reports interface tab - New in v1.1.0"""
+        reports_frame = ttk.LabelFrame(self.report_tab, text="After Action Reports")
+        reports_frame.pack(fill="both", expand=True, pady=5, padx=5)
+        
+        # Add explanation text
+        info_text = """
+        After Action Reports are automatically generated when transitioning 
+        between day and night lighting conditions. Reports summarize all owl 
+        activity from the preceding session.
+        
+        Reports include:
+        • Alert counts by type
+        • Detection durations
+        • Activity summaries
+        
+        Reports are sent to all subscribers.
+        """
+        
+        ttk.Label(
+            reports_frame,
+            text=info_text,
+            wraplength=500,
+            justify=tk.LEFT
+        ).pack(pady=10, padx=10, anchor=tk.W)
+        
+        # Add buttons frame
+        buttons_frame = ttk.Frame(reports_frame)
+        buttons_frame.pack(fill="x", pady=5)
+        
+        # Generate report button
+        ttk.Button(
+            buttons_frame,
+            text="Generate Report Now",
+            command=self.manual_report_generation
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # View last report button
+        ttk.Button(
+            buttons_frame,
+            text="View Last Report",
+            command=self.view_last_report
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Add report history frame
+        history_frame = ttk.LabelFrame(reports_frame, text="Report History")
+        history_frame.pack(fill="both", expand=True, pady=5)
+        
+        # Create treeview for report history
+        columns = ('date', 'time', 'alerts', 'session_type')
+        self.reports_tree = ttk.Treeview(history_frame, columns=columns, show='headings')
+        
+        # Define headings
+        self.reports_tree.heading('date', text='Date')
+        self.reports_tree.heading('time', text='Time')
+        self.reports_tree.heading('alerts', text='Alerts')
+        self.reports_tree.heading('session_type', text='Session Type')
+        
+        # Define columns
+        self.reports_tree.column('date', width=100)
+        self.reports_tree.column('time', width=100)
+        self.reports_tree.column('alerts', width=100)
+        self.reports_tree.column('session_type', width=150)
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(history_frame, orient=tk.VERTICAL, command=self.reports_tree.yview)
+        self.reports_tree.configure(yscroll=scrollbar.set)
+        
+        # Pack the treeview and scrollbar
+        self.reports_tree.pack(side=tk.LEFT, fill="both", expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill="y")
+        
+        # Double-click to view report
+        self.reports_tree.bind("<Double-1>", self.on_report_double_click)
+    
+    def check_lighting_condition(self):
+        """
+        Periodically check for lighting condition changes.
+        New in v1.1.0 to handle transition periods and after action reports.
+        """
+        try:
+            # Get current lighting condition
+            current_condition = get_current_lighting_condition()
+            in_transition = is_transition_period()
+            
+            # Check for condition change
+            if current_condition != self.current_lighting_condition or in_transition != self.in_transition:
+                self.log_message(f"Lighting condition changed: {self.current_lighting_condition} -> {current_condition}")
+                
+                # Update indicator
+                self.lighting_indicator.config(
+                    text=current_condition.upper(),
+                    style=f"{current_condition.capitalize()}.TLabel"
+                )
+                
+                # Update status panel
+                self.status_panel.update_status(
+                    "Lighting",
+                    current_condition
+                )
+                
+                # Show notification if entering or leaving transition period
+                if in_transition and not self.in_transition:
+                    # Entered transition period
+                    notify_transition_period(self.root)
+                    
+                    # Clear transition warning label if it exists
+                    for widget in self.lighting_frame.winfo_children():
+                        if isinstance(widget, ttk.Label) and widget not in [self.lighting_indicator]:
+                            if "transition" in widget.cget("text").lower():
+                                widget.destroy()
+                    
+                    # Add transition warning
+                    ttk.Label(
+                        self.lighting_frame,
+                        text=" (Base images paused during transition)",
+                        font=("Arial", 8, "italic"),
+                        foreground="orange"
+                    ).pack(side=tk.LEFT)
+                    
+                elif not in_transition and self.in_transition:
+                    # Exited transition period
+                    # Clear transition warning label if it exists
+                    for widget in self.lighting_frame.winfo_children():
+                        if isinstance(widget, ttk.Label) and widget not in [self.lighting_indicator]:
+                            if "transition" in widget.cget("text").lower():
+                                widget.destroy()
+                
+                # Check if we should generate an after action report
+                if self.after_action_reports_enabled.get() and should_generate_after_action_report():
+                    self.log_message("Generating after action report due to major lighting transition")
+                    self.generate_after_action_report()
+                
+                # Update stored values
+                self.current_lighting_condition = current_condition
+                self.in_transition = in_transition
+            
+            # Schedule next check
+            self.root.after(10000, self.check_lighting_condition)  # Check every 10 seconds
+            
+        except Exception as e:
+            self.log_message(f"Error checking lighting condition: {e}", "ERROR")
+            # Still schedule next check even if error occurs
+            self.root.after(10000, self.check_lighting_condition)
 
     def toggle_email_alerts(self):
         """Handle email alerts toggle"""
@@ -330,6 +559,192 @@ class OwlApp:
             "Email-to-Text",
             "enabled" if is_enabled else "disabled"
         )
+    
+    def toggle_after_action_reports(self):
+        """Handle after action reports toggle - New in v1.1.0"""
+        is_enabled = self.after_action_reports_enabled.get()
+        self.log_message(f"After action reports {'enabled' if is_enabled else 'disabled'}")
+        
+        # Set environment variable for child processes
+        os.environ['OWL_AFTER_ACTION_REPORTS'] = str(is_enabled)
+        
+        # Update status panel
+        self.status_panel.update_status(
+            "After Action Reports",
+            "enabled" if is_enabled else "disabled"
+        )
+    
+    def manual_base_image_capture(self):
+        """
+        Handle manual base image capture button press.
+        Enhanced in v1.1.0 to handle transition periods.
+        """
+        # Import here to avoid circular import
+        from capture_base_images import capture_base_images
+        
+        # Check for transition period
+        if is_transition_period():
+            messagebox.showinfo(
+                "Base Image Capture", 
+                "Cannot capture base images during lighting transition period.\n"
+                "Please wait for true day or true night conditions."
+            )
+            return
+        
+        try:
+            # Get current lighting condition
+            lighting_condition = get_current_lighting_condition()
+            
+            # Force capture even if timing conditions aren't met
+            results = capture_base_images(lighting_condition, force_capture=True, show_ui_message=True)
+            
+            if results:
+                # Show success message
+                success_count = sum(1 for r in results if r['status'] == 'success')
+                messagebox.showinfo(
+                    "Base Image Capture",
+                    f"Successfully captured {success_count} base images for {lighting_condition} condition."
+                )
+            else:
+                messagebox.showinfo(
+                    "Base Image Capture",
+                    "No base images were captured. This could be due to transition period or camera configuration issues."
+                )
+                
+        except Exception as e:
+            self.log_message(f"Error during manual base image capture: {e}", "ERROR")
+            messagebox.showerror("Error", f"Failed to capture base images: {e}")
+    
+    def manual_report_generation(self):
+        """Handle manual report generation button press - New in v1.1.0"""
+        try:
+            # Ask for confirmation
+            if messagebox.askyesno(
+                "Generate Report",
+                "Generate an after action report for the current session?\n"
+                "This will be sent to all subscribers."
+            ):
+                self.generate_after_action_report()
+                
+        except Exception as e:
+            self.log_message(f"Error generating report: {e}", "ERROR")
+            messagebox.showerror("Error", f"Failed to generate report: {e}")
+    
+    def generate_after_action_report(self):
+        """Generate and send after action report - New in v1.1.0"""
+        try:
+            # Get alert statistics from alert manager
+            alert_stats = self.alert_manager.get_alert_statistics()
+            
+            # Generate and send the report
+            report_result = generate_after_action_report(alert_stats, is_manual=True)
+            
+            if report_result and report_result.get('success'):
+                self.log_message("After action report generated and sent successfully")
+                
+                # Reset alert statistics
+                self.alert_manager.reset_alert_stats()
+                
+                # Add to report history
+                self.add_report_to_history(report_result)
+                
+                # Show success message
+                messagebox.showinfo(
+                    "Report Generated",
+                    f"After action report generated and sent to {report_result.get('recipient_count', 0)} subscribers."
+                )
+            else:
+                error_msg = report_result.get('error', 'Unknown error') if report_result else 'Failed to generate report'
+                self.log_message(f"Error generating report: {error_msg}", "ERROR")
+                messagebox.showerror("Error", f"Failed to generate report: {error_msg}")
+                
+        except Exception as e:
+            self.log_message(f"Error generating report: {e}", "ERROR")
+            messagebox.showerror("Error", f"Failed to generate report: {e}")
+    
+    def add_report_to_history(self, report_data):
+        """Add a new report to the history treeview - New in v1.1.0"""
+        try:
+            # Format data for treeview
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            time_str = datetime.now().strftime('%H:%M:%S')
+            alerts = str(report_data.get('total_alerts', 0))
+            session_type = report_data.get('session_type', 'Manual')
+            
+            # Insert at the top of the treeview
+            self.reports_tree.insert('', 0, values=(date_str, time_str, alerts, session_type))
+            
+        except Exception as e:
+            self.log_message(f"Error adding report to history: {e}", "ERROR")
+    
+    def view_last_report(self):
+        """View the latest after action report - New in v1.1.0"""
+        try:
+            # Try to open the last report file
+            import os
+            reports_dir = os.path.join(BASE_DIR, "20_Local_Files", "reports")
+            
+            if not os.path.exists(reports_dir):
+                messagebox.showinfo("No Reports", "No reports have been generated yet.")
+                return
+                
+            # List all report files and sort by modification time
+            report_files = [os.path.join(reports_dir, f) for f in os.listdir(reports_dir) if f.endswith('.html')]
+            
+            if not report_files:
+                messagebox.showinfo("No Reports", "No report files found.")
+                return
+                
+            # Get the most recent file
+            latest_report = max(report_files, key=os.path.getmtime)
+            
+            # Try to open with default browser
+            import webbrowser
+            webbrowser.open(f"file://{latest_report}")
+            
+        except Exception as e:
+            self.log_message(f"Error viewing report: {e}", "ERROR")
+            messagebox.showerror("Error", f"Failed to view report: {e}")
+    
+    def on_report_double_click(self, event):
+        """Handle double-click on report in treeview - New in v1.1.0"""
+        try:
+            # Get selected item
+            selected_item = self.reports_tree.focus()
+            if not selected_item:
+                return
+                
+            # Get values
+            values = self.reports_tree.item(selected_item, 'values')
+            if not values:
+                return
+                
+            # Attempt to find the report based on date and time
+            date_str, time_str = values[0], values[1]
+            formatted_datetime = f"{date_str}_{time_str.replace(':', '')}"
+            
+            # Look for file with matching timestamp
+            import os
+            reports_dir = os.path.join(BASE_DIR, "20_Local_Files", "reports")
+            
+            if not os.path.exists(reports_dir):
+                messagebox.showinfo("No Reports", "Reports directory not found.")
+                return
+                
+            # Try to find a matching report
+            matching_files = [f for f in os.listdir(reports_dir) 
+                             if f.endswith('.html') and formatted_datetime in f]
+            
+            if matching_files:
+                # Open the first matching file
+                import webbrowser
+                report_path = os.path.join(reports_dir, matching_files[0])
+                webbrowser.open(f"file://{report_path}")
+            else:
+                messagebox.showinfo("Report Not Found", "Could not find the report file.")
+                
+        except Exception as e:
+            self.log_message(f"Error opening report: {e}", "ERROR")
 
     def update_capture_interval(self, *args):
         """Handle changes to the capture interval"""
@@ -422,6 +837,11 @@ class OwlApp:
         try:
             self.log_message("Verifying directory structure...")
             ensure_directories_exist()
+            
+            # Add reports directory in v1.1.0
+            reports_dir = os.path.join(BASE_DIR, "20_Local_Files", "reports")
+            os.makedirs(reports_dir, exist_ok=True)
+            
             self.log_message("Directory verification complete")
         except Exception as e:
             self.log_message(f"Error verifying directories: {e}", "ERROR")
@@ -518,6 +938,9 @@ class OwlApp:
                 env['OWL_EMAIL_ALERTS'] = str(self.email_alerts_enabled.get())
                 env['OWL_TEXT_ALERTS'] = str(self.text_alerts_enabled.get())
                 env['OWL_EMAIL_TO_TEXT_ALERTS'] = str(self.email_to_text_alerts_enabled.get())
+                
+                # After action reports - New in v1.1.0
+                env['OWL_AFTER_ACTION_REPORTS'] = str(self.after_action_reports_enabled.get())
                 
                 # Set alert delay
                 self.alert_manager.set_alert_delay(self.alert_delay.get())

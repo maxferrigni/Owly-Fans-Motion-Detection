@@ -1,14 +1,26 @@
 # File: alert_email_to_text.py
 # Purpose: Handle SMS alerts via email-to-text gateways
+#
+# March 4, 2025 Update - Version 1.1.0
+# - Added support for multiple owl detection scenarios
+# - Enhanced alert messaging based on priority system
+# - Added comparison image URL support
+# - Updated carrier gateways with latest domains
 
 import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import smtplib
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+    print("WARNING: python-dotenv package not installed. Will use environment variables directly.")
 
 # Import utilities
 from utilities.logging_utils import get_logger
+from utilities.constants import ALERT_PRIORITIES
 
 # Corrected import: from database_utils
 from utilities.database_utils import get_subscribers
@@ -16,8 +28,9 @@ from utilities.database_utils import get_subscribers
 # Initialize logger
 logger = get_logger()
 
-# Load environment variables
-load_dotenv()
+# Load environment variables if dotenv is available
+if DOTENV_AVAILABLE:
+    load_dotenv()
 
 # Email credentials from environment variables
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "owlyfans01@gmail.com")
@@ -39,7 +52,8 @@ CARRIER_EMAIL_GATEWAYS = {
     "metro": "mymetropcs.com",
     "googlefi": "msg.fi.google.com",
     "spectrum": "messaging.spectrum.com",  # Updated domain
-    "charter": "charter.net"               # Keep original as an option
+    "charter": "charter.net",              # Keep original as an option
+    "xfinity": "xfinity.mobile.com"        # Added in v1.1.0
 }
 
 def send_text_via_email(phone_number, carrier, message, recipient_name=None):
@@ -99,15 +113,16 @@ def send_text_via_email(phone_number, carrier, message, recipient_name=None):
     except Exception as e:
         logger.error(f"Error sending text alert to {phone_number} ({carrier}): {e}")
 
-def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
+def send_text_alert(camera_name, alert_type, is_test=False, test_prefix="", image_url=None):
     """
     Send SMS alerts via email-to-text gateway based on camera name and alert type.
     
     Args:
         camera_name (str): Name of the camera that detected motion
-        alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
+        alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area", etc.)
         is_test (bool, optional): Whether this is a test alert
         test_prefix (str, optional): Prefix to add for test alerts (e.g., "TEST: ")
+        image_url (str, optional): URL to the comparison image (added in v1.1.0)
     """
     try:
         # Check if email-to-text alerts are enabled
@@ -115,7 +130,11 @@ def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
             logger.info("Email-to-text alerts are disabled, skipping")
             return
 
+        # Get priority level for logging
+        priority_level = ALERT_PRIORITIES.get(alert_type, 1)
+
         # Determine the message based on camera name and alert type
+        # Enhanced in v1.1.0 to support multiple owl detection scenarios
         if camera_name == "Upper Patio Camera" and alert_type == "Owl In Area":
             message = (f"{test_prefix}Motion has been detected in the Upper Patio area. "
                        "Please check the camera feed at www.owly-fans.com")
@@ -125,8 +144,21 @@ def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
         elif camera_name == "Wyze Internal Camera" and alert_type == "Owl In Box":
             message = (f"{test_prefix}Motion has been detected in the Owl Box. "
                        "Please check the camera feed at www.owly-fans.com")
+        elif alert_type == "Two Owls":
+            message = (f"{test_prefix}Two owls have been detected in the area! "
+                      "Please check the camera feed at www.owly-fans.com")
+        elif alert_type == "Two Owls In Box":
+            message = (f"{test_prefix}Two owls have been detected in the box! "
+                      "Please check the camera feed at www.owly-fans.com")
+        elif alert_type == "Eggs Or Babies":
+            message = (f"{test_prefix}Eggs or babies may have been detected in the box! "
+                      "Please check the camera feed at www.owly-fans.com")
         else:
             message = f"{test_prefix}Motion has been detected by {camera_name}! Check www.owly-fans.com"
+
+        # Add image URL if provided - New in v1.1.0
+        if image_url:
+            message += f"\nView image: {image_url}"
 
         # Get SMS subscribers
         subscribers = get_subscribers(notification_type="email_to_text", owl_location=alert_type)
@@ -135,6 +167,7 @@ def send_text_alert(camera_name, alert_type, is_test=False, test_prefix=""):
             subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
 
         logger.info(f"Sending {'test ' if is_test else ''}email-to-text alerts to {len(subscribers)} subscribers")
+        logger.info(f"Alert type: {alert_type} (Priority: {priority_level})")
         
         # Send to each subscriber
         for subscriber in subscribers:
@@ -158,11 +191,15 @@ if __name__ == "__main__":
     try:
         logger.info("Testing email-to-text alert system...")
         
-        # Test regular alert
-        send_text_alert("Wyze Internal Camera", "Owl In Box")
+        # Test regular alert with image URL
+        test_image_url = "https://project-dev-123.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_image.jpg"
+        send_text_alert("Wyze Internal Camera", "Owl In Box", image_url=test_image_url)
         
         # Test with test prefix
         send_text_alert("Upper Patio Camera", "Owl In Area", is_test=True, test_prefix="TEST: ")
+        
+        # Test multiple owl alert
+        send_text_alert("Wyze Internal Camera", "Two Owls In Box", is_test=True, test_prefix="TEST: ")
         
         logger.info("Email-to-text test complete")
         
