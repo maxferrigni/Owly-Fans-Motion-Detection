@@ -65,15 +65,8 @@ def get_table_columns(table_name):
             _column_cache[table_name] = columns
             return columns
         
-        # If no data, try to get table definition
-        query = f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'"
-        response = supabase_client.rpc('execute_sql', {'query': query}).execute()
-        
-        if hasattr(response, 'data') and len(response.data) > 0:
-            columns = [row.get('column_name') for row in response.data]
-            _column_cache[table_name] = columns
-            return columns
-            
+        # If no data, return empty list but don't log error
+        # This is normal for new tables
         _column_cache[table_name] = []
         return []
     except Exception as e:
