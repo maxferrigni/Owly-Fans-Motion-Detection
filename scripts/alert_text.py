@@ -7,9 +7,17 @@
 # - Enhanced alert messaging based on priority system
 
 import os
-from twilio.rest import Client
-from dotenv import load_dotenv
 import time
+from dotenv import load_dotenv
+
+# Try to import Twilio, but continue if not available
+try:
+    from twilio.rest import Client
+    TWILIO_AVAILABLE = True
+except ImportError:
+    TWILIO_AVAILABLE = False
+    print("WARNING: Twilio package not installed. SMS alerts will be disabled.")
+
 
 # Import utilities
 from utilities.logging_utils import get_logger
@@ -35,13 +43,17 @@ if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
     logger.error(error_msg)
     raise ValueError(error_msg)
 
-# Initialize Twilio client
-try:
-    twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    logger.info("Twilio client initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize Twilio client: {e}")
-    raise
+# Initialize Twilio client if available
+twilio_client = None
+if TWILIO_AVAILABLE:
+    try:
+        twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        logger.info("Twilio client initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Twilio client: {e}")
+        TWILIO_AVAILABLE = False
+else:
+    logger.warning("Twilio package not installed. SMS alerts will be disabled.")
 
 def send_text_alert(camera_name, alert_type, is_test=False, test_prefix="", image_url=None):
     """
@@ -58,6 +70,11 @@ def send_text_alert(camera_name, alert_type, is_test=False, test_prefix="", imag
         # Check if text alerts are enabled
         if os.environ.get('OWL_TEXT_ALERTS', 'True').lower() != 'true':
             logger.info("Text alerts are disabled, skipping")
+            return
+            
+        # Check if Twilio is available
+        if not TWILIO_AVAILABLE or not twilio_client:
+            logger.warning("Twilio not available. SMS alerts disabled.")
             return
 
         # Get priority level for better logging

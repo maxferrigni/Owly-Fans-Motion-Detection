@@ -11,7 +11,12 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import smtplib
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+    print("WARNING: python-dotenv package not installed. Will use environment variables directly.")
 
 # Import utilities
 from utilities.logging_utils import get_logger
@@ -23,8 +28,9 @@ from utilities.database_utils import get_subscribers
 # Initialize logger
 logger = get_logger()
 
-# Load environment variables
-load_dotenv()
+# Load environment variables if dotenv is available
+if DOTENV_AVAILABLE:
+    load_dotenv()
 
 # Email credentials from environment variables
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "owlyfans01@gmail.com")
