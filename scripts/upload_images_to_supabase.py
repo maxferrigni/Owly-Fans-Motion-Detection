@@ -1,5 +1,11 @@
 # File: upload_images_to_supabase.py
 # Purpose: Handle uploading motion detection images to Supabase Storage
+#
+# March 4, 2025 Update - Version 1.1.0
+# - Updated to use separate buckets for detections and base images
+# - Added proper folder structure for owl_detections bucket
+# - Enhanced metadata logging for images
+# - Added support for all detection types including multiple owls
 
 import os
 import datetime
@@ -11,7 +17,11 @@ from dotenv import load_dotenv
 
 # Import utilities
 from utilities.logging_utils import get_logger
-from utilities.constants import SUPABASE_STORAGE
+from utilities.constants import (
+    SUPABASE_STORAGE, 
+    get_detection_folder, 
+    ALERT_PRIORITIES
+)
 
 # Initialize logger
 logger = get_logger()
@@ -22,10 +32,11 @@ load_dotenv()
 # Retrieve Supabase credentials
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET")
+SUPABASE_BUCKET_DETECTIONS = os.getenv("SUPABASE_BUCKET_DETECTIONS", "owl_detections")
+SUPABASE_BUCKET_IMAGES = os.getenv("SUPABASE_BUCKET_IMAGES", "base_images")
 
 # Validate credentials
-if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET]):
+if not all([SUPABASE_URL, SUPABASE_KEY]):
     error_msg = "Supabase credentials are missing. Check the .env file."
     logger.error(error_msg)
     raise ValueError(error_msg)
@@ -105,7 +116,7 @@ def upload_comparison_image(local_image_path, camera_name, detection_type):
     Args:
         local_image_path (str): Path to the comparison image
         camera_name (str): Name of the camera
-        detection_type (str): Type of detection ("Owl In Box", "Owl On Box", "Owl In Area")
+        detection_type (str): Type of detection ("Owl In Box", "Owl On Box", "Owl In Area", etc.)
     
     Returns:
         str or None: Public URL of the uploaded image or None if failed
@@ -115,8 +126,8 @@ def upload_comparison_image(local_image_path, camera_name, detection_type):
             logger.error(f"Comparison image not found: {local_image_path}")
             return None
 
-        # Format detection type for storage folder path
-        detection_type_clean = detection_type.lower().replace(" ", "_")
+        # Get the correct folder for this detection type
+        detection_folder = get_detection_folder(detection_type)
         
         # Generate unique filename using timestamp
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -124,7 +135,7 @@ def upload_comparison_image(local_image_path, camera_name, detection_type):
         filename = f"{camera_name_clean}_{timestamp}.jpg"
         
         # Storage path: organized by detection type folder
-        storage_path = f"{detection_type_clean}/{filename}"
+        storage_path = f"{detection_folder}/{filename}"
 
         # Determine MIME type
         mime_type, _ = mimetypes.guess_type(local_image_path)
@@ -134,18 +145,19 @@ def upload_comparison_image(local_image_path, camera_name, detection_type):
         logger.info(f"Uploading {detection_type} image: {filename}")
         logger.debug(f"Local path: {local_image_path}")
         logger.debug(f"Storage path: {storage_path}")
+        logger.debug(f"Using bucket: {SUPABASE_BUCKET_DETECTIONS}")
 
-        # Upload image to Supabase Storage
+        # Upload image to Supabase Storage using the correct bucket
         with open(local_image_path, "rb") as file:
-            response = supabase_client.storage.from_(SUPABASE_STORAGE["owl_detections"]).upload(
+            response = supabase_client.storage.from_(SUPABASE_BUCKET_DETECTIONS).upload(
                 path=storage_path,
                 file=file,
                 file_options={"content-type": mime_type}
             )
 
         # Generate and return public URL
-        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{storage_path}"
-        logger.info(f"Image successfully uploaded: {public_url}")
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_DETECTIONS}/{storage_path}"
+        logger.info(f"Image successfully uploaded to {detection_folder}: {public_url}")
         
         return public_url
 
@@ -177,17 +189,18 @@ def upload_base_image(local_image_path, supabase_filename, camera_name, lighting
             mime_type = "image/jpeg"
         
         logger.info(f"Uploading base image: {supabase_filename}")
+        logger.debug(f"Using bucket: {SUPABASE_BUCKET_IMAGES}")
         
-        # Upload image to Supabase Storage - no subfolder structure
+        # Upload image to Supabase Storage in the base_images bucket
         with open(local_image_path, "rb") as file:
-            response = supabase_client.storage.from_(SUPABASE_STORAGE["base_images"]).upload(
+            response = supabase_client.storage.from_(SUPABASE_BUCKET_IMAGES).upload(
                 path=supabase_filename,
                 file=file,
                 file_options={"content-type": mime_type}
             )
 
         # Generate public URL
-        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{supabase_filename}"
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_IMAGES}/{supabase_filename}"
         
         # Log base image metadata to Supabase
         log_base_image_to_supabase(local_image_path, camera_name, lighting_condition, public_url)
@@ -199,12 +212,97 @@ def upload_base_image(local_image_path, supabase_filename, camera_name, lighting
         logger.error(f"Error uploading base image to Supabase: {e}")
         return None
 
+def ensure_storage_folders_exist():
+    """
+    Ensure all required folders exist in the Supabase storage buckets.
+    Added in v1.1.0 to create the proper folder structure.
+    
+    Returns:
+        bool: True if successful, False if any errors occurred
+    """
+    try:
+        # Get all required folders from detection types
+        required_folders = list(set([
+            get_detection_folder(alert_type) 
+            for alert_type in ALERT_PRIORITIES.keys()
+        ]))
+        
+        success = True
+        
+        # Check each folder and create if it doesn't exist
+        for folder in required_folders:
+            try:
+                # Try to list the folder to see if it exists
+                response = supabase_client.storage.from_(SUPABASE_BUCKET_DETECTIONS).list(folder)
+                logger.debug(f"Folder {folder} already exists in {SUPABASE_BUCKET_DETECTIONS}")
+            except Exception:
+                # If error, the folder likely doesn't exist, so create it
+                try:
+                    # Create an empty file to establish the folder
+                    dummy_file = f"{folder}/.folder"
+                    supabase_client.storage.from_(SUPABASE_BUCKET_DETECTIONS).upload(
+                        path=dummy_file,
+                        file=b"",  # Empty content
+                        file_options={"content-type": "application/octet-stream"}
+                    )
+                    logger.info(f"Created folder {folder} in {SUPABASE_BUCKET_DETECTIONS}")
+                except Exception as folder_err:
+                    logger.error(f"Failed to create folder {folder}: {folder_err}")
+                    success = False
+                    
+        return success
+        
+    except Exception as e:
+        logger.error(f"Error ensuring storage folders: {e}")
+        return False
+
+def initialize_supabase_storage():
+    """
+    Initialize Supabase storage with required buckets and folders.
+    Added in v1.1.0 to ensure proper bucket and folder structure.
+    
+    Returns:
+        bool: True if successful, False if any errors occurred
+    """
+    try:
+        # Check if buckets exist
+        buckets_exist = True
+        
+        # Try to access each bucket
+        try:
+            supabase_client.storage.get_bucket(SUPABASE_BUCKET_DETECTIONS)
+            logger.info(f"Bucket {SUPABASE_BUCKET_DETECTIONS} exists")
+        except Exception:
+            logger.error(f"Bucket {SUPABASE_BUCKET_DETECTIONS} does not exist")
+            buckets_exist = False
+            
+        try:
+            supabase_client.storage.get_bucket(SUPABASE_BUCKET_IMAGES)
+            logger.info(f"Bucket {SUPABASE_BUCKET_IMAGES} exists")
+        except Exception:
+            logger.error(f"Bucket {SUPABASE_BUCKET_IMAGES} does not exist")
+            buckets_exist = False
+            
+        # If buckets exist, ensure folders exist
+        if buckets_exist:
+            return ensure_storage_folders_exist()
+        else:
+            logger.error("Required buckets do not exist. Please create them in the Supabase dashboard.")
+            return False
+        
+    except Exception as e:
+        logger.error(f"Error initializing Supabase storage: {e}")
+        return False
+
 # Example usage and testing
 if __name__ == "__main__":
     try:
         logger.info("Testing image upload functionality...")
         
-        # Test comparison image upload
+        # Initialize storage structure
+        initialize_supabase_storage()
+        
+        # Test comparison image upload for standard detection
         test_comparison_path = "/path/to/test/comparison.jpg"
         if os.path.exists(test_comparison_path):
             url = upload_comparison_image(test_comparison_path, "Test Camera", "Owl In Box")
@@ -212,6 +310,14 @@ if __name__ == "__main__":
                 logger.info("Comparison image upload test successful")
             else:
                 logger.error("Comparison image upload test failed")
+        
+        # Test comparison image upload for multiple owls
+        if os.path.exists(test_comparison_path):
+            url = upload_comparison_image(test_comparison_path, "Test Camera", "Two Owls In Box")
+            if url:
+                logger.info("Multiple owl comparison image upload test successful")
+            else:
+                logger.error("Multiple owl comparison image upload test failed")
                 
         # Test base image upload
         test_base_path = "/path/to/test/base.jpg"

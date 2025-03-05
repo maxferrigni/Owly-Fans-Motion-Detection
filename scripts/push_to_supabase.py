@@ -1,5 +1,11 @@
 # File: push_to_supabase.py
 # Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
+#
+# March 4, 2025 Update - Version 1.1.0
+# - Updated to support new alert priority system and multiple owl detection
+# - Added image URL handling for alerts
+# - Enhanced logging with detailed detection information
+# - Added support for after action reporting
 
 import os
 import datetime
@@ -9,6 +15,7 @@ from dotenv import load_dotenv
 
 # Import utilities
 from utilities.logging_utils import get_logger
+from utilities.constants import ALERT_PRIORITIES, SUPABASE_STORAGE, get_detection_folder
 
 # Import from database_utils
 from utilities.database_utils import get_subscribers, get_table_columns, check_column_exists
@@ -22,10 +29,11 @@ load_dotenv()
 # Retrieve Supabase credentials
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET")
+SUPABASE_BUCKET_DETECTIONS = os.getenv("SUPABASE_BUCKET_DETECTIONS", "owl_detections")
+SUPABASE_BUCKET_IMAGES = os.getenv("SUPABASE_BUCKET_IMAGES", "base_images")
 
 # Validate credentials
-if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET]):
+if not all([SUPABASE_URL, SUPABASE_KEY]):
     error_msg = "Supabase credentials are missing. Check the .env file."
     logger.error(error_msg)
     raise ValueError(error_msg)
@@ -46,7 +54,7 @@ def get_last_alert_time(alert_type):
     Retrieve the last time a specific alert was sent from Supabase.
 
     Args:
-        alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area")
+        alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area", etc.)
 
     Returns:
         datetime or None: Last alert time or None if no alert found
@@ -126,15 +134,17 @@ def create_alert_entry(alert_type, activity_log_id=None):
             logger.warning("Required columns missing in alerts table")
             return None
             
-        # Set priority based on alert type
-        priority_map = {
-            "Owl In Box": 3,
-            "Owl On Box": 2,
-            "Owl In Area": 1
-        }
+        # Set priority based on alert type - Updated in v1.1.0 to use ALERT_PRIORITIES
+        priority = ALERT_PRIORITIES.get(alert_type, 1)  # Default to lowest priority
         
-        # Set default cooldown minutes
-        base_cooldown_minutes = 30
+        # Set cooldown minutes based on priority (higher priority = shorter cooldown)
+        # This is configured in alert_manager.py but we need a default here
+        if priority >= 5:  # Highest priority (eggs/babies or two owls in box)
+            base_cooldown_minutes = 10
+        elif priority >= 4:  # High priority (multiple owls)
+            base_cooldown_minutes = 15
+        else:  # Standard priority
+            base_cooldown_minutes = 30
         
         # Calculate cooldown end time
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -143,7 +153,7 @@ def create_alert_entry(alert_type, activity_log_id=None):
         # Create new alert entry - using integers for boolean values to avoid serialization issues
         alert_data = {
             'alert_type': alert_type,
-            'alert_priority': priority_map.get(alert_type, 1),
+            'alert_priority': priority,
             'alert_sent': 1,  # Use 1 instead of True
             'alert_sent_at': now.isoformat(),
             'base_cooldown_minutes': base_cooldown_minutes,
@@ -159,7 +169,7 @@ def create_alert_entry(alert_type, activity_log_id=None):
         response = supabase_client.table('alerts').insert(alert_data).execute()
         
         if response and hasattr(response, 'data') and len(response.data) > 0:
-            logger.info(f"Created new alert entry for {alert_type}")
+            logger.info(f"Created new alert entry for {alert_type} (priority {priority})")
             return response.data[0]
         else:
             logger.error("Failed to create alert entry in Supabase")
@@ -178,7 +188,8 @@ def update_alert_status(
     owl_confidence_score=None,
     consecutive_owl_frames=None,
     confidence_breakdown=None,
-    threshold_used=None
+    threshold_used=None,
+    comparison_image_url=None  # Added in v1.1.0
 ):
     """
     Update the status of an existing alert entry in Supabase.
@@ -193,6 +204,7 @@ def update_alert_status(
         consecutive_owl_frames (int, optional): Number of consecutive frames with owl detection
         confidence_breakdown (str, optional): String representation of confidence factors
         threshold_used (float, optional): Confidence threshold that was applied
+        comparison_image_url (str, optional): URL to the comparison image (added in v1.1.0)
     """
     try:
         # Build update data, checking each column exists before adding it
@@ -222,6 +234,10 @@ def update_alert_status(
             
         if threshold_used is not None and check_column_exists("alerts", "threshold_used"):
             update_data['threshold_used'] = threshold_used
+            
+        # Added in v1.1.0 - Store image URL with alert
+        if comparison_image_url is not None and check_column_exists("alerts", "comparison_image_url"):
+            update_data['comparison_image_url'] = comparison_image_url
 
         # Only update if we have data
         if update_data:
@@ -285,11 +301,47 @@ def format_confidence_factors(confidence_factors):
         logger.error(f"Error formatting confidence factors: {e}")
         return {}
 
+def generate_image_url(local_image_path, alert_type, camera_name=None):
+    """
+    Generate a proper Supabase URL for an image based on its alert type.
+    New in v1.1.0 to ensure images have correct URLs.
+    
+    Args:
+        local_image_path (str): Path to the local image file
+        alert_type (str): Type of alert/detection 
+        camera_name (str, optional): Name of the camera
+        
+    Returns:
+        str or None: Public URL to the image or None if generation failed
+    """
+    try:
+        if not local_image_path:
+            return None
+            
+        # Get the detection folder for this alert type
+        detection_folder = get_detection_folder(alert_type)
+        
+        # Generate a unique filename
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        camera_part = f"{camera_name.lower().replace(' ', '_')}_" if camera_name else ""
+        filename = f"{camera_part}{timestamp}.jpg"
+        
+        # Construct the full path within the bucket
+        storage_path = f"{detection_folder}/{filename}"
+        
+        # Generate the public URL
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_DETECTIONS}/{storage_path}"
+        return public_url
+        
+    except Exception as e:
+        logger.error(f"Error generating image URL: {e}")
+        return None
+
 def push_log_to_supabase(detection_results, lighting_condition=None, base_image_age=None):
     """
     Push detection results to the owl_activity_log table in Supabase.
     Checks for duplicates to prevent multiple uploads of the same data.
-    Now includes confidence metrics.
+    Now includes confidence metrics and image URLs.
     
     Args:
         detection_results (dict): Dictionary containing detection results with confidence
@@ -316,11 +368,11 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
             logger.debug(f"Skipping duplicate upload for {entry_key}")
             return last_uploaded_entries[entry_key]
         
-        # Validate alert type
-        if alert_type not in ["Owl In Box", "Owl On Box", "Owl In Area"]:
-            logger.error(f"Invalid alert type: {alert_type}")
-            return None
-            
+        # Validate alert type is in our priority list
+        if alert_type not in ALERT_PRIORITIES:
+            logger.warning(f"Alert type not in priority list: {alert_type}")
+            # Still continue with upload but log warning
+        
         # Get table columns to check which fields to include
         table_columns = get_table_columns("owl_activity_log")
         if not table_columns:
@@ -341,7 +393,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
             log_entry["base_image_age_seconds"] = base_image_age
         
         # Initialize owl detection flags if columns exist - Use integers instead of booleans
-        for owl_location in ["owl_in_box", "owl_on_box", "owl_in_area"]:
+        for owl_location in ["owl_in_box", "owl_on_box", "owl_in_area", "two_owls", "two_owls_in_box", "eggs_or_babies"]:
             if owl_location in table_columns:
                 log_entry[owl_location] = 0  # Use 0 instead of False for JSON serialization
         
@@ -362,10 +414,33 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         if luminance_col in table_columns:
             log_entry[luminance_col] = luminance_change
         
-        # Add image URL if available and column exists
+        # Add image URL if available and column exists - Updated in v1.1.0
         image_url_col = f"{field_prefix}_image_comparison_url"
-        if 'comparison_path' in detection_results and image_url_col in table_columns:
-            log_entry[image_url_col] = detection_results['comparison_path']
+        comparison_path = detection_results.get('comparison_path')
+        comparison_image_url = detection_results.get('comparison_image_url')
+        
+        # If we don't have a URL but have a local path, generate a URL
+        if not comparison_image_url and comparison_path:
+            comparison_image_url = generate_image_url(comparison_path, alert_type, camera_name)
+            
+        # Store the URL if we have it and the column exists
+        if comparison_image_url and image_url_col in table_columns:
+            log_entry[image_url_col] = comparison_image_url
+            
+        # Make sure to also store it in detection_results for future use
+        if comparison_image_url:
+            detection_results['comparison_image_url'] = comparison_image_url
+            
+        # Add multiple owl detection fields if columns exist - New in v1.1.0
+        if "multiple_owls" in detection_results and "multiple_owls" in table_columns:
+            log_entry["multiple_owls"] = 1 if detection_results["multiple_owls"] else 0
+            
+        if "owl_count" in detection_results and "owl_count" in table_columns:
+            log_entry["owl_count"] = detection_results["owl_count"]
+            
+        # Add eggs_or_babies field if available - New in v1.1.0
+        if "eggs_or_babies" in detection_results and "eggs_or_babies" in table_columns:
+            log_entry["eggs_or_babies"] = 1 if detection_results["eggs_or_babies"] else 0
             
         # Add confidence metrics if columns exist
         owl_confidence = float(detection_results.get('owl_confidence', 0.0))
@@ -376,6 +451,10 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
             
         if "consecutive_owl_frames" in table_columns:
             log_entry["consecutive_owl_frames"] = consecutive_frames
+        
+        # Add priority level if column exists - New in v1.1.0
+        if "alert_priority" in table_columns:
+            log_entry["alert_priority"] = ALERT_PRIORITIES.get(alert_type, 1)
         
         # Get threshold value if available and column exists
         if 'threshold_used' in detection_results and "confidence_threshold_used" in table_columns:
@@ -423,9 +502,12 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         response = supabase_client.table('owl_activity_log').insert(log_entry).execute()
         
         if response and hasattr(response, 'data') and len(response.data) > 0:
+            # Get the priority level for better logging
+            priority_level = ALERT_PRIORITIES.get(alert_type, 1)
             logger.info(
                 f"Successfully uploaded {alert_type} data to owl_activity_log "
-                f"with {owl_confidence:.1f}% confidence, {consecutive_frames} consecutive frames"
+                f"with {owl_confidence:.1f}% confidence, {consecutive_frames} consecutive frames "
+                f"(Priority: {priority_level})"
             )
             # Store this entry to prevent duplicates
             last_uploaded_entries[entry_key] = response.data[0]
@@ -447,7 +529,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
 def format_detection_results(detection_result):
     """
     Format detection results into a dictionary suitable for logging to Supabase.
-    Now includes confidence metrics.
+    Updated in v1.1.0 to support multiple owls and image URLs.
     
     Args:
         detection_result (dict): Dictionary containing detection results
@@ -478,6 +560,9 @@ def format_detection_results(detection_result):
             formatted_entry["snapshot_path"] = detection_result["snapshot_path"]
         if "comparison_path" in detection_result:
             formatted_entry["comparison_path"] = detection_result["comparison_path"]
+        # Add image URL if available - New in v1.1.0
+        if "comparison_image_url" in detection_result:
+            formatted_entry["comparison_image_url"] = detection_result["comparison_image_url"]
 
         # Add error message if present
         if "error_message" in detection_result:
@@ -494,6 +579,17 @@ def format_detection_results(detection_result):
         # Format confidence factors for consistency using our dedicated function
         confidence_factors = detection_result.get("confidence_factors", {})
         formatted_entry["confidence_factors"] = format_confidence_factors(confidence_factors)
+        
+        # Add multiple owl detection fields if present - New in v1.1.0
+        if "multiple_owls" in detection_result:
+            formatted_entry["multiple_owls"] = detection_result["multiple_owls"]
+            
+        if "owl_count" in detection_result:
+            formatted_entry["owl_count"] = detection_result["owl_count"]
+            
+        # Add eggs or babies detection if present - New in v1.1.0
+        if "eggs_or_babies" in detection_result:
+            formatted_entry["eggs_or_babies"] = detection_result["eggs_or_babies"]
 
         logger.debug(f"Formatted detection results: {formatted_entry}")
         return formatted_entry
@@ -510,65 +606,113 @@ def format_detection_results(detection_result):
             "confidence_factors": {}
         }
 
-if __name__ == "__main__":
-    # Test the functionality
+def get_alert_statistics(days=1):
+    """
+    Get statistics about alerts from the database for the after action report.
+    New in v1.1.0 to support after action reports.
+    
+    Args:
+        days (int): Number of days to look back
+        
+    Returns:
+        dict: Dictionary with alert statistics
+    """
     try:
+        # Calculate the start time
+        start_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+        start_time_str = start_time.isoformat()
+        
+        # Get column info
+        table_columns = get_table_columns("owl_activity_log")
+        if not table_columns:
+            logger.error("Could not get columns for owl_activity_log")
+            return {}
+            
+        # Check which alert types we can query
+        alert_types = []
+        for alert_type in ALERT_PRIORITIES.keys():
+            field_name = alert_type.lower().replace(" ", "_")
+            if field_name in table_columns:
+                alert_types.append((alert_type, field_name))
+        
+        # Initialize statistics
+        stats = {
+            "period_start": start_time_str,
+            "period_end": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "total_alerts": 0,
+            "alerts_by_type": {},
+            "average_confidence": {}
+        }
+        
+        # Get counts for each alert type
+        for alert_type, field_name in alert_types:
+            try:
+                # Query for count of this alert type
+                query = f"select count(*) from owl_activity_log where {field_name} = 1 and created_at > '{start_time_str}'"
+                response = supabase_client.rpc('execute_sql', {'query': query}).execute()
+                
+                if response and hasattr(response, 'data') and len(response.data) > 0:
+                    count = response.data[0].get('count', 0)
+                    stats["alerts_by_type"][alert_type] = count
+                    stats["total_alerts"] += count
+                    
+                # Get average confidence if the column exists
+                if "owl_confidence_score" in table_columns:
+                    avg_query = f"select avg(owl_confidence_score) from owl_activity_log where {field_name} = 1 and created_at > '{start_time_str}'"
+                    avg_response = supabase_client.rpc('execute_sql', {'query': avg_query}).execute()
+                    
+                    if avg_response and hasattr(avg_response, 'data') and len(avg_response.data) > 0:
+                        avg = avg_response.data[0].get('avg', 0)
+                        if avg:
+                            stats["average_confidence"][alert_type] = float(avg)
+                
+            except Exception as e:
+                logger.error(f"Error getting statistics for {alert_type}: {e}")
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting alert statistics: {e}")
+        return {}
+
+if __name__ == "__main__":
+    try:
+        # Basic configuration for testing
         logger.info("Testing Supabase logging functionality with confidence metrics...")
 
-        # Test get_subscribers
-        email_subscribers = get_subscribers(notification_type="email")
-        logger.info(f"Found {len(email_subscribers) if email_subscribers else 0} email subscribers")
-
-        sms_subscribers = get_subscribers(notification_type="sms")
-        logger.info(f"Found {len(sms_subscribers) if sms_subscribers else 0} SMS subscribers")
-
-        # Test last alert time retrieval
-        last_alert = get_last_alert_time("Owl In Box")
-        if last_alert:
-            logger.info(f"Last Owl In Box alert was sent at: {last_alert}")
-        else:
-            logger.info("No previous Owl In Box alerts found")
-
-        # Test log upload with test data and confidence metrics
-        test_detection = {
+        # Test multiple owl detection
+        test_detection_multiple = {
             "camera": "Test Camera",
-            "status": "Owl In Box",
+            "status": "Two Owls In Box",
             "is_test": True,
             "is_owl_present": True,
-            "motion_detected": True,
-            "pixel_change": 25.5,
-            "luminance_change": 30.2,
-            "comparison_path": "https://example.com/test-comparison.jpg",
-            "owl_confidence": 78.5,
+            "multiple_owls": True,
+            "owl_count": 2,
+            "pixel_change": 30.5,
+            "luminance_change": 35.2,
+            "owl_confidence": 85.5,
             "consecutive_owl_frames": 3,
-            "threshold_used": 60.0,
             "confidence_factors": {
                 "shape_confidence": 35.0,
-                "motion_confidence": 25.5,
+                "motion_confidence": 30.5,
                 "temporal_confidence": 15.0,
-                "camera_confidence": 3.0,
-                "is_valid": True  # Boolean for testing
-            }
+                "camera_confidence": 5.0
+            },
+            "comparison_path": "/path/to/local/image.jpg"
         }
-
-        # Format and send test data
-        formatted_results = format_detection_results(test_detection)
-        log_entry = push_log_to_supabase(
-            formatted_results,
-            lighting_condition="day",
-            base_image_age=300
-        )
-
-        if log_entry:
-            logger.info("Test log entry created successfully")
-            logger.info(f"Log entry ID: {log_entry.get('id')}")
-            logger.info(f"Confidence score: {log_entry.get('owl_confidence_score', 0.0)}")
-            logger.info(f"Consecutive frames: {log_entry.get('consecutive_owl_frames', 0)}")
-        else:
-            logger.error("Failed to create test log entry")
-
-        logger.info("Supabase logging test with confidence metrics complete")
-
+        
+        # Format and test upload
+        formatted_multiple = format_detection_results(test_detection_multiple)
+        
+        # Don't actually upload in test mode, just verify formatting
+        logger.info(f"Formatted multiple owl detection: {formatted_multiple}")
+        
+        # Test statistics retrieval for after action report
+        stats = get_alert_statistics(days=7)  # Get stats for last week
+        logger.info(f"Alert statistics: {stats}")
+        
+        logger.info("Supabase push test complete")
+        
     except Exception as e:
-        logger.error(f"Supabase logging test failed: {e}")
+        logger.error(f"Test failed: {e}")
         raise

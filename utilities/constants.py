@@ -1,5 +1,11 @@
 # File: utilities/constants.py
 # Purpose: Centralized path management and validation for the Owl Monitoring System
+# 
+# March 4, 2025 Update - Version 1.1.0
+# - Updated version number
+# - Added alert priority constants for single/multiple owls
+# - Updated Supabase bucket configuration to use separate buckets for detections and base images
+# - Added detection folder structure for owl_detections bucket
 
 import os
 import json
@@ -13,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Version information
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 
 # Base directory path from environment variables with fallback
 BASE_DIR = os.getenv("BASE_DIR", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection")
@@ -46,6 +52,17 @@ CAMERA_MAPPINGS = {
     "Wyze Internal Camera": "Owl In Box"
 }
 
+# Alert priority hierarchy (higher number = higher priority)
+# Added in v1.1.0 - Enhanced alert priorities
+ALERT_PRIORITIES = {
+    "Owl In Area": 1,          # Lowest priority
+    "Owl On Box": 2,
+    "Owl In Box": 3,
+    "Two Owls": 4,             # Multiple owls (except in box)
+    "Two Owls In Box": 5,      # Multiple owls in box
+    "Eggs Or Babies": 6        # Highest priority (not fully implemented)
+}
+
 # Fixed filenames for the limited number of images we keep
 BASE_IMAGE_FILENAMES = {
     "day": {
@@ -53,17 +70,7 @@ BASE_IMAGE_FILENAMES = {
         "Upper Patio Camera": "upper_patio_camera_day_base.jpg",
         "Wyze Internal Camera": "wyze_internal_camera_day_base.jpg"
     },
-    "civil_twilight": {
-        "Bindy Patio Camera": "bindy_patio_camera_civil_twilight_base.jpg",
-        "Upper Patio Camera": "upper_patio_camera_civil_twilight_base.jpg",
-        "Wyze Internal Camera": "wyze_internal_camera_civil_twilight_base.jpg"
-    },
-    "astronomical_twilight": {
-        "Bindy Patio Camera": "bindy_patio_camera_astronomical_twilight_base.jpg",
-        "Upper Patio Camera": "upper_patio_camera_astronomical_twilight_base.jpg",
-        "Wyze Internal Camera": "wyze_internal_camera_astronomical_twilight_base.jpg"
-    },
-    "night": {
+    "night": {  # Reduced in v1.1.0 - Only day/night instead of 4 conditions
         "Bindy Patio Camera": "bindy_patio_camera_night_base.jpg",
         "Upper Patio Camera": "upper_patio_camera_night_base.jpg",
         "Wyze Internal Camera": "wyze_internal_camera_night_base.jpg"
@@ -74,38 +81,59 @@ BASE_IMAGE_FILENAMES = {
 COMPARISON_IMAGE_FILENAMES = {
     "Owl In Box": "owl_in_box_comparison.jpg",
     "Owl On Box": "owl_on_box_comparison.jpg",
-    "Owl In Area": "owl_in_area_comparison.jpg"
+    "Owl In Area": "owl_in_area_comparison.jpg",
+    "Two Owls": "two_owls_comparison.jpg",          # Added in v1.1.0
+    "Two Owls In Box": "two_owls_in_box_comparison.jpg",  # Added in v1.1.0
+    "Eggs Or Babies": "eggs_or_babies_comparison.jpg"     # Added in v1.1.0
 }
 
-# Supabase storage buckets
+# Supabase storage buckets - Updated in v1.1.0 to use separate buckets
 SUPABASE_STORAGE = {
-    "owl_detections": "owl_detections",
-    "base_images": "base_images"
+    "owl_detections": os.getenv("SUPABASE_BUCKET_DETECTIONS", "owl_detections"),
+    "base_images": os.getenv("SUPABASE_BUCKET_IMAGES", "base_images")
 }
 
-def get_comparison_image_path(camera_name, temp=False, timestamp=None):
+# Detection folders within the owl_detections bucket - Added in v1.1.0
+DETECTION_FOLDERS = {
+    "Owl In Area": "owl_in_area",
+    "Owl On Box": "owl_on_box", 
+    "Owl In Box": "owl_in_box",
+    "Two Owls": "two_owls",
+    "Two Owls In Box": "two_owls_in_box",
+    "Eggs Or Babies": "eggs_or_babies"
+}
+
+def get_comparison_image_path(camera_name, alert_type=None, temp=False, timestamp=None):
     """
     Get the comparison image path for a given camera.
     
     Args:
         camera_name (str): Name of the camera
+        alert_type (str, optional): Specific alert type, otherwise derived from camera
         temp (bool): Deprecated, kept for backwards compatibility
         timestamp (datetime, optional): Timestamp for unique filenames in saved_images
         
     Returns:
         str: Path to the comparison image
     """
-    alert_type = CAMERA_MAPPINGS.get(camera_name)
+    # If alert_type not provided, derive from camera mapping
     if not alert_type:
-        raise ValueError(f"No camera mapping found for: {camera_name}")
+        alert_type = CAMERA_MAPPINGS.get(camera_name)
+        if not alert_type:
+            raise ValueError(f"No camera mapping found for: {camera_name}")
     
-    # Always use the fixed filename for the main comparison image
-    filename = COMPARISON_IMAGE_FILENAMES[alert_type]
+    # Use the fixed filename for the main comparison image
+    if alert_type in COMPARISON_IMAGE_FILENAMES:
+        filename = COMPARISON_IMAGE_FILENAMES[alert_type]
+    else:
+        # Fallback for unknown alert types
+        alert_type_clean = alert_type.lower().replace(' ', '_')
+        filename = f"{alert_type_clean}_comparison.jpg"
     
     # Return standard path
     return os.path.join(IMAGE_COMPARISONS_DIR, filename)
 
-def get_saved_image_path(camera_name, image_type, timestamp=None):
+def get_saved_image_path(camera_name, image_type, timestamp=None, alert_type=None):
     """
     Get path for saving a copy of an image to the logs folder when local saving is enabled.
     
@@ -113,6 +141,7 @@ def get_saved_image_path(camera_name, image_type, timestamp=None):
         camera_name (str): Name of the camera
         image_type (str): Type of image ("base" or "comparison")
         timestamp (datetime, optional): Timestamp for unique filename
+        alert_type (str, optional): Type of alert for comparison images
         
     Returns:
         str: Path for saved image
@@ -129,14 +158,31 @@ def get_saved_image_path(camera_name, image_type, timestamp=None):
     if image_type == "base":
         filename = f"{camera_name_clean}_base_{ts_str}.jpg"
     else:
-        alert_type = CAMERA_MAPPINGS.get(camera_name, "unknown").lower().replace(' ', '_')
-        filename = f"{camera_name_clean}_{alert_type}_{ts_str}.jpg"
+        # If alert type provided, use it; otherwise get from camera mapping
+        if not alert_type:
+            alert_type = CAMERA_MAPPINGS.get(camera_name, "unknown")
+        
+        alert_type_clean = alert_type.lower().replace(' ', '_')
+        filename = f"{camera_name_clean}_{alert_type_clean}_{ts_str}.jpg"
     
     # Ensure directory exists
     os.makedirs(SAVED_IMAGES_DIR, exist_ok=True)
     
     # Return the full path
     return os.path.join(SAVED_IMAGES_DIR, filename)
+
+def get_detection_folder(alert_type):
+    """
+    Get the folder name for a detection type within the owl_detections bucket.
+    Added in v1.1.0
+    
+    Args:
+        alert_type (str): The type of alert/detection
+        
+    Returns:
+        str: Folder name for this detection type
+    """
+    return DETECTION_FOLDERS.get(alert_type, "other")
 
 def get_base_image_path(camera_name, lighting_condition):
     """
@@ -145,11 +191,20 @@ def get_base_image_path(camera_name, lighting_condition):
     
     Args:
         camera_name (str): Name of the camera
-        lighting_condition (str): Lighting condition (day, civil_twilight, etc.)
+        lighting_condition (str): Lighting condition (day or night in v1.1.0)
         
     Returns:
         str: Path for the base image
     """
+    # Simplify lighting conditions to just day/night
+    if lighting_condition in ['civil_twilight', 'astronomical_twilight']:
+        # In v1.1.0, we don't take base images during transition periods
+        return None
+        
+    # Map lighting condition to day/night only
+    if lighting_condition not in ['day', 'night']:
+        lighting_condition = 'night' if lighting_condition == 'unknown' else 'day'
+    
     # Get the fixed filename for this camera and lighting condition
     if lighting_condition in BASE_IMAGE_FILENAMES and camera_name in BASE_IMAGE_FILENAMES[lighting_condition]:
         filename = BASE_IMAGE_FILENAMES[lighting_condition][camera_name]
