@@ -1,17 +1,18 @@
 # File: _front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.2.1
-# - Added LightingInfoPanel for sunrise/sunset countdown display
-# - Added proper implementation of ControlPanel
-# - Fixed ReportsPanel implementation
+# March 6, 2025 Update - Version 1.3.0
+# - Removed StatusPanel class
+# - Removed ReportsPanel class
+# - Simplified ControlPanel by merging settings panes
+# - Removed manual base image capture and report generation buttons
+# - Removed text alerts and email-to-text alert settings
 
 import tkinter as tk
-from tkinter import scrolledtext, ttk, messagebox
+from tkinter import scrolledtext, ttk
 from datetime import datetime, timedelta
 import threading
 import time
-import os
 from utilities.logging_utils import get_logger
 from utilities.time_utils import get_lighting_info, format_time_until, get_current_lighting_condition
 
@@ -172,95 +173,18 @@ class LogWindow(tk.Toplevel):
         self.position_window()
         self.lift()  # Bring to front
 
-class StatusPanel(ttk.LabelFrame):
-    """Panel showing system status indicators"""
-    def __init__(self, parent):
-        super().__init__(parent, text="System Status")
-        
-        self.status_labels = {}
-        self.create_status_indicators()
-        self.create_control_buttons()
-
-    def create_status_indicators(self):
-        """Create system status indicators"""
-        # Create a 3x2 grid layout for indicators (added one more for interval)
-        indicators = [
-            ("Motion Detection", "stopped"),
-            ("Local Saving", "enabled"),
-            ("Alert System", "ready"),
-            ("Base Images", "not verified"),
-            ("Capture Interval", "60 sec"),  # Added capture interval indicator
-            ("Alert Delay", "30 min"),       # Added alert delay indicator
-            ("Last Detection", "none")       # Added for completeness
-        ]
-        
-        # Create indicator frame with grid layout
-        indicator_frame = ttk.Frame(self)
-        indicator_frame.pack(pady=5, padx=5, fill="x")
-        
-        # Calculate rows and columns
-        items_per_row = 3
-        rows = (len(indicators) + items_per_row - 1) // items_per_row
-        
-        for i, (label, initial_status) in enumerate(indicators):
-            row = i // items_per_row
-            col = i % items_per_row
-            
-            indicator_label = ttk.Label(indicator_frame, text=f"{label}:")
-            indicator_label.grid(row=row, column=col*2, sticky='w', padx=5, pady=3)
-            
-            status_label = ttk.Label(indicator_frame, text=initial_status)
-            status_label.grid(row=row, column=col*2+1, sticky='w', padx=5, pady=3)
-            
-            self.status_labels[label] = status_label
-            
-        # Configure grid to expand properly
-        for i in range(items_per_row * 2):
-            indicator_frame.columnconfigure(i, weight=1)
-
-    def create_control_buttons(self):
-        """Create control buttons"""
-        button_frame = ttk.Frame(self)
-        button_frame.pack(pady=5, padx=5, fill="x")
-        
-        ttk.Button(
-            button_frame,
-            text="Refresh Status",
-            command=self.refresh_status
-        ).pack(side="right", padx=5)
-
-    def update_status(self, indicator, status, is_error=False):
-        """Update status indicator"""
-        if indicator in self.status_labels:
-            label = self.status_labels[indicator]
-            label.config(
-                text=status,
-                foreground="red" if is_error else "black"
-            )
-
-    def refresh_status(self):
-        """Refresh all status indicators"""
-        # This would be implemented by the main app
-        pass
-
 class ControlPanel(ttk.Frame):
-    """Panel for controlling the application"""
+    """Panel for controlling the application - Simplified for v1.3.0"""
     def __init__(self, parent, local_saving_enabled, capture_interval, alert_delay,
-                 email_alerts_enabled, text_alerts_enabled, email_to_text_alerts_enabled,
-                 after_action_reports_enabled, update_system_func, start_script_func,
+                 email_alerts_enabled, update_system_func, start_script_func,
                  stop_script_func, toggle_local_saving_func, update_capture_interval_func,
-                 update_alert_delay_func, toggle_email_alerts_func, toggle_text_alerts_func,
-                 toggle_email_to_text_alerts_func, toggle_after_action_reports_func,
-                 manual_base_image_capture_func, manual_report_generation_func, log_window):
+                 update_alert_delay_func, toggle_email_alerts_func, log_window):
         super().__init__(parent)
         
         self.local_saving_enabled = local_saving_enabled
         self.capture_interval = capture_interval
         self.alert_delay = alert_delay
         self.email_alerts_enabled = email_alerts_enabled
-        self.text_alerts_enabled = text_alerts_enabled
-        self.email_to_text_alerts_enabled = email_to_text_alerts_enabled
-        self.after_action_reports_enabled = after_action_reports_enabled
         
         # Store callback functions
         self.update_system_func = update_system_func
@@ -270,18 +194,13 @@ class ControlPanel(ttk.Frame):
         self.update_capture_interval_func = update_capture_interval_func
         self.update_alert_delay_func = update_alert_delay_func
         self.toggle_email_alerts_func = toggle_email_alerts_func
-        self.toggle_text_alerts_func = toggle_text_alerts_func
-        self.toggle_email_to_text_alerts_func = toggle_email_to_text_alerts_func
-        self.toggle_after_action_reports_func = toggle_after_action_reports_func
-        self.manual_base_image_capture_func = manual_base_image_capture_func
-        self.manual_report_generation_func = manual_report_generation_func
         self.log_window = log_window
         
         # Create UI components
         self.create_control_interface()
         
     def create_control_interface(self):
-        """Create the control interface components"""
+        """Create simplified control interface components"""
         # Main controls frame
         main_controls = ttk.LabelFrame(self, text="Motion Detection Controls")
         main_controls.pack(padx=5, pady=5, fill="x")
@@ -320,7 +239,7 @@ class ControlPanel(ttk.Frame):
         )
         self.view_logs_button.pack(side=tk.RIGHT, padx=5)
         
-        # Settings section
+        # Combined Settings section (merged settings and alert settings)
         settings_frame = ttk.LabelFrame(self, text="Settings")
         settings_frame.pack(padx=5, pady=5, fill="x")
         
@@ -369,62 +288,14 @@ class ControlPanel(ttk.Frame):
         )
         delay_spinner.pack(side=tk.LEFT, padx=5)
         
-        # Alert settings
-        alert_frame = ttk.LabelFrame(self, text="Alert Settings")
-        alert_frame.pack(padx=5, pady=5, fill="x")
-        
-        # Alert checkboxes
+        # Email alerts checkbox (only remaining alert type)
         email_cb = ttk.Checkbutton(
-            alert_frame,
+            setting_controls,
             text="Enable Email Alerts",
             variable=self.email_alerts_enabled,
             command=self.toggle_email_alerts_func
         )
-        email_cb.grid(row=0, column=0, sticky="w", padx=5, pady=2)
-        
-        text_cb = ttk.Checkbutton(
-            alert_frame,
-            text="Enable Text Alerts",
-            variable=self.text_alerts_enabled,
-            command=self.toggle_text_alerts_func
-        )
-        text_cb.grid(row=1, column=0, sticky="w", padx=5, pady=2)
-        
-        email_to_text_cb = ttk.Checkbutton(
-            alert_frame,
-            text="Enable Email-to-Text",
-            variable=self.email_to_text_alerts_enabled,
-            command=self.toggle_email_to_text_alerts_func
-        )
-        email_to_text_cb.grid(row=2, column=0, sticky="w", padx=5, pady=2)
-        
-        reports_cb = ttk.Checkbutton(
-            alert_frame,
-            text="Enable After Action Reports",
-            variable=self.after_action_reports_enabled,
-            command=self.toggle_after_action_reports_func
-        )
-        reports_cb.grid(row=3, column=0, sticky="w", padx=5, pady=2)
-        
-        # Manual actions
-        actions_frame = ttk.LabelFrame(self, text="Manual Actions")
-        actions_frame.pack(padx=5, pady=5, fill="x")
-        
-        # Base image capture
-        capture_button = ttk.Button(
-            actions_frame,
-            text="Capture Base Images",
-            command=self.manual_base_image_capture_func
-        )
-        capture_button.pack(fill="x", padx=5, pady=5)
-        
-        # Manual report generation
-        report_button = ttk.Button(
-            actions_frame,
-            text="Generate After Action Report",
-            command=self.manual_report_generation_func
-        )
-        report_button.pack(fill="x", padx=5, pady=5)
+        email_cb.grid(row=3, column=0, sticky="w", padx=5, pady=2)
     
     def show_logs(self):
         """Show the log window"""
@@ -440,106 +311,10 @@ class ControlPanel(ttk.Frame):
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
 
-class ReportsPanel(ttk.Frame):
-    """Panel for viewing and managing reports"""
-    def __init__(self, parent, manual_report_func, force_report_func, load_history_func, show_details_func):
-        super().__init__(parent)
-        
-        # Save callback functions
-        self.manual_report_func = manual_report_func
-        self.force_report_func = force_report_func
-        self.load_history_func = load_history_func
-        self.show_details_func = show_details_func
-        
-        # Create the reports interface
-        self.create_reports_interface()
-        
-    def create_reports_interface(self):
-        """Create the report interface components"""
-        # Create buttons panel
-        button_frame = ttk.Frame(self)
-        button_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Normal report generation
-        ttk.Button(
-            button_frame,
-            text="Generate Report",
-            command=self.manual_report_func
-        ).pack(side=tk.LEFT, padx=5)
-        
-        # Force report generation (with accent style)
-        ttk.Button(
-            button_frame,
-            text="Force Report",
-            command=self.force_report_func,
-            style="Accent.TButton"
-        ).pack(side=tk.LEFT, padx=5)
-        
-        # Refresh button
-        ttk.Button(
-            button_frame,
-            text="Refresh History",
-            command=self.load_history_func
-        ).pack(side=tk.RIGHT, padx=5)
-        
-        # Create report tree view
-        tree_frame = ttk.Frame(self)
-        tree_frame.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        # Create tree with scrollbar
-        self.reports_tree = ttk.Treeview(
-            tree_frame,
-            columns=("ID", "Date", "Type", "Recipients", "Alerts"),
-            show="headings",
-            selectmode="browse"
-        )
-        
-        # Add scrollbar
-        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.reports_tree.yview)
-        self.reports_tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side=tk.RIGHT, fill="y")
-        self.reports_tree.pack(side=tk.LEFT, fill="both", expand=True)
-        
-        # Configure columns
-        self.reports_tree.heading("ID", text="Report ID")
-        self.reports_tree.heading("Date", text="Date/Time")
-        self.reports_tree.heading("Type", text="Type")
-        self.reports_tree.heading("Recipients", text="Recipients")
-        self.reports_tree.heading("Alerts", text="Total Alerts")
-        
-        # Set column widths
-        self.reports_tree.column("ID", width=150)
-        self.reports_tree.column("Date", width=150)
-        self.reports_tree.column("Type", width=100)
-        self.reports_tree.column("Recipients", width=80)
-        self.reports_tree.column("Alerts", width=80)
-        
-        # Bind double-click to show details
-        self.reports_tree.bind("<Double-1>", self.show_details_func)
-        
-        # Add explanatory text
-        help_text = (
-            "Reports are sent via email to all subscribers.\n"
-            "Double-click on a report to view details."
-        )
-        
-        ttk.Label(
-            self,
-            text=help_text,
-            wraplength=400,
-            justify=tk.LEFT,
-            font=("Arial", 9)
-        ).pack(padx=5, pady=5, anchor="w")
-        
-    def load_report_history(self):
-        """Load report history data - implemented in main app"""
-        # This is just a skeleton - the actual implementation will be in OwlApp
-        pass
-
 class LightingInfoPanel(ttk.LabelFrame):
     """
     Panel showing lighting information, sunrise/sunset times, and countdown timers.
-    New in v1.2.1.
+    Retained from v1.2.1.
     """
     def __init__(self, parent):
         super().__init__(parent, text="Lighting Information")

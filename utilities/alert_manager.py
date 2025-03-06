@@ -1,11 +1,10 @@
 # File: utilities/alert_manager.py
 # Purpose: Manage owl detection alerts with hierarchy, timing rules, and confidence-based decisions
 #
-# March 5, 2025 Update - Version 1.2.0
-# - Added alert ID tracking to _send_alert() method
-# - Improved alert tracking with unique IDs
-# - Streamlined code and reduced excessive error handling
-# - Enhanced email notifications with alert IDs
+# March 2025 Update - Version 1.3.0
+# - Simplified to focus only on email alerts
+# - Removed text alerts and email-to-text functionality
+# - Streamlined alert processing
 
 from datetime import datetime, timedelta
 import pytz
@@ -15,8 +14,6 @@ import os
 from utilities.logging_utils import get_logger
 from utilities.constants import ALERT_PRIORITIES, SUPABASE_STORAGE, get_detection_folder
 from alert_email import send_email_alert
-from alert_text import send_text_alert
-from alert_email_to_text import send_text_via_email
 
 # Import from push_to_supabase
 from push_to_supabase import (
@@ -64,7 +61,7 @@ class AlertManager:
         # Track alert counts for after action report
         self.alert_counts = {alert_type: 0 for alert_type in self.ALERT_HIERARCHY}
 
-        # Track alert IDs - New in v1.2.0
+        # Track alert IDs
         self.alert_ids = {}
 
         # Default alert delay in minutes
@@ -91,17 +88,13 @@ class AlertManager:
         # Default consecutive frames threshold
         self.DEFAULT_CONSECUTIVE_FRAMES_THRESHOLD = 2
         
-        # Read alert settings from environment variables
+        # Read alert settings from environment variables - simplified for v1.3.0
         self.alerts_enabled = {
-            'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true',
-            'text': os.environ.get('OWL_TEXT_ALERTS', 'True').lower() == 'true',
-            'email_to_text': os.environ.get('OWL_EMAIL_TO_TEXT_ALERTS', 'True').lower() == 'true'
+            'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true'
         }
         
         # Log initial alert settings
-        logger.info(f"Alert settings initialized: Email={self.alerts_enabled['email']}, " +
-                   f"Text={self.alerts_enabled['text']}, " +
-                   f"Email-to-Text={self.alerts_enabled['email_to_text']}")
+        logger.info(f"Alert settings initialized: Email={self.alerts_enabled['email']}")
 
     def load_custom_thresholds(self):
         """Load any custom thresholds stored in the database"""
@@ -162,9 +155,10 @@ class AlertManager:
                     return True
         return False
 
-    def _send_email_and_sms_async(self, camera_name, alert_type, alert_entry, alert_id, comparison_image_url=None, confidence_info=None, is_test=False):
+    def _send_email_alert_async(self, camera_name, alert_type, alert_entry, alert_id, comparison_image_url=None, confidence_info=None, is_test=False):
         """
-        Background thread function to send email and SMS alerts.
+        Background thread function to send email alerts.
+        Simplified in v1.3.0 to focus only on email alerts.
         
         Args:
             camera_name (str): Name of the camera
@@ -178,9 +172,7 @@ class AlertManager:
         try:
             # Refresh alert settings from environment variables (in case they've changed)
             self.alerts_enabled = {
-                'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true',
-                'text': os.environ.get('OWL_TEXT_ALERTS', 'True').lower() == 'true',
-                'email_to_text': os.environ.get('OWL_EMAIL_TO_TEXT_ALERTS', 'True').lower() == 'true'
+                'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true'
             }
             
             # Determine if this is a test message and prepare prefix
@@ -202,7 +194,7 @@ class AlertManager:
                         is_test=is_test, 
                         test_prefix=test_prefix,
                         image_url=comparison_image_url,
-                        alert_id=alert_id  # New in v1.2.0
+                        alert_id=alert_id
                     )
                 except Exception as e:
                     logger.error(f"Error sending email alerts: {e}")
@@ -210,66 +202,9 @@ class AlertManager:
             else:
                 logger.info("Email alerts are disabled, skipping")
             
-            # Send SMS alerts if enabled
-            sms_count = 0
-            if self.alerts_enabled['text']:
-                try:
-                    # Get SMS subscribers
-                    sms_subscribers = get_subscribers(notification_type="sms", owl_location=alert_type)
-                    sms_count = len(sms_subscribers) if sms_subscribers else 0
-                    logger.info(f"Sending SMS alerts to {sms_count} subscribers")
-                    
-                    # Send SMS alert with test prefix, image URL, and alert ID reference
-                    send_text_alert(
-                        camera_name, 
-                        alert_type, 
-                        is_test=is_test, 
-                        test_prefix=test_prefix,
-                        image_url=comparison_image_url,
-                        alert_id=alert_id  # New in v1.2.0
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending SMS alerts: {e}")
-                    sms_count = 0
-            else:
-                logger.info("Text alerts are disabled, skipping")
-            
-            # Handle email-to-text alerts separately
-            email_to_text_count = 0
-            if self.alerts_enabled['email_to_text']:
-                try:
-                    # Get email-to-text subscribers
-                    subscribers = get_subscribers(notification_type="email_to_text", owl_location=alert_type)
-                    email_to_text_count = len(subscribers) if subscribers else 0
-                    logger.info(f"Sending email-to-text alerts to {email_to_text_count} subscribers")
-                    
-                    if subscribers:
-                        for subscriber in subscribers:
-                            if subscriber.get('phone') and subscriber.get('carrier'):
-                                # Create message with test prefix, alert ID, and image URL
-                                message = self._get_alert_message(
-                                    camera_name, 
-                                    alert_type, 
-                                    is_test, 
-                                    image_url=comparison_image_url,
-                                    alert_id=alert_id  # New in v1.2.0
-                                )
-                                send_text_via_email(
-                                    subscriber['phone'],
-                                    subscriber['carrier'].lower(),
-                                    message,
-                                    subscriber.get('name')
-                                )
-                except Exception as e:
-                    logger.error(f"Error sending email-to-text alerts: {e}")
-                    email_to_text_count = 0
-            else:
-                logger.info("Email-to-text alerts are disabled, skipping")
-            
             # Additional info for alert status update
             additional_info = {
-                'email_recipients_count': email_count,
-                'sms_recipients_count': sms_count + email_to_text_count  # Combine both SMS types
+                'email_recipients_count': email_count
             }
             
             # Add comparison image URL if available
@@ -317,56 +252,10 @@ class AlertManager:
         except Exception as e:
             logger.error(f"Error in background alert processing: {e}")
 
-    def _get_alert_message(self, camera_name, alert_type, is_test=False, image_url=None, alert_id=None):
-        """
-        Generate alert message text with optional TEST prefix, image URL, and alert ID.
-        
-        Args:
-            camera_name (str): Name of the camera
-            alert_type (str): Type of alert
-            is_test (bool): Whether this is a test message
-            image_url (str, optional): URL to the image for this alert
-            alert_id (str, optional): Unique ID for this alert
-            
-        Returns:
-            str: Formatted message text
-        """
-        # Add TEST prefix if this is a test message
-        test_prefix = "TEST: " if is_test else ""
-        
-        # Base message components
-        message_parts = {
-            "Owl In Area": f"Motion has been detected in the Upper Patio area.",
-            "Owl On Box": f"Motion has been detected on the Owl Box.",
-            "Owl In Box": f"Motion has been detected in the Owl Box.",
-            "Two Owls": f"Two owls have been detected!",
-            "Two Owls In Box": f"Two owls have been detected in the box!",
-            "Eggs Or Babies": f"Eggs or babies may have been detected in the box!"
-        }
-        
-        # Get appropriate message part based on alert type
-        message_part = message_parts.get(
-            alert_type, 
-            f"Motion has been detected by {camera_name}!"
-        )
-        
-        # Construct full message
-        message = f"{test_prefix}{message_part} Please check the camera feed at www.owly-fans.com"
-        
-        # Add image URL if provided
-        if image_url:
-            message += f"\nView image: {image_url}"
-            
-        # Add alert ID if provided - New in v1.2.0
-        if alert_id:
-            message += f"\nAlert ID: {alert_id}"
-            
-        return message
-
     def _send_alert(self, camera_name, alert_type, activity_log_id=None, comparison_image_url=None, confidence_info=None, is_test=False, trigger_condition=None):
         """
-        Send alerts based on alert type and cooldown period.
-        Updated in v1.2.0 to include alert ID tracking.
+        Send email alerts based on alert type and cooldown period.
+        Simplified in v1.3.0 to focus only on email alerts.
         
         Args:
             camera_name (str): Name of the camera that triggered the alert
@@ -380,12 +269,12 @@ class AlertManager:
         Returns:
             bool: True if alert was sent, False otherwise
         """
-        # Check if any alert types are enabled
-        if not any(self.alerts_enabled.values()):
-            logger.info("All alert types are disabled, no alerts will be sent")
+        # Check if email alerts are enabled
+        if not self.alerts_enabled['email']:
+            logger.info("Email alerts are disabled, no alerts will be sent")
             return False
             
-        # Generate a unique alert ID - New in v1.2.0
+        # Generate a unique alert ID
         alert_id = generate_alert_id()
         
         # Set default trigger condition if not provided
@@ -419,7 +308,7 @@ class AlertManager:
         )
 
         if alert_entry:
-            # Store alert ID in our tracking dictionary - New in v1.2.0
+            # Store alert ID in our tracking dictionary
             self.alert_ids[alert_id] = {
                 'alert_type': alert_type,
                 'camera_name': camera_name,
@@ -428,10 +317,10 @@ class AlertManager:
                 'activity_log_id': activity_log_id
             }
             
-            # Start a background thread to send emails and SMS
+            # Start a background thread to send emails
             # This prevents the UI from freezing during network operations
             thread = threading.Thread(
-                target=self._send_email_and_sms_async,
+                target=self._send_email_alert_async,
                 args=(camera_name, alert_type, alert_entry, alert_id, comparison_image_url, confidence_info, is_test)
             )
             thread.daemon = True  # Make thread exit when main thread exits
@@ -531,7 +420,6 @@ class AlertManager:
     def determine_alert_type(self, camera_name, detection_result):
         """
         Determine the most appropriate alert type based on detection results.
-        New in v1.1.0 to handle multiple owls and other complex scenarios.
         
         Args:
             camera_name (str): Name of the camera 
@@ -563,6 +451,7 @@ class AlertManager:
     def process_detection(self, camera_name, detection_result, activity_log_id=None, is_test=False):
         """
         Process detection results and send alerts based on hierarchy, cooldown, and confidence.
+        Simplified in v1.3.0 to focus only on email alerts.
         
         Args:
             camera_name (str): Name of the camera that triggered the detection
@@ -575,17 +464,15 @@ class AlertManager:
         """
         # Refresh alert settings from environment variables
         self.alerts_enabled = {
-            'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true',
-            'text': os.environ.get('OWL_TEXT_ALERTS', 'True').lower() == 'true',
-            'email_to_text': os.environ.get('OWL_EMAIL_TO_TEXT_ALERTS', 'True').lower() == 'true'
+            'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true'
         }
         
-        # If all alert types are disabled, log and return early
-        if not any(self.alerts_enabled.values()):
-            logger.info("All alert types are disabled, skipping alert processing")
+        # If email alerts are disabled, log and return early
+        if not self.alerts_enabled['email']:
+            logger.info("Email alerts are disabled, skipping alert processing")
             return False
         
-        # Determine alert type - New in v1.1.0 to check for multiple owls
+        # Determine alert type 
         alert_type = self.determine_alert_type(camera_name, detection_result)
 
         # Check if the alert type is valid
@@ -601,7 +488,7 @@ class AlertManager:
             logger.debug(f"No owl detected for {alert_type}, skipping alert")
             return False
             
-        # Get image URL if available - New in v1.1.0
+        # Get image URL if available
         comparison_image_url = detection_result.get("comparison_image_url")
             
         # Extract confidence information
@@ -614,7 +501,7 @@ class AlertManager:
         # Get priority for hierarchy checks
         priority = self.ALERT_HIERARCHY.get(alert_type, 0)
         
-        # Create trigger condition - New in v1.2.0
+        # Create trigger condition
         if detection_result.get("threshold_used"):
             trigger_condition = (f"Motion detection ({alert_type}): "
                                f"{confidence_info['owl_confidence']:.1f}% confidence "
@@ -713,7 +600,6 @@ class AlertManager:
     def update_alert_durations(self):
         """
         Update the duration tracking for active alerts.
-        New in v1.1.0 to support after action reports.
         
         Should be called periodically to update durations.
         """
@@ -734,7 +620,6 @@ class AlertManager:
     def reset_alert_stats(self):
         """
         Reset all statistics for after action report.
-        New in v1.1.0 to support after action reports.
         
         Called after generating an after action report or when starting a new session.
         """
@@ -745,8 +630,7 @@ class AlertManager:
 
     def get_alert_statistics(self):
         """
-        Get all alert statistics for after action report.
-        New in v1.1.0 to support after action reports.
+        Get all alert statistics.
         
         Returns:
             dict: Dictionary with all alert statistics
@@ -791,7 +675,7 @@ class AlertManager:
             "confidence_thresholds": self.default_confidence_thresholds.copy(),
             "alert_types_enabled": self.alerts_enabled.copy(),
             "alert_counts": self.alert_counts.copy(),
-            "alert_ids_count": len(self.alert_ids)  # New in v1.2.0
+            "alert_ids_count": len(self.alert_ids)
         }
 
     def get_confidence_threshold(self, camera_name):
@@ -827,7 +711,6 @@ class AlertManager:
     def get_alert_by_id(self, alert_id):
         """
         Get information about a specific alert by its ID.
-        New in v1.2.0 to support alert ID tracking.
         
         Args:
             alert_id (str): The unique alert ID
@@ -844,7 +727,7 @@ if __name__ == "__main__":
         logger.info("Testing alert manager...")
         alert_manager = AlertManager()
 
-        # Test detection processing with confidence and alert ID
+        # Test detection processing with confidence
         test_detection = {
             "status": "Owl In Box",
             "motion_detected": True,
