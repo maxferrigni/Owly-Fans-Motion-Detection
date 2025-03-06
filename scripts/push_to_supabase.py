@@ -1,7 +1,7 @@
 # File: push_to_supabase.py
 # Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
 #
-# March 5, 2025 Update - Version 1.2.0
+# March 6, 2025 Update - Version 1.3.0
 # - Added generate_alert_id() function for unique alert tracking
 # - Updated create_alert_entry to include alert_id and trigger_condition
 # - Streamlined database operations and error handling

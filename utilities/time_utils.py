@@ -113,6 +113,11 @@ def _get_detailed_lighting_condition():
         sunrise_dt = datetime.combine(current_time.date(), sunrise)
         sunset_dt = datetime.combine(current_time.date(), sunset)
         
+        # Ensure these datetime objects are timezone aware by localizing them
+        pacific_tz = pytz.timezone('America/Los_Angeles')
+        sunrise_dt = pacific_tz.localize(sunrise_dt)
+        sunset_dt = pacific_tz.localize(sunset_dt)
+        
         # Define true day/night with 30-minute margins (v1.2.1)
         dawn_start = (sunrise_dt - timedelta(minutes=30)).time()
         dawn_end = (sunrise_dt + timedelta(minutes=30)).time()
@@ -145,7 +150,7 @@ def _update_time_tracking(current_time, sunrise_dt, sunset_dt):
     New in v1.2.1.
     
     Args:
-        current_time (datetime): Current time
+        current_time (datetime): Current time (timezone-aware)
         sunrise_dt (datetime): Today's sunrise time
         sunset_dt (datetime): Today's sunset time
     """
@@ -155,6 +160,17 @@ def _update_time_tracking(current_time, sunrise_dt, sunset_dt):
         return
         
     try:
+        # Ensure the datetime objects have timezone information
+        pacific_tz = pytz.timezone('America/Los_Angeles')
+        
+        # Make sunrise_dt timezone-aware if it isn't already
+        if sunrise_dt.tzinfo is None:
+            sunrise_dt = pacific_tz.localize(sunrise_dt)
+            
+        # Make sunset_dt timezone-aware if it isn't already
+        if sunset_dt.tzinfo is None:
+            sunset_dt = pacific_tz.localize(sunset_dt)
+            
         # Calculate next sunrise
         if current_time.time() < sunrise_dt.time():
             # Sunrise is later today
@@ -169,7 +185,9 @@ def _update_time_tracking(current_time, sunrise_dt, sunset_dt):
             
             if not tomorrow_data.empty:
                 tomorrow_sunrise = datetime.strptime(tomorrow_data.iloc[0]['Sunrise'], '%H:%M').time()
-                _time_tracking['next_sunrise'] = datetime.combine(tomorrow, tomorrow_sunrise)
+                tomorrow_sunrise_dt = datetime.combine(tomorrow, tomorrow_sunrise)
+                # Make timezone-aware
+                _time_tracking['next_sunrise'] = pacific_tz.localize(tomorrow_sunrise_dt)
             else:
                 # If no data for tomorrow, estimate based on today
                 _time_tracking['next_sunrise'] = sunrise_dt + timedelta(days=1)
@@ -188,7 +206,9 @@ def _update_time_tracking(current_time, sunrise_dt, sunset_dt):
             
             if not tomorrow_data.empty:
                 tomorrow_sunset = datetime.strptime(tomorrow_data.iloc[0]['Sunset'], '%H:%M').time()
-                _time_tracking['next_sunset'] = datetime.combine(tomorrow, tomorrow_sunset)
+                tomorrow_sunset_dt = datetime.combine(tomorrow, tomorrow_sunset)
+                # Make timezone-aware
+                _time_tracking['next_sunset'] = pacific_tz.localize(tomorrow_sunset_dt)
             else:
                 # If no data for tomorrow, estimate based on today
                 _time_tracking['next_sunset'] = sunset_dt + timedelta(days=1)
@@ -297,18 +317,52 @@ def get_lighting_info():
         if detailed_condition == 'dawn':
             # Calculate how far through dawn we are
             if _time_tracking['next_sunrise'] and _time_tracking['next_true_day']:
-                total_dawn_period = (_time_tracking['next_true_day'] - 
-                                      (_time_tracking['next_sunrise'] - timedelta(minutes=30)))
-                time_into_dawn = (current_time - (_time_tracking['next_sunrise'] - timedelta(minutes=30)))
+                # Make sure both datetimes are timezone-aware before subtracting
+                next_sunrise = _time_tracking['next_sunrise']
+                next_true_day = _time_tracking['next_true_day']
+                
+                # Ensure timezone awareness
+                if next_sunrise.tzinfo is None:
+                    pacific_tz = pytz.timezone('America/Los_Angeles')
+                    next_sunrise = pacific_tz.localize(next_sunrise)
+                
+                if next_true_day.tzinfo is None:
+                    pacific_tz = pytz.timezone('America/Los_Angeles')
+                    next_true_day = pacific_tz.localize(next_true_day)
+                
+                # Calculate dawn 30 min before sunrise
+                dawn_start = next_sunrise - timedelta(minutes=30)
+                
+                # Now calculate time deltas safely
+                total_dawn_period = (next_true_day - dawn_start)
+                time_into_dawn = (current_time - dawn_start)
+                
                 if total_dawn_period.total_seconds() > 0:
                     transition_percentage = (time_into_dawn.total_seconds() / 
                                             total_dawn_period.total_seconds()) * 100
         elif detailed_condition == 'dusk':
             # Calculate how far through dusk we are
             if _time_tracking['next_sunset'] and _time_tracking['next_true_night']:
-                total_dusk_period = (_time_tracking['next_true_night'] - 
-                                      (_time_tracking['next_sunset'] - timedelta(minutes=30)))
-                time_into_dusk = (current_time - (_time_tracking['next_sunset'] - timedelta(minutes=30)))
+                # Make sure both datetimes are timezone-aware before subtracting
+                next_sunset = _time_tracking['next_sunset']
+                next_true_night = _time_tracking['next_true_night']
+                
+                # Ensure timezone awareness
+                if next_sunset.tzinfo is None:
+                    pacific_tz = pytz.timezone('America/Los_Angeles')
+                    next_sunset = pacific_tz.localize(next_sunset)
+                
+                if next_true_night.tzinfo is None:
+                    pacific_tz = pytz.timezone('America/Los_Angeles')
+                    next_true_night = pacific_tz.localize(next_true_night)
+                
+                # Calculate dusk 30 min before sunset
+                dusk_start = next_sunset - timedelta(minutes=30)
+                
+                # Now calculate time deltas safely
+                total_dusk_period = (next_true_night - dusk_start)
+                time_into_dusk = (current_time - dusk_start)
+                
                 if total_dusk_period.total_seconds() > 0:
                     transition_percentage = (time_into_dusk.total_seconds() / 
                                             total_dusk_period.total_seconds()) * 100
@@ -324,17 +378,34 @@ def get_lighting_info():
         'to_true_night': None
     }
     
+    # Make sure all datetime objects have timezone info before calculation
     if _time_tracking['next_sunrise']:
-        countdown_info['to_sunrise'] = (_time_tracking['next_sunrise'] - current_time).total_seconds()
+        next_sunrise = _time_tracking['next_sunrise']
+        if next_sunrise.tzinfo is None:
+            pacific_tz = pytz.timezone('America/Los_Angeles')
+            next_sunrise = pacific_tz.localize(next_sunrise)
+        countdown_info['to_sunrise'] = (next_sunrise - current_time).total_seconds()
         
     if _time_tracking['next_sunset']:
-        countdown_info['to_sunset'] = (_time_tracking['next_sunset'] - current_time).total_seconds()
+        next_sunset = _time_tracking['next_sunset']
+        if next_sunset.tzinfo is None:
+            pacific_tz = pytz.timezone('America/Los_Angeles')
+            next_sunset = pacific_tz.localize(next_sunset)
+        countdown_info['to_sunset'] = (next_sunset - current_time).total_seconds()
         
     if _time_tracking['next_true_day']:
-        countdown_info['to_true_day'] = (_time_tracking['next_true_day'] - current_time).total_seconds()
+        next_true_day = _time_tracking['next_true_day']
+        if next_true_day.tzinfo is None:
+            pacific_tz = pytz.timezone('America/Los_Angeles')
+            next_true_day = pacific_tz.localize(next_true_day)
+        countdown_info['to_true_day'] = (next_true_day - current_time).total_seconds()
         
     if _time_tracking['next_true_night']:
-        countdown_info['to_true_night'] = (_time_tracking['next_true_night'] - current_time).total_seconds()
+        next_true_night = _time_tracking['next_true_night']
+        if next_true_night.tzinfo is None:
+            pacific_tz = pytz.timezone('America/Los_Angeles')
+            next_true_night = pacific_tz.localize(next_true_night)
+        countdown_info['to_true_night'] = (next_true_night - current_time).total_seconds()
     
     # Calculate countup times (time since event occurred)
     countup_info = {
@@ -344,17 +415,55 @@ def get_lighting_info():
         'since_true_night': None
     }
     
-    if _time_tracking['next_sunrise'] and _time_tracking['next_sunrise'] < current_time:
-        countup_info['since_sunrise'] = (current_time - _time_tracking['next_sunrise']).total_seconds()
+    # Make sure all datetime comparisons are timezone-aware
+    if _time_tracking['next_sunrise']:
+        next_sunrise = _time_tracking['next_sunrise']
+        if next_sunrise.tzinfo is None:
+            pacific_tz = pytz.timezone('America/Los_Angeles')
+            next_sunrise = pacific_tz.localize(next_sunrise)
+        if next_sunrise < current_time:
+            countup_info['since_sunrise'] = (current_time - next_sunrise).total_seconds()
         
-    if _time_tracking['next_sunset'] and _time_tracking['next_sunset'] < current_time:
-        countup_info['since_sunset'] = (current_time - _time_tracking['next_sunset']).total_seconds()
+    if _time_tracking['next_sunset']:
+        next_sunset = _time_tracking['next_sunset']
+        if next_sunset.tzinfo is None:
+            pacific_tz = pytz.timezone('America/Los_Angeles')
+            next_sunset = pacific_tz.localize(next_sunset)
+        if next_sunset < current_time:
+            countup_info['since_sunset'] = (current_time - next_sunset).total_seconds()
         
-    if _time_tracking['next_true_day'] and _time_tracking['next_true_day'] < current_time:
-        countup_info['since_true_day'] = (current_time - _time_tracking['next_true_day']).total_seconds()
+    if _time_tracking['next_true_day']:
+        next_true_day = _time_tracking['next_true_day']
+        if next_true_day.tzinfo is None:
+            pacific_tz = pytz.timezone('America/Los_Angeles')
+            next_true_day = pacific_tz.localize(next_true_day)
+        if next_true_day < current_time:
+            countup_info['since_true_day'] = (current_time - next_true_day).total_seconds()
         
-    if _time_tracking['next_true_night'] and _time_tracking['next_true_night'] < current_time:
-        countup_info['since_true_night'] = (current_time - _time_tracking['next_true_night']).total_seconds()
+    if _time_tracking['next_true_night']:
+        next_true_night = _time_tracking['next_true_night']
+        if next_true_night.tzinfo is None:
+            pacific_tz = pytz.timezone('America/Los_Angeles')
+            next_true_night = pacific_tz.localize(next_true_night)
+        if next_true_night < current_time:
+            countup_info['since_true_night'] = (current_time - next_true_night).total_seconds()
+    
+    # Format times as strings for display, handling None values
+    next_sunrise_str = None
+    if _time_tracking['next_sunrise']:
+        next_sunrise_str = _time_tracking['next_sunrise'].strftime('%H:%M:%S')
+        
+    next_sunset_str = None
+    if _time_tracking['next_sunset']:
+        next_sunset_str = _time_tracking['next_sunset'].strftime('%H:%M:%S')
+        
+    next_true_day_str = None
+    if _time_tracking['next_true_day']:
+        next_true_day_str = _time_tracking['next_true_day'].strftime('%H:%M:%S')
+        
+    next_true_night_str = None
+    if _time_tracking['next_true_night']:
+        next_true_night_str = _time_tracking['next_true_night'].strftime('%H:%M:%S')
     
     # Enhanced lighting info for v1.2.1
     return {
@@ -368,10 +477,10 @@ def get_lighting_info():
         'transition_percentage': round(transition_percentage, 1),
         'countdown': countdown_info,
         'countup': countup_info,
-        'next_sunrise': _time_tracking['next_sunrise'].strftime('%H:%M:%S') if _time_tracking['next_sunrise'] else None,
-        'next_sunset': _time_tracking['next_sunset'].strftime('%H:%M:%S') if _time_tracking['next_sunset'] else None,
-        'next_true_day': _time_tracking['next_true_day'].strftime('%H:%M:%S') if _time_tracking['next_true_day'] else None,
-        'next_true_night': _time_tracking['next_true_night'].strftime('%H:%M:%S') if _time_tracking['next_true_night'] else None
+        'next_sunrise': next_sunrise_str,
+        'next_sunset': next_sunset_str,
+        'next_true_day': next_true_day_str,
+        'next_true_night': next_true_night_str
     }
 
 def is_lighting_condition_stable():
