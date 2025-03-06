@@ -1,9 +1,15 @@
 # File: _front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
+#
+# March 6, 2025 Update - Version 1.2.1
+# - Added LightingInfoPanel for sunrise/sunset countdown display
 
 import tkinter as tk
 from tkinter import scrolledtext, ttk
-from datetime import datetime
+from datetime import datetime, timedelta
+import threading
+import time
+from utilities.time_utils import get_lighting_info, format_time_until, get_current_lighting_condition
 
 class LogWindow(tk.Toplevel):
     """Enhanced logging window with filtering and search"""
@@ -232,3 +238,271 @@ class StatusPanel(ttk.LabelFrame):
         """Refresh all status indicators"""
         # This would be implemented by the main app
         pass
+
+class LightingInfoPanel(ttk.LabelFrame):
+    """
+    Panel showing lighting information, sunrise/sunset times, and countdown timers.
+    New in v1.2.1.
+    """
+    def __init__(self, parent):
+        super().__init__(parent, text="Lighting Information")
+        
+        # Create custom progress bar style
+        self.style = ttk.Style()
+        self.style.configure(
+            "Transition.Horizontal.TProgressbar", 
+            troughcolor="#E0E0E0", 
+            background="#FFA500"  # Orange for transition progress
+        )
+        
+        # Create styles for different lighting conditions
+        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
+        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
+        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
+        self.style.configure('DuskDawn.TLabel', foreground='#FF6600', font=('Arial', 9))
+        self.style.configure('CountdownTime.TLabel', foreground='green', font=('Arial', 10, 'bold'))
+        
+        # Initialize variables
+        self.lighting_condition = tk.StringVar(value="Unknown")
+        self.detailed_condition = tk.StringVar(value="Unknown")
+        self.sunrise_time = tk.StringVar(value="--:--")
+        self.sunset_time = tk.StringVar(value="--:--")
+        self.true_day_time = tk.StringVar(value="--:--")
+        self.true_night_time = tk.StringVar(value="--:--")
+        self.to_sunrise = tk.StringVar(value="--:--")
+        self.to_sunset = tk.StringVar(value="--:--")
+        self.to_true_day = tk.StringVar(value="--:--")
+        self.to_true_night = tk.StringVar(value="--:--")
+        self.transition_percentage = tk.DoubleVar(value=0)
+        self.is_transition = False
+        
+        # Create panel components
+        self.create_lighting_display()
+        self.create_sun_times_display()
+        self.create_countdown_display()
+        self.create_transition_progress()
+        
+        # Start update thread
+        self.update_thread = None
+        self.running = True
+        self.start_update_thread()
+        
+    def create_lighting_display(self):
+        """Create the current lighting condition display"""
+        lighting_frame = ttk.Frame(self)
+        lighting_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Current lighting condition
+        ttk.Label(lighting_frame, text="Current Condition:").grid(row=0, column=0, sticky="w", padx=5)
+        self.condition_label = ttk.Label(
+            lighting_frame,
+            textvariable=self.lighting_condition,
+            style="Day.TLabel"  # Default style, will be updated
+        )
+        self.condition_label.grid(row=0, column=1, sticky="w", padx=5)
+        
+        # Detailed condition (dawn/dusk/etc)
+        self.detailed_label = ttk.Label(
+            lighting_frame,
+            textvariable=self.detailed_condition,
+            style="DuskDawn.TLabel"
+        )
+        self.detailed_label.grid(row=0, column=2, sticky="w", padx=5)
+        
+        # Configure grid
+        lighting_frame.columnconfigure(0, weight=0)
+        lighting_frame.columnconfigure(1, weight=0)
+        lighting_frame.columnconfigure(2, weight=1)
+        
+    def create_sun_times_display(self):
+        """Create the sunrise/sunset times display"""
+        times_frame = ttk.Frame(self)
+        times_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Create a 2x4 grid for the times
+        ttk.Label(times_frame, text="Sunrise:").grid(row=0, column=0, sticky="w", padx=5)
+        ttk.Label(times_frame, textvariable=self.sunrise_time).grid(row=0, column=1, sticky="w", padx=5)
+        
+        ttk.Label(times_frame, text="Sunset:").grid(row=0, column=2, sticky="w", padx=5)
+        ttk.Label(times_frame, textvariable=self.sunset_time).grid(row=0, column=3, sticky="w", padx=5)
+        
+        ttk.Label(times_frame, text="True Day:").grid(row=1, column=0, sticky="w", padx=5)
+        ttk.Label(times_frame, textvariable=self.true_day_time).grid(row=1, column=1, sticky="w", padx=5)
+        
+        ttk.Label(times_frame, text="True Night:").grid(row=1, column=2, sticky="w", padx=5)
+        ttk.Label(times_frame, textvariable=self.true_night_time).grid(row=1, column=3, sticky="w", padx=5)
+        
+        # Configure grid
+        for i in range(4):
+            times_frame.columnconfigure(i, weight=1)
+            
+    def create_countdown_display(self):
+        """Create the countdown/countup display"""
+        countdown_frame = ttk.Frame(self)
+        countdown_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Create a 2x4 grid for the countdowns
+        ttk.Label(countdown_frame, text="Until Sunrise:").grid(row=0, column=0, sticky="w", padx=5)
+        ttk.Label(
+            countdown_frame, 
+            textvariable=self.to_sunrise,
+            style="CountdownTime.TLabel"
+        ).grid(row=0, column=1, sticky="w", padx=5)
+        
+        ttk.Label(countdown_frame, text="Until Sunset:").grid(row=0, column=2, sticky="w", padx=5)
+        ttk.Label(
+            countdown_frame, 
+            textvariable=self.to_sunset,
+            style="CountdownTime.TLabel"
+        ).grid(row=0, column=3, sticky="w", padx=5)
+        
+        ttk.Label(countdown_frame, text="Until True Day:").grid(row=1, column=0, sticky="w", padx=5)
+        ttk.Label(
+            countdown_frame, 
+            textvariable=self.to_true_day,
+            style="CountdownTime.TLabel"
+        ).grid(row=1, column=1, sticky="w", padx=5)
+        
+        ttk.Label(countdown_frame, text="Until True Night:").grid(row=1, column=2, sticky="w", padx=5)
+        ttk.Label(
+            countdown_frame, 
+            textvariable=self.to_true_night,
+            style="CountdownTime.TLabel"
+        ).grid(row=1, column=3, sticky="w", padx=5)
+        
+        # Configure grid
+        for i in range(4):
+            countdown_frame.columnconfigure(i, weight=1)
+            
+    def create_transition_progress(self):
+        """Create the transition progress display"""
+        self.transition_frame = ttk.Frame(self)
+        self.transition_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Transition progress bar label
+        self.progress_label = ttk.Label(
+            self.transition_frame, 
+            text="Transition Progress:"
+        )
+        self.progress_label.pack(side=tk.LEFT, padx=5)
+        
+        # Progress bar
+        self.progress_bar = ttk.Progressbar(
+            self.transition_frame,
+            variable=self.transition_percentage,
+            style="Transition.Horizontal.TProgressbar",
+            length=200,
+            mode='determinate'
+        )
+        self.progress_bar.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
+        
+        # Percentage label
+        self.percentage_label = ttk.Label(
+            self.transition_frame,
+            text="0%"
+        )
+        self.percentage_label.pack(side=tk.LEFT, padx=5)
+        
+        # Initially hide the transition progress
+        self.transition_frame.pack_forget()
+        
+    def update_lighting_info(self):
+        """Update all lighting information"""
+        try:
+            # Get current lighting information
+            lighting_info = get_lighting_info()
+            
+            # Update condition variables
+            condition = lighting_info.get('condition', 'unknown')
+            detailed = lighting_info.get('detailed_condition', 'unknown')
+            
+            self.lighting_condition.set(condition.upper())
+            
+            # Update condition label style
+            if condition == 'day':
+                self.condition_label.configure(style='Day.TLabel')
+            elif condition == 'night':
+                self.condition_label.configure(style='Night.TLabel')
+            else:
+                self.condition_label.configure(style='Transition.TLabel')
+            
+            # Update detailed condition if in transition
+            if condition == 'transition':
+                self.detailed_condition.set(f"({detailed.upper()})")
+                self.detailed_label.pack()
+            else:
+                self.detailed_condition.set("")
+                
+            # Update times
+            if lighting_info.get('next_sunrise'):
+                self.sunrise_time.set(lighting_info.get('next_sunrise'))
+            if lighting_info.get('next_sunset'):
+                self.sunset_time.set(lighting_info.get('next_sunset'))
+            if lighting_info.get('next_true_day'):
+                self.true_day_time.set(lighting_info.get('next_true_day'))
+            if lighting_info.get('next_true_night'):
+                self.true_night_time.set(lighting_info.get('next_true_night'))
+                
+            # Update countdowns
+            countdown = lighting_info.get('countdown', {})
+            
+            if countdown.get('to_sunrise') is not None:
+                self.to_sunrise.set(format_time_until(countdown.get('to_sunrise')))
+            if countdown.get('to_sunset') is not None:
+                self.to_sunset.set(format_time_until(countdown.get('to_sunset')))
+            if countdown.get('to_true_day') is not None:
+                self.to_true_day.set(format_time_until(countdown.get('to_true_day')))
+            if countdown.get('to_true_night') is not None:
+                self.to_true_night.set(format_time_until(countdown.get('to_true_night')))
+                
+            # Update transition progress
+            is_transition = lighting_info.get('is_transition', False)
+            if is_transition:
+                progress = lighting_info.get('transition_percentage', 0)
+                self.transition_percentage.set(progress)
+                self.percentage_label.config(text=f"{progress:.1f}%")
+                
+                # Show transition progress
+                if not self.is_transition:
+                    self.transition_frame.pack(fill="x", padx=5, pady=5)
+                    self.is_transition = True
+            else:
+                # Hide transition progress
+                if self.is_transition:
+                    self.transition_frame.pack_forget()
+                    self.is_transition = False
+                    
+        except Exception as e:
+            print(f"Error updating lighting info: {e}")
+            
+    def start_update_thread(self):
+        """Start the background thread to update lighting information"""
+        def update_loop():
+            while self.running:
+                try:
+                    # Update lighting info
+                    self.update_lighting_info()
+                    
+                    # Sleep for 5 seconds
+                    for _ in range(50):  # 5 seconds in 100ms increments
+                        if not self.running:
+                            break
+                        time.sleep(0.1)
+                        
+                except Exception as e:
+                    print(f"Error in update thread: {e}")
+                    time.sleep(5)  # Wait 5 seconds on error
+        
+        self.update_thread = threading.Thread(target=update_loop, daemon=True)
+        self.update_thread.start()
+        
+    def stop_update_thread(self):
+        """Stop the update thread when panel is destroyed"""
+        self.running = False
+        if self.update_thread:
+            self.update_thread.join(timeout=1)
+            
+    def destroy(self):
+        """Clean up resources when panel is destroyed"""
+        self.stop_update_thread()
+        super().destroy()

@@ -1,10 +1,11 @@
 # File: utilities/time_utils.py
 # Purpose: Determine optimal lighting conditions for base image capture and motion detection
 #
-# March 5, 2025 Update - Version 1.2.0
-# - Enhanced should_generate_after_action_report() with time-based fallback
-# - Added database integration for report tracking
-# - Reduced excessive error checking
+# March 6, 2025 Update - Version 1.2.1
+# - Reduced transition window from 90 to 30 minutes on either side of sunrise/sunset
+# - Added time tracking for sunrise/sunset countdowns
+# - Modified base image capture logic to allow during transitions
+# - Added transition period percentage calculation
 
 from datetime import datetime, timedelta, date
 import pytz
@@ -52,6 +53,15 @@ _detailed_lighting_info = {
     'last_after_action_report': None
 }
 
+# New in v1.2.1 - Track sunrise/sunset times for countdown display
+_time_tracking = {
+    'next_sunrise': None,
+    'next_sunset': None,
+    'next_true_day': None,  # Next time true day begins
+    'next_true_night': None,  # Next time true night begins
+    'last_updated': None     # When these values were last calculated
+}
+
 def _get_cached_sun_data():
     """
     Get cached sunrise/sunset data, reloading if needed.
@@ -75,7 +85,7 @@ def _get_detailed_lighting_condition():
     """
     Get more detailed lighting condition for internal use.
     Used to determine true day/night vs transition periods.
-    Added in v1.1.0.
+    Updated in v1.2.1 to use 30-minute transition window.
     
     Returns:
         str: Detailed lighting condition
@@ -99,16 +109,19 @@ def _get_detailed_lighting_condition():
         sunrise = datetime.strptime(today_data.iloc[0]['Sunrise'], '%H:%M').time()
         sunset = datetime.strptime(today_data.iloc[0]['Sunset'], '%H:%M').time()
         
-        # Calculate transition periods with wider margins for v1.1.0
+        # Calculate transition periods with 30-minute window (v1.2.1)
         sunrise_dt = datetime.combine(current_time.date(), sunrise)
         sunset_dt = datetime.combine(current_time.date(), sunset)
         
-        # Define true day/night with wider margins (90 minutes instead of 30)
-        dawn_start = (sunrise_dt - timedelta(minutes=90)).time()
-        dawn_end = (sunrise_dt + timedelta(minutes=90)).time()
+        # Define true day/night with 30-minute margins (v1.2.1)
+        dawn_start = (sunrise_dt - timedelta(minutes=30)).time()
+        dawn_end = (sunrise_dt + timedelta(minutes=30)).time()
         
-        dusk_start = (sunset_dt - timedelta(minutes=90)).time()
-        dusk_end = (sunset_dt + timedelta(minutes=90)).time()
+        dusk_start = (sunset_dt - timedelta(minutes=30)).time()
+        dusk_end = (sunset_dt + timedelta(minutes=30)).time()
+        
+        # Update next transition times for countdown display
+        _update_time_tracking(current_time, sunrise_dt, sunset_dt)
         
         current = current_time.time()
         
@@ -125,6 +138,71 @@ def _get_detailed_lighting_condition():
     except Exception as e:
         logger.error(f"Error determining detailed lighting condition: {e}")
         return 'unknown'
+
+def _update_time_tracking(current_time, sunrise_dt, sunset_dt):
+    """
+    Update the time tracking for sunrise/sunset countdowns.
+    New in v1.2.1.
+    
+    Args:
+        current_time (datetime): Current time
+        sunrise_dt (datetime): Today's sunrise time
+        sunset_dt (datetime): Today's sunset time
+    """
+    # Only update once per hour to avoid unnecessary calculations
+    if (_time_tracking['last_updated'] and 
+        (current_time - _time_tracking['last_updated'] < timedelta(hours=1))):
+        return
+        
+    try:
+        # Calculate next sunrise
+        if current_time.time() < sunrise_dt.time():
+            # Sunrise is later today
+            _time_tracking['next_sunrise'] = sunrise_dt
+        else:
+            # Sunrise is tomorrow - get tomorrow's date
+            tomorrow = current_time.date() + timedelta(days=1)
+            
+            # Get sun data for tomorrow
+            sun_data = _get_cached_sun_data()
+            tomorrow_data = sun_data[sun_data['Date'].dt.date == tomorrow]
+            
+            if not tomorrow_data.empty:
+                tomorrow_sunrise = datetime.strptime(tomorrow_data.iloc[0]['Sunrise'], '%H:%M').time()
+                _time_tracking['next_sunrise'] = datetime.combine(tomorrow, tomorrow_sunrise)
+            else:
+                # If no data for tomorrow, estimate based on today
+                _time_tracking['next_sunrise'] = sunrise_dt + timedelta(days=1)
+                
+        # Calculate next sunset
+        if current_time.time() < sunset_dt.time():
+            # Sunset is later today
+            _time_tracking['next_sunset'] = sunset_dt
+        else:
+            # Sunset is tomorrow - get tomorrow's date
+            tomorrow = current_time.date() + timedelta(days=1)
+            
+            # Get sun data for tomorrow
+            sun_data = _get_cached_sun_data()
+            tomorrow_data = sun_data[sun_data['Date'].dt.date == tomorrow]
+            
+            if not tomorrow_data.empty:
+                tomorrow_sunset = datetime.strptime(tomorrow_data.iloc[0]['Sunset'], '%H:%M').time()
+                _time_tracking['next_sunset'] = datetime.combine(tomorrow, tomorrow_sunset)
+            else:
+                # If no data for tomorrow, estimate based on today
+                _time_tracking['next_sunset'] = sunset_dt + timedelta(days=1)
+                
+        # Calculate next true day (30 minutes after sunrise)
+        _time_tracking['next_true_day'] = _time_tracking['next_sunrise'] + timedelta(minutes=30)
+        
+        # Calculate next true night (30 minutes after sunset)
+        _time_tracking['next_true_night'] = _time_tracking['next_sunset'] + timedelta(minutes=30)
+        
+        _time_tracking['last_updated'] = current_time
+        
+    except Exception as e:
+        logger.error(f"Error updating time tracking: {e}")
 
 def get_current_lighting_condition():
     """
@@ -201,6 +279,7 @@ def get_current_lighting_condition():
 def get_lighting_info():
     """
     Get all lighting-related information in a single call.
+    Enhanced in v1.2.1 to include countdown information.
     
     Returns:
         dict: Dictionary containing current lighting information
@@ -209,7 +288,75 @@ def get_lighting_info():
     detailed_condition = _get_detailed_lighting_condition()
     sun_data = _get_cached_sun_data()
     
-    # Enhanced lighting info for v1.1.0
+    # Get current time for countdown calculations
+    current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
+    
+    # Get transition completion percentage (new in v1.2.1)
+    transition_percentage = 0
+    if condition == 'transition':
+        if detailed_condition == 'dawn':
+            # Calculate how far through dawn we are
+            if _time_tracking['next_sunrise'] and _time_tracking['next_true_day']:
+                total_dawn_period = (_time_tracking['next_true_day'] - 
+                                      (_time_tracking['next_sunrise'] - timedelta(minutes=30)))
+                time_into_dawn = (current_time - (_time_tracking['next_sunrise'] - timedelta(minutes=30)))
+                if total_dawn_period.total_seconds() > 0:
+                    transition_percentage = (time_into_dawn.total_seconds() / 
+                                            total_dawn_period.total_seconds()) * 100
+        elif detailed_condition == 'dusk':
+            # Calculate how far through dusk we are
+            if _time_tracking['next_sunset'] and _time_tracking['next_true_night']:
+                total_dusk_period = (_time_tracking['next_true_night'] - 
+                                      (_time_tracking['next_sunset'] - timedelta(minutes=30)))
+                time_into_dusk = (current_time - (_time_tracking['next_sunset'] - timedelta(minutes=30)))
+                if total_dusk_period.total_seconds() > 0:
+                    transition_percentage = (time_into_dusk.total_seconds() / 
+                                            total_dusk_period.total_seconds()) * 100
+
+    # Ensure transition percentage is clamped between 0-100
+    transition_percentage = max(0, min(100, transition_percentage))
+    
+    # Calculate countdown times
+    countdown_info = {
+        'to_sunrise': None,
+        'to_sunset': None,
+        'to_true_day': None,
+        'to_true_night': None
+    }
+    
+    if _time_tracking['next_sunrise']:
+        countdown_info['to_sunrise'] = (_time_tracking['next_sunrise'] - current_time).total_seconds()
+        
+    if _time_tracking['next_sunset']:
+        countdown_info['to_sunset'] = (_time_tracking['next_sunset'] - current_time).total_seconds()
+        
+    if _time_tracking['next_true_day']:
+        countdown_info['to_true_day'] = (_time_tracking['next_true_day'] - current_time).total_seconds()
+        
+    if _time_tracking['next_true_night']:
+        countdown_info['to_true_night'] = (_time_tracking['next_true_night'] - current_time).total_seconds()
+    
+    # Calculate countup times (time since event occurred)
+    countup_info = {
+        'since_sunrise': None,
+        'since_sunset': None,
+        'since_true_day': None,
+        'since_true_night': None
+    }
+    
+    if _time_tracking['next_sunrise'] and _time_tracking['next_sunrise'] < current_time:
+        countup_info['since_sunrise'] = (current_time - _time_tracking['next_sunrise']).total_seconds()
+        
+    if _time_tracking['next_sunset'] and _time_tracking['next_sunset'] < current_time:
+        countup_info['since_sunset'] = (current_time - _time_tracking['next_sunset']).total_seconds()
+        
+    if _time_tracking['next_true_day'] and _time_tracking['next_true_day'] < current_time:
+        countup_info['since_true_day'] = (current_time - _time_tracking['next_true_day']).total_seconds()
+        
+    if _time_tracking['next_true_night'] and _time_tracking['next_true_night'] < current_time:
+        countup_info['since_true_night'] = (current_time - _time_tracking['next_true_night']).total_seconds()
+    
+    # Enhanced lighting info for v1.2.1
     return {
         'condition': condition,
         'detailed_condition': detailed_condition,
@@ -217,24 +364,28 @@ def get_lighting_info():
         'cache_time': _lighting_condition_cache['timestamp'],
         'previous_condition': _lighting_condition_cache.get('previous_condition'),
         'is_transition': condition == 'transition',
-        'last_transition_time': _base_image_timing_cache.get('last_transition_time')
+        'last_transition_time': _base_image_timing_cache.get('last_transition_time'),
+        'transition_percentage': round(transition_percentage, 1),
+        'countdown': countdown_info,
+        'countup': countup_info,
+        'next_sunrise': _time_tracking['next_sunrise'].strftime('%H:%M:%S') if _time_tracking['next_sunrise'] else None,
+        'next_sunset': _time_tracking['next_sunset'].strftime('%H:%M:%S') if _time_tracking['next_sunset'] else None,
+        'next_true_day': _time_tracking['next_true_day'].strftime('%H:%M:%S') if _time_tracking['next_true_day'] else None,
+        'next_true_night': _time_tracking['next_true_night'].strftime('%H:%M:%S') if _time_tracking['next_true_night'] else None
     }
 
 def is_lighting_condition_stable():
     """
     Determine if the current lighting condition has been stable for
     enough time to warrant a base image capture.
+    Modified in v1.2.1 to redefine "stable" - transition can be stable for base capture
+    but not for alerts.
     
     Returns:
         bool: True if lighting condition is stable
     """
     current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
     condition = get_current_lighting_condition()
-    
-    # In v1.1.0, only day and night are considered stable
-    if condition == 'transition':
-        logger.debug("Currently in transition period, not stable for base image capture")
-        return False
     
     # If we don't have a record of when this condition started, it's not stable yet
     if condition not in _base_image_timing_cache['stable_period_start']:
@@ -249,23 +400,19 @@ def is_lighting_condition_stable():
 def should_capture_base_image():
     """
     Determine if it's an optimal time to capture new base images.
-    In v1.1.0, only allows capture during true day/night, not transitions.
+    Modified in v1.2.1 to allow capture during transitions but prefer day/night.
     
     Returns:
         bool: True if optimal time for base image capture
+        str: The intended lighting condition for the base image ('day', 'night', 'transition')
     """
     current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
     condition = get_current_lighting_condition()
     
-    # If lighting condition is transition or unknown, don't capture
-    if condition == 'transition':
-        logger.debug("In transition period, skipping base image capture")
-        return False
-        
-    # Only capture during stable lighting conditions
+    # Only capture during stable lighting conditions but allow transitions
     if not is_lighting_condition_stable():
         logger.debug(f"Lighting condition {condition} not stable yet, skipping base image capture")
-        return False
+        return False, condition
     
     # Check if we've recently captured for this lighting condition
     if condition in _base_image_timing_cache['last_capture_time']:
@@ -274,12 +421,26 @@ def should_capture_base_image():
         
         if time_since_last < _base_image_timing_cache['min_capture_interval']:
             logger.debug(f"Too soon since last {condition} base image capture ({time_since_last}), skipping")
-            return False
+            return False, condition
     
     # If we get here, it's a good time to capture
-    logger.info(f"Optimal time for base image capture during stable {condition} conditions")
+    logger.info(f"Optimal time for base image capture during {condition} conditions")
     _base_image_timing_cache['last_capture_time'][condition] = current_time
-    return True
+    return True, condition
+
+def is_pure_lighting_condition():
+    """
+    Determine if the current time represents a "pure" lighting condition for
+    reliable base image capture. New in v1.2.1.
+    
+    Returns:
+        bool: True if it's a pure day or night condition, False during transitions
+    """
+    condition = get_current_lighting_condition()
+    detailed = _get_detailed_lighting_condition()
+    
+    # Only true_day or true_night are considered pure
+    return detailed in ['true_day', 'true_night']
 
 def record_base_image_capture(lighting_condition):
     """
@@ -340,6 +501,43 @@ def is_transition_period():
     condition = get_current_lighting_condition()
     return condition == 'transition'
 
+def format_time_until(seconds):
+    """
+    Format a time difference in seconds into a human-readable string.
+    New in v1.2.1.
+    
+    Args:
+        seconds (float): Number of seconds
+        
+    Returns:
+        str: Formatted time string (e.g., "2h 30m" or "15m 20s")
+    """
+    if seconds is None:
+        return "Unknown"
+        
+    # Handle negative values (time since)
+    is_negative = seconds < 0
+    seconds = abs(seconds)
+    
+    # Calculate hours, minutes, seconds
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    
+    # Format based on time magnitude
+    if hours > 0:
+        result = f"{hours}h {minutes}m"
+    elif minutes > 0:
+        result = f"{minutes}m {secs}s"
+    else:
+        result = f"{secs}s"
+        
+    # Add minus sign for negative values
+    if is_negative:
+        result = f"{result} ago"
+        
+    return result
+
 def should_generate_after_action_report():
     """
     Determine if it's time to generate an after action report.
@@ -371,7 +569,7 @@ def should_generate_after_action_report():
         logger.info(f"Transition complete from transition to {condition}, should generate report")
         return True
     
-    # [NEW in v1.2.0] Time-based fallback: Check when the last report was generated
+    # Time-based fallback: Check when the last report was generated
     last_report_time = get_last_report_time()
     
     # If no report has ever been generated, definitely generate one
@@ -456,6 +654,17 @@ if __name__ == "__main__":
     print(f"Is transition period: {is_transition_period()}")
     print(f"Is lighting condition stable: {is_lighting_condition_stable()}")
     print(f"Should capture base image: {should_capture_base_image()}")
+    print(f"Is pure lighting condition: {is_pure_lighting_condition()}")
     print(f"Luminance threshold multiplier: {get_luminance_threshold_multiplier()}")
     print(f"Should generate after action report: {should_generate_after_action_report()}")
     print(f"Session duration: {get_session_duration()}")
+    
+    # Test countdown formatting
+    if lighting_info['countdown']['to_sunrise']:
+        print(f"Time until sunrise: {format_time_until(lighting_info['countdown']['to_sunrise'])}")
+    if lighting_info['countdown']['to_sunset']:
+        print(f"Time until sunset: {format_time_until(lighting_info['countdown']['to_sunset'])}")
+    if lighting_info['countdown']['to_true_day']:
+        print(f"Time until true day: {format_time_until(lighting_info['countdown']['to_true_day'])}")
+    if lighting_info['countdown']['to_true_night']:
+        print(f"Time until true night: {format_time_until(lighting_info['countdown']['to_true_night'])}")
