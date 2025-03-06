@@ -3,20 +3,13 @@
 #
 # March 6, 2025 Update - Version 1.2.1
 # - Added LightingInfoPanel for sunrise/sunset countdown display
-# - Moved ControlPanel from _front_end_app.py for better organization
 
 import tkinter as tk
-from tkinter import scrolledtext, ttk, messagebox
+from tkinter import scrolledtext, ttk
 from datetime import datetime, timedelta
 import threading
 import time
-import os
-import sys
-
-# Import utilities
 from utilities.time_utils import get_lighting_info, format_time_until, get_current_lighting_condition
-from utilities.constants import ensure_directories_exist, VERSION
-from capture_base_images import notify_transition_period, capture_base_images
 
 class LogWindow(tk.Toplevel):
     """Enhanced logging window with filtering and search"""
@@ -246,219 +239,25 @@ class StatusPanel(ttk.LabelFrame):
         # This would be implemented by the main app
         pass
 
-class ControlPanel(ttk.LabelFrame):
-    """
-    Main control panel for system operations.
-    Moved from _front_end_app.py for better organization in v1.2.1.
-    """
-    def __init__(self, parent, app_instance):
-        """
-        Initialize the control panel.
+# Adding the ReportsPanel class that was missing before
+class ReportsPanel(ttk.Frame):
+    """Panel for viewing and managing reports"""
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.app = app
         
-        Args:
-            parent: The parent widget
-            app_instance: The OwlApp instance for callback access
-        """
-        super().__init__(parent, text="System Controls")
+        # Create report interface
+        self.create_reports_interface()
         
-        # Keep a reference to the app instance for callbacks
-        self.app = app_instance
-        
-        # Create the panel components
-        self.create_button_frame()
-        self.create_alert_settings_frame()
-        self.create_timing_settings_frame()
-        self.create_log_frame()
-        
-    def create_button_frame(self):
-        """Create main control buttons"""
-        # Main control frame with a clear title
-        button_frame = ttk.Frame(self)
-        button_frame.pack(fill="x", pady=3, padx=3)  # Reduced padding
+    def create_reports_interface(self):
+        """Create reports interface - delegate to the app's implementation"""
+        if hasattr(self.app, 'create_reports_interface'):
+            self.app.create_reports_interface()
 
-        # Grid layout for better button placement with reduced spacing
-        # Update button
-        update_button = ttk.Button(
-            button_frame,
-            text="Update System",
-            command=self.app.update_system,
-            style='TButton'
-        )
-        update_button.grid(row=0, column=0, padx=5, pady=5, sticky="ew")  # Reduced padding
-
-        # Start button
-        start_button = ttk.Button(
-            button_frame,
-            text="Start Motion Detection",
-            command=self.app.start_script,
-            style='TButton'
-        )
-        start_button.grid(row=0, column=1, padx=5, pady=5, sticky="ew")  # Reduced padding
-
-        # Stop button
-        self.app.stop_button = ttk.Button(
-            button_frame,
-            text="Stop Motion Detection",
-            command=self.app.stop_script,
-            state=tk.DISABLED,
-            style='TButton'
-        )
-        self.app.stop_button.grid(row=1, column=0, padx=5, pady=5, sticky="ew")  # Reduced padding
-
-        # Local saving option in the right column, second row
-        save_frame = ttk.Frame(button_frame)
-        save_frame.grid(row=1, column=1, padx=5, pady=5, sticky="ew")  # Reduced padding
-        
-        ttk.Checkbutton(
-            save_frame,
-            text="Save Images Locally",
-            variable=self.app.local_saving_enabled,
-            command=self.app.toggle_local_saving
-        ).pack(pady=2)  # Reduced padding
-
-        # Make columns expand evenly
-        button_frame.columnconfigure(0, weight=1)
-        button_frame.columnconfigure(1, weight=1)
-        
-    def create_alert_settings_frame(self):
-        """Create alert settings controls"""
-        # Add Alert Settings frame
-        alert_settings_frame = ttk.LabelFrame(self, text="Alert Settings")
-        alert_settings_frame.pack(fill="x", pady=3, padx=3)
-        
-        # Create a grid for alert checkboxes
-        alert_checkbox_frame = ttk.Frame(alert_settings_frame)
-        alert_checkbox_frame.pack(fill="x", pady=2, padx=3)
-        
-        # Add Email Alerts checkbox
-        ttk.Checkbutton(
-            alert_checkbox_frame,
-            text="Email Alerts",
-            variable=self.app.email_alerts_enabled,
-            command=self.app.toggle_email_alerts
-        ).grid(row=0, column=0, padx=5, pady=2, sticky="w")
-        
-        # Add Text Alerts checkbox
-        ttk.Checkbutton(
-            alert_checkbox_frame,
-            text="Text Alerts (SMS)",
-            variable=self.app.text_alerts_enabled,
-            command=self.app.toggle_text_alerts
-        ).grid(row=0, column=1, padx=5, pady=2, sticky="w")
-        
-        # Add Email-to-Text Alerts checkbox
-        ttk.Checkbutton(
-            alert_checkbox_frame,
-            text="Email-to-Text Alerts",
-            variable=self.app.email_to_text_alerts_enabled,
-            command=self.app.toggle_email_to_text_alerts
-        ).grid(row=1, column=0, padx=5, pady=2, sticky="w")
-        
-        # Add After Action Reports checkbox
-        ttk.Checkbutton(
-            alert_checkbox_frame,
-            text="After Action Reports",
-            variable=self.app.after_action_reports_enabled,
-            command=self.app.toggle_after_action_reports
-        ).grid(row=1, column=1, padx=5, pady=2, sticky="w")
-        
-        # Make columns expand evenly
-        alert_checkbox_frame.columnconfigure(0, weight=1)
-        alert_checkbox_frame.columnconfigure(1, weight=1)
-        
-    def create_timing_settings_frame(self):
-        """Create timing settings controls"""
-        # Add interval settings frame
-        settings_frame = ttk.LabelFrame(self, text="Timing Settings")
-        settings_frame.pack(fill="x", pady=3, padx=3)
-        
-        # Add capture interval setting
-        interval_frame = ttk.Frame(settings_frame)
-        interval_frame.pack(fill="x", pady=2, padx=3)
-        
-        ttk.Label(
-            interval_frame,
-            text="Capture Interval (seconds):"
-        ).pack(side=tk.LEFT, padx=5)
-        
-        interval_spinner = ttk.Spinbox(
-            interval_frame,
-            from_=10,
-            to=300,
-            increment=10,
-            textvariable=self.app.capture_interval,
-            width=5
-        )
-        interval_spinner.pack(side=tk.LEFT, padx=5)
-        
-        # Connect the interval spinner to the update handler
-        interval_spinner.bind('<FocusOut>', self.app.update_capture_interval)
-        interval_spinner.bind('<Return>', self.app.update_capture_interval)
-        # Also update when using the spinbox arrows
-        self.app.capture_interval.trace_add("write", self.app.update_capture_interval)
-        
-        # Add status indication for the interval
-        ttk.Label(
-            interval_frame,
-            text="(Default: 60 seconds)"
-        ).pack(side=tk.LEFT, padx=5)
-        
-        # Add alert delay setting
-        alert_delay_frame = ttk.Frame(settings_frame)
-        alert_delay_frame.pack(fill="x", pady=2, padx=3)
-        
-        ttk.Label(
-            alert_delay_frame,
-            text="Alert Delay (minutes):"
-        ).pack(side=tk.LEFT, padx=5)
-        
-        alert_delay_spinner = ttk.Spinbox(
-            alert_delay_frame,
-            from_=5,
-            to=120,
-            increment=5,
-            textvariable=self.app.alert_delay,
-            width=5
-        )
-        alert_delay_spinner.pack(side=tk.LEFT, padx=5)
-        
-        # Connect the alert delay spinner to the update handler
-        alert_delay_spinner.bind('<FocusOut>', self.app.update_alert_delay)
-        alert_delay_spinner.bind('<Return>', self.app.update_alert_delay)
-        # Also update when using the spinbox arrows
-        self.app.alert_delay.trace_add("write", self.app.update_alert_delay)
-        
-        # Add status indication for the alert delay
-        ttk.Label(
-            alert_delay_frame,
-            text="(Default: 30 minutes)"
-        ).pack(side=tk.LEFT, padx=5)
-        
-    def create_log_frame(self):
-        """Create log controls"""
-        # Log viewing button in a separate section
-        log_frame = ttk.Frame(self)
-        log_frame.pack(fill="x", pady=2, padx=3)  # Reduced padding
-        
-        ttk.Button(
-            log_frame,
-            text="View Logs",
-            command=lambda: self.app.log_window.show()
-        ).pack(side=tk.LEFT, pady=2)  # Reduced padding
-        
-        # Manual base image capture button - Enhanced in v1.1.0
-        ttk.Button(
-            log_frame,
-            text="Capture Base Images",
-            command=self.app.manual_base_image_capture
-        ).pack(side=tk.RIGHT, pady=2)  # Reduced padding
-        
-        # Manual report generation button - New in v1.1.0
-        ttk.Button(
-            log_frame,
-            text="Generate Report",
-            command=self.app.manual_report_generation
-        ).pack(side=tk.RIGHT, padx=5, pady=2)
+    def load_report_history(self):
+        """Load report history - delegate to the app's implementation"""
+        if hasattr(self.app, 'load_report_history'):
+            self.app.load_report_history()
 
 class LightingInfoPanel(ttk.LabelFrame):
     """
