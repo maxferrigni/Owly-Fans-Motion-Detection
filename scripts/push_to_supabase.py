@@ -1,8 +1,8 @@
 # File: push_to_supabase.py
 # Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
 #
-# March 6, 2025 Update - Version 1.3.1
-# - Modified to let Supabase handle ID generation automatically
+# March 6, 2025 Update - Version 1.3.2
+# - CRITICAL FIX: Removed explicit ID field and added retry mechanism to resolve primary key conflicts
 # - Added generate_alert_id() function for unique alert tracking
 # - Updated create_alert_entry to include alert_id and trigger_condition
 # - Streamlined database operations and error handling
@@ -12,6 +12,8 @@ import os
 import datetime
 import json
 import random
+import time
+import uuid
 import supabase
 from dotenv import load_dotenv
 
@@ -398,8 +400,9 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         field_prefix = alert_type.lower().replace(" ", "_")
         
         # Directly prepare the log entry with expected fields
-        # IMPORTANT: Do NOT include 'id' field to let Supabase auto-generate it
+        # CRITICALLY IMPORTANT: Do NOT include 'id' field to let Supabase auto-generate it
         log_entry = {
+            "camera": camera_name,  # Add camera name explicitly
             "lighting_condition": lighting_condition,
             "base_image_age_seconds": base_image_age,
             "owl_in_box": 0,
@@ -496,30 +499,53 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
                     else:
                         log_entry[key] = str(value)
         
-        # Send to Supabase - using insert with correct method to handle all data types
-        # IMPORTANT: Let Supabase handle the ID generation
-        response = supabase_client.table('owl_activity_log').insert(log_entry).execute()
+        # Implement retry mechanism for primary key conflicts
+        max_retries = 3
         
-        if response and hasattr(response, 'data') and len(response.data) > 0:
-            # Get the priority level for better logging
-            priority_level = ALERT_PRIORITIES.get(alert_type, 1)
-            logger.info(
-                f"Successfully uploaded {alert_type} data to owl_activity_log "
-                f"with {owl_confidence:.1f}% confidence, {consecutive_frames} consecutive frames "
-                f"(Priority: {priority_level})"
-            )
-            # Store this entry to prevent duplicates
-            last_uploaded_entries[entry_key] = response.data[0]
-            # Keep only the last 100 entries to prevent memory growth
-            if len(last_uploaded_entries) > 100:
-                # Remove oldest entries
-                keys_to_remove = list(last_uploaded_entries.keys())[:-100]
-                for key in keys_to_remove:
-                    del last_uploaded_entries[key]
-            return response.data[0]
-        
-        logger.error("Failed to insert into owl_activity_log")
+        for attempt in range(max_retries):
+            try:
+                # Send to Supabase - using insert with correct method to handle all data types
+                # IMPORTANT: Let Supabase handle the ID generation
+                response = supabase_client.table('owl_activity_log').insert(log_entry).execute()
+                
+                if response and hasattr(response, 'data') and len(response.data) > 0:
+                    # Get the priority level for better logging
+                    priority_level = ALERT_PRIORITIES.get(alert_type, 1)
+                    logger.info(
+                        f"Successfully uploaded {alert_type} data to owl_activity_log "
+                        f"with {owl_confidence:.1f}% confidence, {consecutive_frames} consecutive frames "
+                        f"(Priority: {priority_level})"
+                    )
+                    # Store this entry to prevent duplicates
+                    last_uploaded_entries[entry_key] = response.data[0]
+                    # Keep only the last 100 entries to prevent memory growth
+                    if len(last_uploaded_entries) > 100:
+                        # Remove oldest entries
+                        keys_to_remove = list(last_uploaded_entries.keys())[:-100]
+                        for key in keys_to_remove:
+                            del last_uploaded_entries[key]
+                    return response.data[0]
+                else:
+                    logger.error("Failed to insert into owl_activity_log")
+                    return None
+                    
+            except Exception as e:
+                # Check if it's a primary key conflict
+                if hasattr(e, 'message') and "duplicate key value" in str(e):
+                    # Wait briefly before retrying
+                    logger.warning(f"Primary key conflict on attempt {attempt+1}/{max_retries}. Adding unique timestamp.")
+                    
+                    # Add a random UUID to ensure uniqueness for next attempt
+                    log_entry["unique_id"] = str(uuid.uuid4())
+                    time.sleep(0.5 * (attempt + 1))  # Progressive delay
+                else:
+                    logger.error(f"Failed to upload log to Supabase: {e}")
+                    return None
+            
+        # If we've exhausted all retries
+        logger.error(f"Failed to upload log after {max_retries} attempts")
         return None
+        
     except Exception as e:
         logger.error(f"Failed to upload log to Supabase: {e}")
         return None
