@@ -1,11 +1,11 @@
 # File: utilities/constants.py
 # Purpose: Centralized path management and validation for the Owl Monitoring System
 # 
-# March 4, 2025 Update - Version 1.1.0
-# - Updated version number
-# - Added alert priority constants for single/multiple owls
-# - Updated Supabase bucket configuration to use separate buckets for detections and base images
-# - Added detection folder structure for owl_detections bucket
+# March 20, 2025 Update - Version 1.3.0
+# - Updated version number to 1.3.0
+# - Simplified application by removing StatusPanel, ReportsPanel
+# - Removed text alerts and email-to-text functionality
+# - Removed manual base image capture and report generation
 
 import os
 import json
@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Version information
-VERSION = "1.1.0"
+VERSION = "1.3.0"
 
 # Base directory path from environment variables with fallback
 BASE_DIR = os.getenv("BASE_DIR", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection")
@@ -53,7 +53,6 @@ CAMERA_MAPPINGS = {
 }
 
 # Alert priority hierarchy (higher number = higher priority)
-# Added in v1.1.0 - Enhanced alert priorities
 ALERT_PRIORITIES = {
     "Owl In Area": 1,          # Lowest priority
     "Owl On Box": 2,
@@ -63,6 +62,17 @@ ALERT_PRIORITIES = {
     "Eggs Or Babies": 6        # Highest priority (not fully implemented)
 }
 
+# Lighting condition constants - updated for v1.2.1
+LIGHTING_CONDITIONS = {
+    "TRANSITION_WINDOW_MINUTES": 30,  # 30-minute transition window on either side of sunrise/sunset
+    "DAY": "day",
+    "NIGHT": "night",
+    "TRANSITION": "transition",
+    "DAWN": "dawn",
+    "DUSK": "dusk",
+    "UNKNOWN": "unknown"
+}
+
 # Fixed filenames for the limited number of images we keep
 BASE_IMAGE_FILENAMES = {
     "day": {
@@ -70,10 +80,16 @@ BASE_IMAGE_FILENAMES = {
         "Upper Patio Camera": "upper_patio_camera_day_base.jpg",
         "Wyze Internal Camera": "wyze_internal_camera_day_base.jpg"
     },
-    "night": {  # Reduced in v1.1.0 - Only day/night instead of 4 conditions
+    "night": {
         "Bindy Patio Camera": "bindy_patio_camera_night_base.jpg",
         "Upper Patio Camera": "upper_patio_camera_night_base.jpg",
         "Wyze Internal Camera": "wyze_internal_camera_night_base.jpg"
+    },
+    # Support transition base images
+    "transition": {
+        "Bindy Patio Camera": "bindy_patio_camera_transition_base.jpg",
+        "Upper Patio Camera": "upper_patio_camera_transition_base.jpg",
+        "Wyze Internal Camera": "wyze_internal_camera_transition_base.jpg"
     }
 }
 
@@ -82,18 +98,18 @@ COMPARISON_IMAGE_FILENAMES = {
     "Owl In Box": "owl_in_box_comparison.jpg",
     "Owl On Box": "owl_on_box_comparison.jpg",
     "Owl In Area": "owl_in_area_comparison.jpg",
-    "Two Owls": "two_owls_comparison.jpg",          # Added in v1.1.0
-    "Two Owls In Box": "two_owls_in_box_comparison.jpg",  # Added in v1.1.0
-    "Eggs Or Babies": "eggs_or_babies_comparison.jpg"     # Added in v1.1.0
+    "Two Owls": "two_owls_comparison.jpg",
+    "Two Owls In Box": "two_owls_in_box_comparison.jpg",
+    "Eggs Or Babies": "eggs_or_babies_comparison.jpg"
 }
 
-# Supabase storage buckets - Updated in v1.1.0 to use separate buckets
+# Supabase storage buckets
 SUPABASE_STORAGE = {
     "owl_detections": os.getenv("SUPABASE_BUCKET_DETECTIONS", "owl_detections"),
     "base_images": os.getenv("SUPABASE_BUCKET_IMAGES", "base_images")
 }
 
-# Detection folders within the owl_detections bucket - Added in v1.1.0
+# Detection folders within the owl_detections bucket
 DETECTION_FOLDERS = {
     "Owl In Area": "owl_in_area",
     "Owl On Box": "owl_on_box", 
@@ -102,6 +118,16 @@ DETECTION_FOLDERS = {
     "Two Owls In Box": "two_owls_in_box",
     "Eggs Or Babies": "eggs_or_babies"
 }
+
+# Default environment variables - simplified for v1.3.0
+DEFAULT_ENV_VARS = {
+    "OWL_EMAIL_ALERTS": "True"  # Email alerts are the only alert type in v1.3.0
+}
+
+# Set default environment variables if not already set
+for var_name, default_value in DEFAULT_ENV_VARS.items():
+    if os.environ.get(var_name) is None:
+        os.environ[var_name] = default_value
 
 def get_comparison_image_path(camera_name, alert_type=None, temp=False, timestamp=None):
     """
@@ -174,7 +200,6 @@ def get_saved_image_path(camera_name, image_type, timestamp=None, alert_type=Non
 def get_detection_folder(alert_type):
     """
     Get the folder name for a detection type within the owl_detections bucket.
-    Added in v1.1.0
     
     Args:
         alert_type (str): The type of alert/detection
@@ -191,19 +216,15 @@ def get_base_image_path(camera_name, lighting_condition):
     
     Args:
         camera_name (str): Name of the camera
-        lighting_condition (str): Lighting condition (day or night in v1.1.0)
+        lighting_condition (str): Lighting condition (day, night, or transition)
         
     Returns:
         str: Path for the base image
     """
-    # Simplify lighting conditions to just day/night
-    if lighting_condition in ['civil_twilight', 'astronomical_twilight']:
-        # In v1.1.0, we don't take base images during transition periods
-        return None
-        
-    # Map lighting condition to day/night only
-    if lighting_condition not in ['day', 'night']:
-        lighting_condition = 'night' if lighting_condition == 'unknown' else 'day'
+    # Validate lighting condition
+    if lighting_condition not in ['day', 'night', 'transition']:
+        # Default to 'night' for unknown conditions
+        lighting_condition = 'night'
     
     # Get the fixed filename for this camera and lighting condition
     if lighting_condition in BASE_IMAGE_FILENAMES and camera_name in BASE_IMAGE_FILENAMES[lighting_condition]:
