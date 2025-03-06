@@ -1,7 +1,8 @@
 # File: push_to_supabase.py
 # Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
 #
-# March 6, 2025 Update - Version 1.3.0
+# March 6, 2025 Update - Version 1.3.1
+# - Modified to let Supabase handle ID generation automatically
 # - Added generate_alert_id() function for unique alert tracking
 # - Updated create_alert_entry to include alert_id and trigger_condition
 # - Streamlined database operations and error handling
@@ -397,6 +398,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         field_prefix = alert_type.lower().replace(" ", "_")
         
         # Directly prepare the log entry with expected fields
+        # IMPORTANT: Do NOT include 'id' field to let Supabase auto-generate it
         log_entry = {
             "lighting_condition": lighting_condition,
             "base_image_age_seconds": base_image_age,
@@ -495,6 +497,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
                         log_entry[key] = str(value)
         
         # Send to Supabase - using insert with correct method to handle all data types
+        # IMPORTANT: Let Supabase handle the ID generation
         response = supabase_client.table('owl_activity_log').insert(log_entry).execute()
         
         if response and hasattr(response, 'data') and len(response.data) > 0:
