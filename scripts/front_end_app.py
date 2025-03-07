@@ -8,7 +8,7 @@
 # - Added Wyze camera monitoring and recovery functionality
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, filedialog, messagebox
 import subprocess
 import threading
 import os
@@ -28,6 +28,7 @@ from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, VERSION, 
 from utilities.logging_utils import get_logger
 from utilities.alert_manager import AlertManager
 from utilities.time_utils import get_current_lighting_condition
+from utilities.configs_loader import load_camera_config  # Import the config loader
 
 # Import GUI panels - now including all panel components
 from front_end_panels import (
@@ -220,9 +221,11 @@ class OwlApp:
         
         # Load camera configurations for the base images panel
         try:
-            config_path = os.path.join(SCRIPTS_DIR, "configs", "config.json")
-            with open(config_path, 'r') as f:
-                camera_configs = json.load(f)
+            # Use the same config loader that the rest of the application uses
+            camera_configs = load_camera_config()
+            if not camera_configs:
+                self.log_message("No camera configs found, using empty configuration", "WARNING")
+                camera_configs = {}
         except Exception as e:
             self.log_message(f"Error loading camera configs: {e}", "ERROR")
             camera_configs = {}
