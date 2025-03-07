@@ -1,5 +1,9 @@
 # File: motion_detection_settings.py
 # Purpose: GUI controls for motion detection parameters
+# 
+# March 7, 2025 Update - Version 1.4.1
+# - Removed duplicate buttons at the bottom of the settings panel
+# - Improved layout to save vertical space
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -280,12 +284,14 @@ class MotionDetectionSettings:
             command=self.reset_to_default
         ).pack(side=tk.LEFT, padx=5)
         
-        # Apply to running system button (NEW)
+        # Apply to running system button
         ttk.Button(
             button_frame,
             text="Apply Now",
             command=self.apply_to_running_system
         ).pack(side=tk.LEFT, padx=5)
+        
+        # Note: Removed duplicate buttons at the bottom
 
     def reset_to_default(self):
         """Reset all parameters to their original values"""

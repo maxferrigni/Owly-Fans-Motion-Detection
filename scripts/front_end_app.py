@@ -1,11 +1,11 @@
 # File: front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.4.0
-# - Renamed file from _front_end_app.py to front_end_app.py
-# - Added clock display in the top right corner
-# - Added base images and comparison image panels at the bottom
-# - Added Wyze camera monitoring and recovery functionality
+# March 7, 2025 Update - Version 1.4.1
+# - Fixed bottom image panel sizing and display
+# - Improved window sizing and prevented resizing
+# - Optimized UI elements for space efficiency
+# - Fixed main container layout
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -49,9 +49,11 @@ class OwlApp:
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("900x750+-1920+0")  # Increased height for new panels
+        self.root.geometry("900x650+-1920+0")  # Reduced height for better fit
+        self.root.minsize(900, 650)  # Set minimum size
+        self.root.maxsize(900, 650)  # Set maximum size
         self.root.update_idletasks()
-        self.root.resizable(True, True)
+        self.root.resizable(False, False)  # Disable resizing
 
         # Initialize variables
         self.script_process = None
@@ -114,7 +116,7 @@ class OwlApp:
         self.lighting_info_panel = LightingInfoPanel(self.root)
         self.lighting_info_panel.pack(side="top", pady=3, fill="x")
 
-        # Create main container
+        # Create main container with definite size
         self.main_container = ttk.Frame(self.root)
         self.main_container.pack(fill="both", expand=True, padx=3, pady=3)
 
@@ -209,9 +211,13 @@ class OwlApp:
 
     def initialize_image_panels(self):
         """Initialize the image viewer panel at the bottom"""
-        # Create bottom panel for image display
+        # Create bottom panel for image display with fixed height
         self.bottom_frame = ttk.Frame(self.root)
         self.bottom_frame.pack(side="bottom", fill="x", padx=5, pady=5)
+        
+        # Set fixed height for bottom frame and prevent resizing
+        self.bottom_frame.configure(height=200)
+        self.bottom_frame.pack_propagate(False)  # Prevent size propagation
         
         # Load camera configurations
         try:

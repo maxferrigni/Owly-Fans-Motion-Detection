@@ -1,10 +1,11 @@
 # File: front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.4.0
-# - Renamed from _front_end_panels.py to front_end_panels.py
-# - Added BaseImagesPanel class for displaying base images
-# - Added AlertImagePanel class for displaying latest owl detection
+# March 7, 2025 Update - Version 1.4.1
+# - Optimized LightingInfoPanel to use less vertical space
+# - Made countdown displays more compact with improved layout
+# - Improved transition progress display
+# - Reduced spacing and padding throughout components
 
 import tkinter as tk
 from tkinter import scrolledtext, ttk
@@ -333,7 +334,7 @@ class ControlPanel(ttk.Frame):
 class LightingInfoPanel(ttk.LabelFrame):
     """
     Panel showing lighting information, sunrise/sunset times, and countdown timers.
-    Retained from v1.2.1.
+    Updated in v1.4.1 for more compact display.
     """
     def __init__(self, parent):
         super().__init__(parent, text="Lighting Information")
@@ -347,11 +348,11 @@ class LightingInfoPanel(ttk.LabelFrame):
         )
         
         # Create styles for different lighting conditions
-        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
-        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
-        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
-        self.style.configure('DuskDawn.TLabel', foreground='#FF6600', font=('Arial', 9))
-        self.style.configure('CountdownTime.TLabel', foreground='green', font=('Arial', 10, 'bold'))
+        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 9, 'bold'))
+        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 9, 'bold'))
+        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 9, 'bold'))
+        self.style.configure('DuskDawn.TLabel', foreground='#FF6600', font=('Arial', 8))
+        self.style.configure('CountdownTime.TLabel', foreground='green', font=('Arial', 9, 'bold'))
         
         # Initialize variables
         self.lighting_condition = tk.StringVar(value="Unknown")
@@ -367,26 +368,28 @@ class LightingInfoPanel(ttk.LabelFrame):
         self.transition_percentage = tk.DoubleVar(value=0)
         self.is_transition = False
         
-        # Create panel components
-        self.create_lighting_display()
-        self.create_sun_times_display()
-        self.create_countdown_display()
-        self.create_transition_progress()
+        # Create panel components with more compact layout
+        self.create_compact_layout()
         
         # Start update thread
         self.update_thread = None
         self.running = True
         self.start_update_thread()
         
-    def create_lighting_display(self):
-        """Create the current lighting condition display"""
-        lighting_frame = ttk.Frame(self)
-        lighting_frame.pack(fill="x", padx=5, pady=5)
+    def create_compact_layout(self):
+        """Create a more compact layout for the lighting information panel"""
+        # Main container with three columns
+        main_frame = ttk.Frame(self)
+        main_frame.pack(fill="x", padx=5, pady=3)
         
-        # Current lighting condition
-        ttk.Label(lighting_frame, text="Current Condition:").grid(row=0, column=0, sticky="w", padx=5)
+        # Column 1: Current condition and transition progress
+        condition_frame = ttk.Frame(main_frame)
+        condition_frame.grid(row=0, column=0, sticky="nw", padx=5)
+        
+        # Current lighting condition (row 1)
+        ttk.Label(condition_frame, text="Current:").grid(row=0, column=0, sticky="w")
         self.condition_label = ttk.Label(
-            lighting_frame,
+            condition_frame,
             textvariable=self.lighting_condition,
             style="Day.TLabel"  # Default style, will be updated
         )
@@ -394,109 +397,97 @@ class LightingInfoPanel(ttk.LabelFrame):
         
         # Detailed condition (dawn/dusk/etc)
         self.detailed_label = ttk.Label(
-            lighting_frame,
+            condition_frame,
             textvariable=self.detailed_condition,
             style="DuskDawn.TLabel"
         )
-        self.detailed_label.grid(row=0, column=2, sticky="w", padx=5)
+        self.detailed_label.grid(row=0, column=2, sticky="w")
         
-        # Configure grid
-        lighting_frame.columnconfigure(0, weight=0)
-        lighting_frame.columnconfigure(1, weight=0)
-        lighting_frame.columnconfigure(2, weight=1)
+        # Transition progress (row 2) - only shown during transitions
+        self.transition_frame = ttk.Frame(condition_frame)
+        self.transition_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=2)
         
-    def create_sun_times_display(self):
-        """Create the sunrise/sunset times display"""
-        times_frame = ttk.Frame(self)
-        times_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Create a 2x4 grid for the times
-        ttk.Label(times_frame, text="Sunrise:").grid(row=0, column=0, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.sunrise_time).grid(row=0, column=1, sticky="w", padx=5)
-        
-        ttk.Label(times_frame, text="Sunset:").grid(row=0, column=2, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.sunset_time).grid(row=0, column=3, sticky="w", padx=5)
-        
-        ttk.Label(times_frame, text="True Day:").grid(row=1, column=0, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.true_day_time).grid(row=1, column=1, sticky="w", padx=5)
-        
-        ttk.Label(times_frame, text="True Night:").grid(row=1, column=2, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.true_night_time).grid(row=1, column=3, sticky="w", padx=5)
-        
-        # Configure grid
-        for i in range(4):
-            times_frame.columnconfigure(i, weight=1)
-            
-    def create_countdown_display(self):
-        """Create the countdown/countup display"""
-        countdown_frame = ttk.Frame(self)
-        countdown_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Create a 2x4 grid for the countdowns
-        ttk.Label(countdown_frame, text="Until Sunrise:").grid(row=0, column=0, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_sunrise,
-            style="CountdownTime.TLabel"
-        ).grid(row=0, column=1, sticky="w", padx=5)
-        
-        ttk.Label(countdown_frame, text="Until Sunset:").grid(row=0, column=2, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_sunset,
-            style="CountdownTime.TLabel"
-        ).grid(row=0, column=3, sticky="w", padx=5)
-        
-        ttk.Label(countdown_frame, text="Until True Day:").grid(row=1, column=0, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_true_day,
-            style="CountdownTime.TLabel"
-        ).grid(row=1, column=1, sticky="w", padx=5)
-        
-        ttk.Label(countdown_frame, text="Until True Night:").grid(row=1, column=2, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_true_night,
-            style="CountdownTime.TLabel"
-        ).grid(row=1, column=3, sticky="w", padx=5)
-        
-        # Configure grid
-        for i in range(4):
-            countdown_frame.columnconfigure(i, weight=1)
-            
-    def create_transition_progress(self):
-        """Create the transition progress display"""
-        self.transition_frame = ttk.Frame(self)
-        self.transition_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Transition progress bar label
         self.progress_label = ttk.Label(
             self.transition_frame, 
-            text="Transition Progress:"
+            text="Progress:"
         )
-        self.progress_label.pack(side=tk.LEFT, padx=5)
+        self.progress_label.pack(side=tk.LEFT)
         
-        # Progress bar
         self.progress_bar = ttk.Progressbar(
             self.transition_frame,
             variable=self.transition_percentage,
             style="Transition.Horizontal.TProgressbar",
-            length=200,
+            length=100,
             mode='determinate'
         )
-        self.progress_bar.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
+        self.progress_bar.pack(side=tk.LEFT, fill="x", expand=True, padx=2)
         
-        # Percentage label
         self.percentage_label = ttk.Label(
             self.transition_frame,
             text="0%"
         )
-        self.percentage_label.pack(side=tk.LEFT, padx=5)
+        self.percentage_label.pack(side=tk.LEFT)
         
         # Initially hide the transition progress
-        self.transition_frame.pack_forget()
+        self.transition_frame.grid_remove()
         
+        # Column 2: Sun times
+        times_frame = ttk.Frame(main_frame)
+        times_frame.grid(row=0, column=1, sticky="nw", padx=10)
+        
+        # Row 1: Sunrise/Sunset
+        ttk.Label(times_frame, text="Sunrise:").grid(row=0, column=0, sticky="w")
+        ttk.Label(times_frame, textvariable=self.sunrise_time).grid(row=0, column=1, sticky="w", padx=2)
+        
+        ttk.Label(times_frame, text="Sunset:").grid(row=0, column=2, sticky="w", padx=(10,0))
+        ttk.Label(times_frame, textvariable=self.sunset_time).grid(row=0, column=3, sticky="w", padx=2)
+        
+        # Row 2: True Day/Night
+        ttk.Label(times_frame, text="True Day:").grid(row=1, column=0, sticky="w")
+        ttk.Label(times_frame, textvariable=self.true_day_time).grid(row=1, column=1, sticky="w", padx=2)
+        
+        ttk.Label(times_frame, text="True Night:").grid(row=1, column=2, sticky="w", padx=(10,0))
+        ttk.Label(times_frame, textvariable=self.true_night_time).grid(row=1, column=3, sticky="w", padx=2)
+        
+        # Column 3: Countdowns
+        countdown_frame = ttk.Frame(main_frame)
+        countdown_frame.grid(row=0, column=2, sticky="nw", padx=10)
+        
+        # Row 1: Until Sunrise/Sunset
+        ttk.Label(countdown_frame, text="Until Sunrise:").grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            countdown_frame, 
+            textvariable=self.to_sunrise,
+            style="CountdownTime.TLabel"
+        ).grid(row=0, column=1, sticky="w", padx=2)
+        
+        ttk.Label(countdown_frame, text="Until Sunset:").grid(row=0, column=2, sticky="w", padx=(10,0))
+        ttk.Label(
+            countdown_frame, 
+            textvariable=self.to_sunset,
+            style="CountdownTime.TLabel"
+        ).grid(row=0, column=1, sticky="w", padx=2)
+        
+        # Row 2: Until True Day/Night
+        ttk.Label(countdown_frame, text="Until True Day:").grid(row=1, column=0, sticky="w")
+        ttk.Label(
+            countdown_frame, 
+            textvariable=self.to_true_day,
+            style="CountdownTime.TLabel"
+        ).grid(row=1, column=1, sticky="w", padx=2)
+        
+        ttk.Label(countdown_frame, text="Until True Night:").grid(row=1, column=2, sticky="w", padx=(10,0))
+        ttk.Label(
+            countdown_frame, 
+            textvariable=self.to_true_night,
+            style="CountdownTime.TLabel"
+        ).grid(row=1, column=3, sticky="w", padx=2)
+        
+        # Configure grid to distribute space
+        for frame in [main_frame, condition_frame, times_frame, countdown_frame]:
+            for i in range(4):
+                frame.columnconfigure(i, weight=1)
+    
     def update_lighting_info(self):
         """Update all lighting information"""
         try:
@@ -520,7 +511,6 @@ class LightingInfoPanel(ttk.LabelFrame):
             # Update detailed condition if in transition
             if condition == 'transition':
                 self.detailed_condition.set(f"({detailed.upper()})")
-                self.detailed_label.pack()
             else:
                 self.detailed_condition.set("")
                 
@@ -555,12 +545,12 @@ class LightingInfoPanel(ttk.LabelFrame):
                 
                 # Show transition progress
                 if not self.is_transition:
-                    self.transition_frame.pack(fill="x", padx=5, pady=5)
+                    self.transition_frame.grid()
                     self.is_transition = True
             else:
                 # Hide transition progress
                 if self.is_transition:
-                    self.transition_frame.pack_forget()
+                    self.transition_frame.grid_remove()
                     self.is_transition = False
                     
         except Exception as e:
@@ -718,7 +708,7 @@ class AlertImagePanel(ttk.LabelFrame):
         )
         self.info_label.pack(pady=5)
     
-    def load_latest_alert_image(self):
+def load_latest_alert_image(self):
         """Load and display the latest alert comparison image"""
         try:
             # Get comparison image paths for each alert type
@@ -761,9 +751,9 @@ class AlertImagePanel(ttk.LabelFrame):
                 # Format timestamp
                 timestamp = datetime.fromtimestamp(latest_time).strftime('%Y-%m-%d %H:%M:%S')
                 
-                # Load and resize image
+                # Load and resize image - use smaller size for panel display
                 img = Image.open(latest_image)
-                img = img.resize((400, 150), Image.LANCZOS)  # Resize to fit panel
+                img = img.resize((300, 150), Image.LANCZOS)  # Resize to fit panel
                 photo = ImageTk.PhotoImage(img)
                 
                 # Store reference to prevent garbage collection
@@ -787,12 +777,12 @@ class AlertImagePanel(ttk.LabelFrame):
         except Exception as e:
             self.logger.error(f"Error loading alert image: {e}")
     
-    def on_new_alert(self, alert_data):
-        """Called when a new alert is generated to update the display"""
-        self.last_alert_id = None  # Force refresh
-        self.load_latest_alert_image()
+        def on_new_alert(self, alert_data):
+            """Called when a new alert is generated to update the display"""
+            self.last_alert_id = None  # Force refresh
+            self.load_latest_alert_image()
     
-    def refresh_image(self):
-        """Refresh image periodically"""
-        self.load_latest_alert_image()
-        self.after(30000, self.refresh_image)  # Schedule next refresh
+        def refresh_image(self):
+            """Refresh image periodically"""
+            self.load_latest_alert_image()
+            self.after(30000, self.refresh_image)  # Schedule next refresh

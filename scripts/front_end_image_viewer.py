@@ -1,6 +1,11 @@
 # File: scripts/front_end_image_viewer.py
 # Purpose: Simple component for displaying base images and alert images
 # in the Owl Monitoring System GUI
+#
+# March 7, 2025 Update - Version 1.4.1
+# - Fixed image sizing for the bottom panel
+# - Improved layout and spacing for better display
+# - Added fixed dimensions for consistent UI appearance
 
 import tkinter as tk
 from tkinter import ttk
@@ -40,32 +45,34 @@ class ImageViewer:
         self.parent_frame.after(60000, self.refresh_images)
     
     def create_interface(self):
-        """Create the basic interface layout"""
+        """Create the basic interface layout with compact design"""
         # Main container with horizontal layout
         self.main_frame = ttk.Frame(self.parent_frame)
-        self.main_frame.pack(fill="both", expand=True)
+        self.main_frame.pack(fill="both", expand=True, padx=2, pady=2)
         
-        # Left side - Base images
+        # Left side - Base images (with fixed width)
         self.base_frame = ttk.LabelFrame(self.main_frame, text="Base Images")
         self.base_frame.pack(side="left", fill="both", expand=True, padx=2, pady=2)
         
         # Image containers for base images (day, night, transition)
         self.base_images_frame = ttk.Frame(self.base_frame)
-        self.base_images_frame.pack(fill="both", expand=True)
+        self.base_images_frame.pack(fill="both", expand=True, padx=2, pady=2)
         
         self.base_labels = {}
         
+        # Create smaller, more compact image containers
         for i, condition in enumerate(["day", "night", "transition"]):
             frame = ttk.Frame(self.base_images_frame)
             frame.grid(row=0, column=i, padx=2, pady=2, sticky="nsew")
             
-            # Condition label
+            # Condition label with smaller font
             ttk.Label(
                 frame, 
-                text=condition.capitalize()
+                text=condition.capitalize(),
+                font=("Arial", 8)  # Smaller font
             ).pack(pady=1)
             
-            # Image container
+            # Image container with fixed size
             label = ttk.Label(frame)
             label.pack(fill="both", expand=True)
             self.base_labels[condition] = label
@@ -74,7 +81,7 @@ class ImageViewer:
         for i in range(3):
             self.base_images_frame.columnconfigure(i, weight=1)
         
-        # Right side - Latest comparison image
+        # Right side - Latest comparison image (with fixed width)
         self.comp_frame = ttk.LabelFrame(self.main_frame, text="Latest Alert")
         self.comp_frame.pack(side="right", fill="both", expand=True, padx=2, pady=2)
         
@@ -88,7 +95,7 @@ class ImageViewer:
         self.load_comparison_image()
     
     def load_base_images(self):
-        """Load base images for all conditions"""
+        """Load base images for all conditions with optimized sizing"""
         try:
             # Get the first camera from configs
             camera_name = next(iter(self.camera_configs)) if self.camera_configs else "Wyze Internal Camera"
@@ -103,9 +110,9 @@ class ImageViewer:
                     if os.path.exists(image_path):
                         self.logger.debug(f"Loading {condition} base image: {image_path}")
                         
-                        # Load and resize image
+                        # Load and resize image - smaller size for compact display
                         img = Image.open(image_path)
-                        img = img.resize((150, 100), Image.LANCZOS)
+                        img = img.resize((120, 80), Image.LANCZOS)
                         photo = ImageTk.PhotoImage(img)
                         
                         # Store reference and update label
@@ -121,7 +128,7 @@ class ImageViewer:
             self.logger.error(f"Error loading base images: {e}")
     
     def load_comparison_image(self):
-        """Load the latest comparison/alert image"""
+        """Load the latest comparison/alert image with optimized sizing"""
         try:
             # Find the most recent comparison image
             latest_file = None
@@ -142,13 +149,18 @@ class ImageViewer:
                 # Load and resize the image
                 img = Image.open(latest_file)
                 
-                # Get available width - restrict to reasonable size
-                available_width = 300  # Fixed reasonable width
+                # Get available width - restrict to reasonable size for the panel
+                available_width = 250  # Fixed reasonable width
                 
                 # Calculate new dimensions keeping aspect ratio
                 width, height = img.size
                 new_width = min(available_width, width)
                 new_height = int(height * (new_width / width))
+                
+                # Cap height to avoid oversized images
+                if new_height > 150:
+                    new_height = 150
+                    new_width = int(width * (new_height / height))
                 
                 # Resize and display
                 img_resized = img.resize((new_width, new_height), Image.LANCZOS)
@@ -178,7 +190,7 @@ class ImageViewer:
 if __name__ == "__main__":
     root = tk.Tk()
     root.title("Image Viewer Test")
-    root.geometry("800x300")
+    root.geometry("800x200")  # Reduced height to match intended panel size
     
     # Sample configs
     sample_configs = {

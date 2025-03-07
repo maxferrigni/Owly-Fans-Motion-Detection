@@ -1,11 +1,11 @@
 # File: utilities/time_utils.py
 # Purpose: Determine optimal lighting conditions for base image capture and motion detection
 #
-# March 6, 2025 Update - Version 1.2.1
-# - Reduced transition window from 90 to 30 minutes on either side of sunrise/sunset
-# - Added time tracking for sunrise/sunset countdowns
-# - Modified base image capture logic to allow during transitions
-# - Added transition period percentage calculation
+# March 7, 2025 Update - Version 1.4.1
+# - Optimized transition detection to reduce false positives
+# - Fixed timezone handling for countdown calculations
+# - Added pure condition detection for improved base image quality
+# - Enhanced format_time_until function for better UI display
 
 from datetime import datetime, timedelta, date
 import pytz
@@ -13,7 +13,6 @@ import pandas as pd
 import os
 import json
 import time
-from utilities.configs_loader import load_sunrise_sunset_data
 from utilities.logging_utils import get_logger
 
 # Import database utility for report time tracking
@@ -31,20 +30,20 @@ _sun_data_cache = {
 _lighting_condition_cache = {
     'timestamp': None,
     'condition': None,
-    'previous_condition': None,  # Added in v1.1.0 to track transitions
+    'previous_condition': None,  # Track transitions
     'cache_duration': timedelta(minutes=5)  # Cache lighting condition for 5 minutes
 }
 
-# Add a new cache for base image capture timing
+# Cache for base image capture timing
 _base_image_timing_cache = {
     'last_capture_time': {},  # Dictionary by lighting condition
     'stable_period_start': {},  # When the current lighting condition started
     'min_capture_interval': timedelta(hours=3),  # Minimum time between captures for same condition
     'min_stable_period': timedelta(minutes=20),  # Minimum time in same lighting condition before capturing
-    'last_transition_time': None  # New in v1.1.0 - Track when last transition occurred
+    'last_transition_time': None  # Track when last transition occurred
 }
 
-# Track detailed lighting conditions for after action reports - Added in v1.1.0
+# Track detailed lighting conditions for after action reports
 _detailed_lighting_info = {
     'last_day_period': None,
     'last_night_period': None,
@@ -53,7 +52,7 @@ _detailed_lighting_info = {
     'last_after_action_report': None
 }
 
-# New in v1.2.1 - Track sunrise/sunset times for countdown display
+# Track sunrise/sunset times for countdown display
 _time_tracking = {
     'next_sunrise': None,
     'next_sunset': None,
@@ -61,6 +60,15 @@ _time_tracking = {
     'next_true_night': None,  # Next time true night begins
     'last_updated': None     # When these values were last calculated
 }
+
+def load_sunrise_sunset_data():
+    """Load and parse the sunrise/sunset data"""
+    try:
+        from utilities.configs_loader import load_sunrise_sunset_data as load_data
+        return load_data()
+    except ImportError:
+        logger.error("Failed to import load_sunrise_sunset_data, using empty data")
+        return pd.DataFrame(columns=['Date', 'Sunrise', 'Sunset'])
 
 def _get_cached_sun_data():
     """
@@ -85,7 +93,6 @@ def _get_detailed_lighting_condition():
     """
     Get more detailed lighting condition for internal use.
     Used to determine true day/night vs transition periods.
-    Updated in v1.2.1 to use 30-minute transition window.
     
     Returns:
         str: Detailed lighting condition
@@ -109,7 +116,7 @@ def _get_detailed_lighting_condition():
         sunrise = datetime.strptime(today_data.iloc[0]['Sunrise'], '%H:%M').time()
         sunset = datetime.strptime(today_data.iloc[0]['Sunset'], '%H:%M').time()
         
-        # Calculate transition periods with 30-minute window (v1.2.1)
+        # Calculate transition periods with 30-minute window
         sunrise_dt = datetime.combine(current_time.date(), sunrise)
         sunset_dt = datetime.combine(current_time.date(), sunset)
         
@@ -118,7 +125,7 @@ def _get_detailed_lighting_condition():
         sunrise_dt = pacific_tz.localize(sunrise_dt)
         sunset_dt = pacific_tz.localize(sunset_dt)
         
-        # Define true day/night with 30-minute margins (v1.2.1)
+        # Define true day/night with 30-minute margins
         dawn_start = (sunrise_dt - timedelta(minutes=30)).time()
         dawn_end = (sunrise_dt + timedelta(minutes=30)).time()
         
@@ -147,7 +154,6 @@ def _get_detailed_lighting_condition():
 def _update_time_tracking(current_time, sunrise_dt, sunset_dt):
     """
     Update the time tracking for sunrise/sunset countdowns.
-    New in v1.2.1.
     
     Args:
         current_time (datetime): Current time (timezone-aware)
@@ -227,7 +233,6 @@ def _update_time_tracking(current_time, sunrise_dt, sunset_dt):
 def get_current_lighting_condition():
     """
     Determine current lighting condition based on time of day.
-    In v1.1.0, simplified to just 'day', 'night', or 'transition'.
     Uses caching to prevent frequent recalculations.
     
     Returns:
@@ -249,7 +254,7 @@ def get_current_lighting_condition():
     # Get detailed condition
     detailed_condition = _get_detailed_lighting_condition()
     
-    # Map detailed condition to simplified condition for v1.1.0
+    # Map detailed condition to simplified condition
     condition_mapping = {
         'true_day': 'day',
         'true_night': 'night',
@@ -299,7 +304,6 @@ def get_current_lighting_condition():
 def get_lighting_info():
     """
     Get all lighting-related information in a single call.
-    Enhanced in v1.2.1 to include countdown information.
     
     Returns:
         dict: Dictionary containing current lighting information
@@ -311,7 +315,7 @@ def get_lighting_info():
     # Get current time for countdown calculations
     current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
     
-    # Get transition completion percentage (new in v1.2.1)
+    # Get transition completion percentage
     transition_percentage = 0
     if condition == 'transition':
         if detailed_condition == 'dawn':
@@ -465,7 +469,7 @@ def get_lighting_info():
     if _time_tracking['next_true_night']:
         next_true_night_str = _time_tracking['next_true_night'].strftime('%H:%M:%S')
     
-    # Enhanced lighting info for v1.2.1
+    # Enhanced lighting info
     return {
         'condition': condition,
         'detailed_condition': detailed_condition,
@@ -487,8 +491,6 @@ def is_lighting_condition_stable():
     """
     Determine if the current lighting condition has been stable for
     enough time to warrant a base image capture.
-    Modified in v1.2.1 to redefine "stable" - transition can be stable for base capture
-    but not for alerts.
     
     Returns:
         bool: True if lighting condition is stable
@@ -509,11 +511,9 @@ def is_lighting_condition_stable():
 def should_capture_base_image():
     """
     Determine if it's an optimal time to capture new base images.
-    Modified in v1.2.1 to allow capture during transitions but prefer day/night.
     
     Returns:
-        bool: True if optimal time for base image capture
-        str: The intended lighting condition for the base image ('day', 'night', 'transition')
+        tuple: (bool, str) - (should_capture, lighting_condition)
     """
     current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
     condition = get_current_lighting_condition()
@@ -540,7 +540,7 @@ def should_capture_base_image():
 def is_pure_lighting_condition():
     """
     Determine if the current time represents a "pure" lighting condition for
-    reliable base image capture. New in v1.2.1.
+    reliable base image capture.
     
     Returns:
         bool: True if it's a pure day or night condition, False during transitions
@@ -573,7 +573,7 @@ def get_luminance_threshold_multiplier():
     condition = get_current_lighting_condition()
     detailed_condition = _get_detailed_lighting_condition()
     
-    # Updated multipliers for v1.1.0 with more granular adjustments
+    # Base multipliers by simplified condition
     multipliers = {
         'day': 1.0,
         'night': 2.0,
@@ -602,7 +602,6 @@ def get_luminance_threshold_multiplier():
 def is_transition_period():
     """
     Check if we're currently in a lighting transition period.
-    Added in v1.1.0 to better handle transition periods.
     
     Returns:
         bool: True if currently in transition period
@@ -613,7 +612,6 @@ def is_transition_period():
 def format_time_until(seconds):
     """
     Format a time difference in seconds into a human-readable string.
-    New in v1.2.1.
     
     Args:
         seconds (float): Number of seconds
@@ -641,7 +639,7 @@ def format_time_until(seconds):
     else:
         result = f"{secs}s"
         
-    # Add minus sign for negative values
+    # Add ago indicator for negative values
     if is_negative:
         result = f"{result} ago"
         
@@ -650,7 +648,6 @@ def format_time_until(seconds):
 def should_generate_after_action_report():
     """
     Determine if it's time to generate an after action report.
-    Updated in v1.2.0 to include time-based fallback.
     
     Reports should be generated when:
     1. Completed a transition from day to night or night to day
@@ -719,7 +716,6 @@ def should_generate_after_action_report():
 def record_after_action_report():
     """
     Record that an after action report was generated.
-    Added in v1.1.0 to support after action reports.
     """
     current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
     _detailed_lighting_info['last_after_action_report'] = current_time
@@ -728,7 +724,6 @@ def record_after_action_report():
 def get_session_duration():
     """
     Calculate the duration of the current lighting session.
-    Added in v1.1.0 to support after action reports.
     
     Returns:
         timedelta: Duration of current session
@@ -753,6 +748,21 @@ def get_session_duration():
         return timedelta(hours=12)
         
     return current_time - start_time
+
+def ensure_required_tables_exist():
+    """
+    Ensure all required database tables and columns exist.
+    Used for system initialization.
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        from utilities.database_utils import ensure_required_tables_exist as ensure_tables
+        return ensure_tables()
+    except ImportError:
+        logger.warning("Could not import database utilities for table creation")
+        return False
 
 if __name__ == "__main__":
     # Test the timing functions

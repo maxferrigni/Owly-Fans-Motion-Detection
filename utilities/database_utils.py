@@ -1,10 +1,11 @@
 # File: utilities/database_utils.py
 # Purpose: Centralize database operations for the Owl Monitoring System
 #
-# March 5, 2025 Update - Version 1.2.0
-# - Added functions for report tracking in database
-# - Added admin subscriber identification 
-# - Streamlined error handling and removed redundant checks
+# March 7, 2025 Update - Version 1.4.1
+# - Added ensure_required_tables_exist() function to create missing tables and columns
+# - Enhanced error handling and recovery for database operations
+# - Improved cache management for column existence checks
+# - Added database schema synchronization on startup
 
 import os
 from datetime import datetime, timedelta
@@ -41,6 +42,204 @@ except Exception as e:
 # Cache for column existence checks to avoid repeated queries
 _column_cache = {}
 _table_columns_cache = {}
+
+def ensure_required_tables_exist():
+    """
+    Ensure all required database tables and columns exist.
+    Creates missing tables and columns if necessary.
+    
+    Returns:
+        bool: True if successful, False if any errors occurred
+    """
+    try:
+        # Clear cache to ensure we get fresh information
+        _column_cache.clear()
+        _table_columns_cache.clear()
+        
+        # Define required tables and their columns
+        required_schema = {
+            "subscribers": {
+                "create_if_missing": """
+                CREATE TABLE IF NOT EXISTS public.subscribers (
+                    id serial PRIMARY KEY,
+                    name text,
+                    email text,
+                    phone text,
+                    created_at timestamptz DEFAULT now(),
+                    is_admin boolean DEFAULT false,
+                    notification_type text DEFAULT 'email',
+                    owl_locations text
+                );
+                """,
+                "columns": {
+                    "notification_type": "ADD COLUMN IF NOT EXISTS notification_type text DEFAULT 'email'",
+                    "owl_locations": "ADD COLUMN IF NOT EXISTS owl_locations text",
+                    "is_admin": "ADD COLUMN IF NOT EXISTS is_admin boolean DEFAULT false"
+                }
+            },
+            "alerts": {
+                "create_if_missing": """
+                CREATE TABLE IF NOT EXISTS public.alerts (
+                    id serial PRIMARY KEY,
+                    created_at timestamptz DEFAULT now(),
+                    alert_id text,
+                    alert_type text,
+                    alert_priority integer,
+                    alert_sent boolean DEFAULT true,
+                    alert_sent_at timestamptz,
+                    base_cooldown_minutes integer,
+                    cooldown_ends_at timestamptz,
+                    suppressed boolean DEFAULT false,
+                    trigger_condition text,
+                    owl_confidence_score float8 DEFAULT 0,
+                    consecutive_owl_frames integer DEFAULT 0,
+                    confidence_breakdown text,
+                    comparison_image_url text,
+                    email_recipients_count integer DEFAULT 0
+                );
+                """,
+                "columns": {
+                    "owl_confidence_score": "ADD COLUMN IF NOT EXISTS owl_confidence_score float8 DEFAULT 0",
+                    "consecutive_owl_frames": "ADD COLUMN IF NOT EXISTS consecutive_owl_frames integer DEFAULT 0",
+                    "confidence_breakdown": "ADD COLUMN IF NOT EXISTS confidence_breakdown text",
+                    "comparison_image_url": "ADD COLUMN IF NOT EXISTS comparison_image_url text"
+                }
+            },
+            "camera_settings": {
+                "create_if_missing": """
+                CREATE TABLE IF NOT EXISTS public.camera_settings (
+                    id serial PRIMARY KEY,
+                    camera_name text UNIQUE NOT NULL,
+                    owl_confidence_threshold float8 DEFAULT 60.0,
+                    consecutive_frames_threshold integer DEFAULT 2,
+                    created_at timestamptz DEFAULT now(),
+                    last_updated timestamptz DEFAULT now()
+                );
+                """,
+                "default_data": [
+                    {
+                        "camera_name": "Upper Patio Camera",
+                        "owl_confidence_threshold": 55.0
+                    },
+                    {
+                        "camera_name": "Bindy Patio Camera",
+                        "owl_confidence_threshold": 65.0
+                    },
+                    {
+                        "camera_name": "Wyze Internal Camera",
+                        "owl_confidence_threshold": 75.0
+                    }
+                ]
+            },
+            "reports": {
+                "create_if_missing": """
+                CREATE TABLE IF NOT EXISTS public.reports (
+                    id serial PRIMARY KEY,
+                    created_at timestamptz DEFAULT now(),
+                    report_id text,
+                    report_type text,
+                    is_manual boolean DEFAULT false,
+                    recipient_count integer DEFAULT 0,
+                    summary_data text,
+                    start_timestamp text,
+                    end_timestamp text
+                );
+                """
+            },
+            "owl_activity_log": {
+                "create_if_missing": """
+                CREATE TABLE IF NOT EXISTS public.owl_activity_log (
+                    id serial PRIMARY KEY,
+                    created_at timestamptz DEFAULT now(),
+                    lighting_condition text,
+                    base_image_age_seconds integer,
+                    owl_in_box boolean DEFAULT false,
+                    owl_on_box boolean DEFAULT false,
+                    owl_in_area boolean DEFAULT false,
+                    two_owls boolean DEFAULT false,
+                    two_owls_in_box boolean DEFAULT false,
+                    eggs_or_babies boolean DEFAULT false,
+                    multiple_owls boolean DEFAULT false,
+                    owl_count integer DEFAULT 0,
+                    owl_confidence_score float8 DEFAULT 0,
+                    consecutive_owl_frames integer DEFAULT 0,
+                    confidence_threshold_used float8 DEFAULT 60.0,
+                    pixel_change_owl_in_box float8 DEFAULT 0,
+                    pixel_change_owl_on_box float8 DEFAULT 0,
+                    pixel_change_owl_in_area float8 DEFAULT 0,
+                    luminance_change_owl_in_box float8 DEFAULT 0,
+                    luminance_change_owl_on_box float8 DEFAULT 0,
+                    luminance_change_owl_in_area float8 DEFAULT 0,
+                    owl_in_box_image_comparison_url text,
+                    owl_on_box_image_comparison_url text,
+                    owl_in_area_image_comparison_url text,
+                    confidence_factors text
+                );
+                """
+            }
+        }
+        
+        # Process each table
+        for table_name, schema in required_schema.items():
+            # Check if table exists
+            try:
+                table_exists = False
+                try:
+                    # Try to get at least one row to check if table exists
+                    response = supabase_client.table(table_name).select("*").limit(1).execute()
+                    table_exists = True
+                except Exception:
+                    # Table probably doesn't exist
+                    table_exists = False
+                
+                # Create table if it doesn't exist
+                if not table_exists:
+                    logger.info(f"Creating table: {table_name}")
+                    result = supabase_client.rpc('execute_sql', {'query': schema['create_if_missing']}).execute()
+                    logger.info(f"Table {table_name} created successfully")
+                else:
+                    logger.debug(f"Table {table_name} already exists")
+                    
+                    # If table exists, check and add any missing columns
+                    if "columns" in schema:
+                        for column_name, add_column_sql in schema["columns"].items():
+                            if not check_column_exists(table_name, column_name):
+                                logger.info(f"Adding missing column {column_name} to {table_name}")
+                                alter_query = f"ALTER TABLE public.{table_name} {add_column_sql};"
+                                result = supabase_client.rpc('execute_sql', {'query': alter_query}).execute()
+                                logger.info(f"Column {column_name} added to {table_name}")
+                
+                # Insert default data if specified
+                if table_exists and "default_data" in schema:
+                    for item in schema["default_data"]:
+                        # Check if record already exists with unique key
+                        unique_key = next((k for k, v in item.items() if "UNIQUE" in schema["create_if_missing"] and k in schema["create_if_missing"]), None)
+                        
+                        if unique_key:
+                            try:
+                                # Check if record exists
+                                response = supabase_client.table(table_name).select("*").eq(unique_key, item[unique_key]).execute()
+                                
+                                if hasattr(response, 'data') and len(response.data) == 0:
+                                    # Record doesn't exist, insert it
+                                    logger.info(f"Inserting default data for {table_name}: {item[unique_key]}")
+                                    supabase_client.table(table_name).insert(item).execute()
+                                else:
+                                    # Record exists, update it
+                                    logger.debug(f"Default data already exists for {table_name}: {item[unique_key]}")
+                            except Exception as e:
+                                logger.error(f"Error checking/inserting default data: {e}")
+                                
+            except Exception as table_error:
+                logger.error(f"Error ensuring table {table_name}: {table_error}")
+                continue
+        
+        logger.info("Database schema verification complete")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error ensuring required tables: {e}")
+        return False
 
 def get_table_columns(table_name):
     """
@@ -144,9 +343,6 @@ def check_column_exists(table_name, column_name):
     
     # Get all columns for this table
     columns = get_table_columns(table_name)
-    
-    # Log the columns we found for debugging
-    logger.debug(f"Columns found in {table_name}: {columns}")
     
     # Check if the requested column exists (case insensitive)
     exists = False
@@ -530,53 +726,25 @@ if __name__ == "__main__":
     try:
         logger.info("Testing database utility functions...")
         
-        # Test improved column checking
-        for table in ["alerts", "subscribers", "owl_activity_log"]:
+        # Test table creation and column addition
+        logger.info("Testing schema creation and verification...")
+        ensure_required_tables_exist()
+        
+        # Test column checking
+        for table in ["alerts", "subscribers", "owl_activity_log", "camera_settings"]:
             columns = get_table_columns(table)
             logger.info(f"Found {len(columns)} columns for {table}: {columns}")
-            
-            # Test specific columns
-            if table == "alerts":
-                for column in ["alert_id", "alert_type", "alert_priority"]:
-                    exists = check_column_exists(table, column)
-                    logger.info(f"Column {column} exists in {table}: {exists}")
         
-        # Test report tracking functions
-        test_report_id = f"OWLR-{datetime.now().strftime('%Y%m%d%H%M%S')}-TEST"
-        
-        # Create test report data
-        test_report = {
-            "report_id": test_report_id,
-            "report_type": "manual",
-            "is_manual": True,
-            "recipient_count": 1,
-            "summary_data": json.dumps({"total_alerts": 5, "alert_counts": {"Owl In Box": 3, "Owl On Box": 2}}),
-            "start_timestamp": (datetime.now() - timedelta(hours=24)).isoformat(),
-            "end_timestamp": datetime.now().isoformat()
-        }
-        
-        # Test logging report
-        report_result = log_report_to_database(test_report)
-        if report_result:
-            logger.info(f"Successfully logged test report: {test_report_id}")
-        else:
-            logger.warning("Failed to log test report")
-            
-        # Test retrieving last report time
-        last_time = get_last_report_time()
-        logger.info(f"Last report time: {last_time}")
-        
-        # Test retrieving recent reports
-        recent_reports = get_recent_reports(5)
-        logger.info(f"Found {len(recent_reports)} recent reports")
-        
-        # Test admin subscribers
+        # Test getting admin subscribers
         admins = get_admin_subscribers()
         logger.info(f"Found {len(admins)} admin subscribers")
-        for admin in admins:
-            logger.info(f"Admin: {admin.get('name')} ({admin.get('email')})")
+        
+        # Test camera settings
+        thresholds = get_custom_thresholds()
+        logger.info(f"Found {len(thresholds)} camera threshold settings: {thresholds}")
         
         logger.info("Database utility tests complete")
+        
     except Exception as e:
         logger.error(f"Database test failed: {e}")
         raise

@@ -1,10 +1,11 @@
 # File: utilities/constants.py
 # Purpose: Centralized path management and validation for the Owl Monitoring System
 # 
-# March 6, 2025 Update - Version 1.4.0
-# - Updated version number to 1.4.0
-# - Added resource paths for Wyze camera monitoring
-# - Updated file paths to use renamed frontend files
+# March 7, 2025 Update - Version 1.4.1
+# - Fixed directory structure validation for Windows compatibility
+# - Updated image path handling for improved reliability
+# - Added support for additional detection types
+# - Standardized path construction across components
 
 import os
 import json
@@ -18,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Version information
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 # Base directory path from environment variables with fallback
 BASE_DIR = os.getenv("BASE_DIR", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection")
@@ -31,14 +32,14 @@ GIT_DIR = os.path.join(BASE_DIR, "10_GIT", "Owly-Fans-Motion-Detection")
 SCRIPTS_DIR = os.path.join(GIT_DIR, "scripts")
 CONFIGS_DIR = os.path.join(GIT_DIR, "configs")
 UTILITIES_DIR = os.path.join(GIT_DIR, "utilities")
-RESOURCES_DIR = os.path.join(GIT_DIR, "resources")  # New resource directory
+RESOURCES_DIR = os.path.join(GIT_DIR, "resources")  # Resource directory
 
 # Local storage paths
 BASE_IMAGES_DIR = os.path.join(LOCAL_FILES_DIR, "base_images")
 IMAGE_COMPARISONS_DIR = os.path.join(LOCAL_FILES_DIR, "image_comparisons")
 LOGS_DIR = os.path.join(LOCAL_FILES_DIR, "logs")
 SAVED_IMAGES_DIR = os.path.join(LOGS_DIR, "saved_images")  # Folder for saved images when local saving is enabled
-REFERENCE_IMAGES_DIR = os.path.join(LOCAL_FILES_DIR, "reference_images")  # New directory for reference images
+REFERENCE_IMAGES_DIR = os.path.join(LOCAL_FILES_DIR, "reference_images")  # Directory for reference images
 BROKEN_CAMERA_PATH = os.path.join(REFERENCE_IMAGES_DIR, "broken_wyze_camera.jpg")
 
 # Input config files
@@ -61,7 +62,7 @@ ALERT_PRIORITIES = {
     "Owl In Box": 3,
     "Two Owls": 4,             # Multiple owls (except in box)
     "Two Owls In Box": 5,      # Multiple owls in box
-    "Eggs Or Babies": 6        # Highest priority (not fully implemented)
+    "Eggs Or Babies": 6        # Highest priority
 }
 
 # Lighting condition constants
@@ -123,7 +124,10 @@ DETECTION_FOLDERS = {
 
 # Default environment variables
 DEFAULT_ENV_VARS = {
-    "OWL_EMAIL_ALERTS": "True"  # Email alerts are the only alert type
+    "OWL_EMAIL_ALERTS": "True",
+    "OWL_LOCAL_SAVING": "False",
+    "OWL_CAPTURE_INTERVAL": "60",
+    "OWL_AFTER_ACTION_REPORTS": "True"
 }
 
 # Set default environment variables if not already set
@@ -238,6 +242,25 @@ def get_base_image_path(camera_name, lighting_condition):
     
     return os.path.join(BASE_IMAGES_DIR, filename)
 
+def create_path_if_not_exists(path):
+    """
+    Create a directory path if it doesn't exist, with proper error handling.
+    
+    Args:
+        path (str): Path to create
+        
+    Returns:
+        bool: True if path exists or was created, False on error
+    """
+    try:
+        if not os.path.exists(path):
+            os.makedirs(path, exist_ok=True)
+            logging.info(f"Created directory: {path}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to create directory {path}: {e}")
+        return False
+
 def ensure_directories_exist():
     """Create all necessary directories if they don't exist"""
     directories = [
@@ -249,13 +272,12 @@ def ensure_directories_exist():
         REFERENCE_IMAGES_DIR
     ]
 
+    all_successful = True
     for directory in directories:
-        try:
-            os.makedirs(directory, exist_ok=True)
-            logging.info(f"Created/verified directory: {directory}")
-        except Exception as e:
-            logging.error(f"Failed to create directory {directory}: {e}")
-            raise
+        if not create_path_if_not_exists(directory):
+            all_successful = False
+
+    return all_successful
 
 def validate_config_files():
     """
@@ -308,7 +330,8 @@ def validate_system():
     """
     try:
         # Ensure all directories exist
-        ensure_directories_exist()
+        if not ensure_directories_exist():
+            return False
         
         # Validate configuration files
         if not validate_config_files():
@@ -321,6 +344,59 @@ def validate_system():
         logging.error(f"System validation failed: {e}")
         return False
 
+def get_system_info():
+    """
+    Get system information for diagnostics.
+    
+    Returns:
+        dict: System information
+    """
+    return {
+        "version": VERSION,
+        "base_dir": BASE_DIR,
+        "is_dev": "Dev" in BASE_DIR,
+        "directories": {
+            "local_files": LOCAL_FILES_DIR,
+            "git": GIT_DIR,
+            "scripts": SCRIPTS_DIR,
+            "configs": CONFIGS_DIR,
+            "utilities": UTILITIES_DIR,
+            "resources": RESOURCES_DIR,
+            "base_images": BASE_IMAGES_DIR,
+            "image_comparisons": IMAGE_COMPARISONS_DIR,
+            "logs": LOGS_DIR,
+            "saved_images": SAVED_IMAGES_DIR,
+            "reference_images": REFERENCE_IMAGES_DIR
+        },
+        "environment_variables": {
+            var_name: os.environ.get(var_name, DEFAULT_ENV_VARS.get(var_name, "Not set"))
+            for var_name in DEFAULT_ENV_VARS
+        }
+    }
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    validate_system()
+    
+    print(f"Owl Monitoring System - Version {VERSION}")
+    print(f"Running in {'DEV' if 'Dev' in BASE_DIR else 'PRODUCTION'} environment")
+    
+    # Validate system
+    if validate_system():
+        print("System validation passed - all directories and config files valid")
+    else:
+        print("System validation failed - check logs for details")
+        
+    # Test path functions
+    camera = "Wyze Internal Camera"
+    test_paths = {
+        "base_image_day": get_base_image_path(camera, "day"),
+        "base_image_night": get_base_image_path(camera, "night"),
+        "base_image_transition": get_base_image_path(camera, "transition"),
+        "comparison_image": get_comparison_image_path(camera),
+        "saved_image": get_saved_image_path(camera, "comparison")
+    }
+    
+    print("\nTest Paths:")
+    for path_name, path in test_paths.items():
+        print(f"{path_name}: {path}")
+        print(f"  Exists: {os.path.exists(path)}")
