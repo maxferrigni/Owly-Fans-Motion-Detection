@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 import pytz
 from PIL import Image, ImageTk
 import traceback
+import time
 
 # Add parent directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
