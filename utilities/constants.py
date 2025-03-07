@@ -1,11 +1,10 @@
 # File: utilities/constants.py
 # Purpose: Centralized path management and validation for the Owl Monitoring System
 # 
-# March 20, 2025 Update - Version 1.3.0
-# - Updated version number to 1.3.0
-# - Simplified application by removing StatusPanel, ReportsPanel
-# - Removed text alerts and email-to-text functionality
-# - Removed manual base image capture and report generation
+# March 6, 2025 Update - Version 1.4.0
+# - Updated version number to 1.4.0
+# - Added resource paths for Wyze camera monitoring
+# - Updated file paths to use renamed frontend files
 
 import os
 import json
@@ -19,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Version information
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # Base directory path from environment variables with fallback
 BASE_DIR = os.getenv("BASE_DIR", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection")
@@ -32,12 +31,15 @@ GIT_DIR = os.path.join(BASE_DIR, "10_GIT", "Owly-Fans-Motion-Detection")
 SCRIPTS_DIR = os.path.join(GIT_DIR, "scripts")
 CONFIGS_DIR = os.path.join(GIT_DIR, "configs")
 UTILITIES_DIR = os.path.join(GIT_DIR, "utilities")
+RESOURCES_DIR = os.path.join(GIT_DIR, "resources")  # New resource directory
 
 # Local storage paths
 BASE_IMAGES_DIR = os.path.join(LOCAL_FILES_DIR, "base_images")
 IMAGE_COMPARISONS_DIR = os.path.join(LOCAL_FILES_DIR, "image_comparisons")
 LOGS_DIR = os.path.join(LOCAL_FILES_DIR, "logs")
-SAVED_IMAGES_DIR = os.path.join(LOGS_DIR, "saved_images")  # New folder for saved images when local saving is enabled
+SAVED_IMAGES_DIR = os.path.join(LOGS_DIR, "saved_images")  # Folder for saved images when local saving is enabled
+REFERENCE_IMAGES_DIR = os.path.join(LOCAL_FILES_DIR, "reference_images")  # New directory for reference images
+BROKEN_CAMERA_PATH = os.path.join(REFERENCE_IMAGES_DIR, "broken_wyze_camera.jpg")
 
 # Input config files
 INPUT_CONFIG_FILES = {
@@ -62,7 +64,7 @@ ALERT_PRIORITIES = {
     "Eggs Or Babies": 6        # Highest priority (not fully implemented)
 }
 
-# Lighting condition constants - updated for v1.2.1
+# Lighting condition constants
 LIGHTING_CONDITIONS = {
     "TRANSITION_WINDOW_MINUTES": 30,  # 30-minute transition window on either side of sunrise/sunset
     "DAY": "day",
@@ -119,9 +121,9 @@ DETECTION_FOLDERS = {
     "Eggs Or Babies": "eggs_or_babies"
 }
 
-# Default environment variables - simplified for v1.3.0
+# Default environment variables
 DEFAULT_ENV_VARS = {
-    "OWL_EMAIL_ALERTS": "True"  # Email alerts are the only alert type in v1.3.0
+    "OWL_EMAIL_ALERTS": "True"  # Email alerts are the only alert type
 }
 
 # Set default environment variables if not already set
@@ -243,7 +245,8 @@ def ensure_directories_exist():
         BASE_IMAGES_DIR,
         IMAGE_COMPARISONS_DIR,
         LOGS_DIR,
-        SAVED_IMAGES_DIR
+        SAVED_IMAGES_DIR,
+        REFERENCE_IMAGES_DIR
     ]
 
     for directory in directories:

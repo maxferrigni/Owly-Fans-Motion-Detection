@@ -1,20 +1,21 @@
-# File: _front_end_panels.py
+# File: front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.3.0
-# - Removed StatusPanel class
-# - Removed ReportsPanel class
-# - Simplified ControlPanel by merging settings panes
-# - Removed manual base image capture and report generation buttons
-# - Removed text alerts and email-to-text alert settings
+# March 6, 2025 Update - Version 1.4.0
+# - Renamed from _front_end_panels.py to front_end_panels.py
+# - Added BaseImagesPanel class for displaying base images
+# - Added AlertImagePanel class for displaying latest owl detection
 
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 from datetime import datetime, timedelta
 import threading
 import time
+import os
+from PIL import Image, ImageTk
 from utilities.logging_utils import get_logger
 from utilities.time_utils import get_lighting_info, format_time_until, get_current_lighting_condition
+from utilities.constants import get_base_image_path, IMAGE_COMPARISONS_DIR
 
 class LogWindow(tk.Toplevel):
     """Enhanced logging window with filtering and search"""
@@ -178,7 +179,8 @@ class ControlPanel(ttk.Frame):
     def __init__(self, parent, local_saving_enabled, capture_interval, alert_delay,
                  email_alerts_enabled, update_system_func, start_script_func,
                  stop_script_func, toggle_local_saving_func, update_capture_interval_func,
-                 update_alert_delay_func, toggle_email_alerts_func, log_window):
+                 update_alert_delay_func, toggle_email_alerts_func, log_window, 
+                 clear_saved_images_func=None):
         super().__init__(parent)
         
         self.local_saving_enabled = local_saving_enabled
@@ -194,6 +196,7 @@ class ControlPanel(ttk.Frame):
         self.update_capture_interval_func = update_capture_interval_func
         self.update_alert_delay_func = update_alert_delay_func
         self.toggle_email_alerts_func = toggle_email_alerts_func
+        self.clear_saved_images_func = clear_saved_images_func
         self.log_window = log_window
         
         # Create UI components
@@ -230,6 +233,14 @@ class ControlPanel(ttk.Frame):
             command=self.update_system_func
         )
         self.update_button.pack(side=tk.LEFT, padx=5)
+        
+        # Maintenance button
+        self.clear_images_button = ttk.Button(
+            button_frame,
+            text="Clear Saved Images",
+            command=self.clear_saved_images
+        )
+        self.clear_images_button.pack(side=tk.LEFT, padx=5)
         
         # View logs button
         self.view_logs_button = ttk.Button(
@@ -301,6 +312,14 @@ class ControlPanel(ttk.Frame):
         """Show the log window"""
         if hasattr(self.log_window, 'show'):
             self.log_window.show()
+    
+    def clear_saved_images(self):
+        """Clear saved images by calling the appropriate function"""
+        if self.clear_saved_images_func:
+            self.clear_saved_images_func()
+        else:
+            from tkinter import messagebox
+            messagebox.showwarning("Function Not Available", "Clear saved images function is not available")
     
     def update_run_state(self, is_running):
         """Update UI based on whether the script is running"""
@@ -578,3 +597,202 @@ class LightingInfoPanel(ttk.LabelFrame):
         """Clean up resources when panel is destroyed"""
         self.stop_update_thread()
         super().destroy()
+
+class BaseImagesPanel(ttk.LabelFrame):
+    """Panel to display the three base images (day, night, transition)"""
+    def __init__(self, parent, camera_configs):
+        super().__init__(parent, text="Base Images")
+        self.camera_configs = camera_configs
+        self.image_labels = {}
+        self.photo_refs = {}  # Keep references to avoid garbage collection
+        self.camera_name = list(camera_configs.keys())[0] if camera_configs else "Wyze Internal Camera"
+        self.logger = get_logger()
+        
+        # Create the display frame
+        self.create_image_display()
+        
+        # Load initial images
+        self.load_base_images()
+        
+        # Set up periodic refresh
+        self.after(60000, self.refresh_images)  # Refresh every minute
+    
+    def create_image_display(self):
+        """Create the image display layout"""
+        self.images_frame = ttk.Frame(self)
+        self.images_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Create three image containers for day, night, transition
+        for i, condition in enumerate(["day", "night", "transition"]):
+            frame = ttk.Frame(self.images_frame)
+            frame.grid(row=0, column=i, padx=5, pady=5)
+            
+            # Add label for condition
+            ttk.Label(
+                frame, 
+                text=condition.capitalize(),
+                font=("Arial", 10, "bold")
+            ).pack(pady=(0, 5))
+            
+            # Add image placeholder
+            label = ttk.Label(frame)
+            label.pack()
+            
+            self.image_labels[condition] = label
+        
+        # Configure grid to distribute space evenly
+        for i in range(3):
+            self.images_frame.columnconfigure(i, weight=1)
+    
+    def load_base_images(self):
+        """Load and display base images for the selected camera"""
+        try:
+            # For each lighting condition, load the corresponding base image
+            for condition in ["day", "night", "transition"]:
+                image_path = get_base_image_path(self.camera_name, condition)
+                
+                if os.path.exists(image_path):
+                    # Load and resize image
+                    img = Image.open(image_path)
+                    img = img.resize((200, 150), Image.LANCZOS)  # Resize to fit panel
+                    photo = ImageTk.PhotoImage(img)
+                    
+                    # Store reference to prevent garbage collection
+                    self.photo_refs[condition] = photo
+                    
+                    # Update label
+                    self.image_labels[condition].config(image=photo)
+                else:
+                    # Display placeholder if image doesn't exist
+                    self.image_labels[condition].config(text=f"No {condition} image")
+                    # Remove any previous image
+                    self.image_labels[condition].config(image="")
+                    if condition in self.photo_refs:
+                        del self.photo_refs[condition]
+        except Exception as e:
+            self.logger.error(f"Error loading base images: {e}")
+    
+    def set_camera(self, camera_name):
+        """Change the displayed camera"""
+        if camera_name in self.camera_configs:
+            self.camera_name = camera_name
+            self.load_base_images()
+    
+    def refresh_images(self):
+        """Refresh images periodically"""
+        self.load_base_images()
+        self.after(60000, self.refresh_images)  # Schedule next refresh
+
+class AlertImagePanel(ttk.LabelFrame):
+    """Panel to display the latest owl detection comparison image"""
+    def __init__(self, parent, alert_manager):
+        super().__init__(parent, text="Latest Owl Detection")
+        self.alert_manager = alert_manager
+        self.last_alert_id = None
+        self.photo_ref = None  # Keep reference to prevent garbage collection
+        self.logger = get_logger()
+        
+        # Create display components
+        self.create_image_display()
+        
+        # Load initial image
+        self.load_latest_alert_image()
+        
+        # Set up periodic refresh
+        self.after(30000, self.refresh_image)  # Refresh every 30 seconds
+    
+    def create_image_display(self):
+        """Create the image display layout"""
+        self.frame = ttk.Frame(self)
+        self.frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Add image placeholder
+        self.image_label = ttk.Label(self.frame)
+        self.image_label.pack(pady=5)
+        
+        # Add info label
+        self.info_label = ttk.Label(
+            self.frame,
+            text="No recent alerts",
+            font=("Arial", 10)
+        )
+        self.info_label.pack(pady=5)
+    
+    def load_latest_alert_image(self):
+        """Load and display the latest alert comparison image"""
+        try:
+            # Get comparison image paths for each alert type
+            potential_images = [
+                os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_box_comparison.jpg"),
+                os.path.join(IMAGE_COMPARISONS_DIR, "owl_on_box_comparison.jpg"),
+                os.path.join(IMAGE_COMPARISONS_DIR, "owl_in_area_comparison.jpg"),
+                os.path.join(IMAGE_COMPARISONS_DIR, "two_owls_comparison.jpg"),
+                os.path.join(IMAGE_COMPARISONS_DIR, "two_owls_in_box_comparison.jpg"),
+                os.path.join(IMAGE_COMPARISONS_DIR, "eggs_or_babies_comparison.jpg")
+            ]
+            
+            # Find the most recently modified image file
+            latest_image = None
+            latest_time = 0
+            
+            for img_path in potential_images:
+                if os.path.exists(img_path):
+                    mod_time = os.path.getmtime(img_path)
+                    if mod_time > latest_time:
+                        latest_time = mod_time
+                        latest_image = img_path
+            
+            if latest_image and os.path.exists(latest_image):
+                # Determine alert type from filename
+                alert_type = "Unknown"
+                if "owl_in_box" in latest_image:
+                    alert_type = "Owl In Box"
+                elif "owl_on_box" in latest_image:
+                    alert_type = "Owl On Box"
+                elif "owl_in_area" in latest_image:
+                    alert_type = "Owl In Area"
+                elif "two_owls_in_box" in latest_image:
+                    alert_type = "Two Owls In Box"
+                elif "two_owls" in latest_image:
+                    alert_type = "Two Owls"
+                elif "eggs_or_babies" in latest_image:
+                    alert_type = "Eggs Or Babies"
+                
+                # Format timestamp
+                timestamp = datetime.fromtimestamp(latest_time).strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Load and resize image
+                img = Image.open(latest_image)
+                img = img.resize((400, 150), Image.LANCZOS)  # Resize to fit panel
+                photo = ImageTk.PhotoImage(img)
+                
+                # Store reference to prevent garbage collection
+                self.photo_ref = photo
+                
+                # Update label
+                self.image_label.config(image=photo)
+                
+                # Update info text
+                self.info_label.config(
+                    text=f"Alert: {alert_type} | Time: {timestamp}"
+                )
+                
+                # Store path to avoid reloading the same image
+                self.last_alert_id = latest_image
+            else:
+                self.image_label.config(image="")
+                self.info_label.config(text="No recent alerts")
+                self.photo_ref = None
+            
+        except Exception as e:
+            self.logger.error(f"Error loading alert image: {e}")
+    
+    def on_new_alert(self, alert_data):
+        """Called when a new alert is generated to update the display"""
+        self.last_alert_id = None  # Force refresh
+        self.load_latest_alert_image()
+    
+    def refresh_image(self):
+        """Refresh image periodically"""
+        self.load_latest_alert_image()
+        self.after(30000, self.refresh_image)  # Schedule next refresh

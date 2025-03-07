@@ -1,12 +1,11 @@
-# File: _front_end_app.py
+# File: front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.3.0
-# - Removed status panel and all references
-# - Removed text alerts and email-to-text functionality
-# - Removed manual base image capture functionality
-# - Removed after action report functionality and Reports tab
-# - Simplified UI and reduced code complexity
+# March 6, 2025 Update - Version 1.4.0
+# - Renamed file from _front_end_app.py to front_end_app.py
+# - Added clock display in the top right corner
+# - Added base images and comparison image panels at the bottom
+# - Added Wyze camera monitoring and recovery functionality
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -17,6 +16,7 @@ import sys
 import json
 from datetime import datetime, timedelta
 import pytz
+from PIL import Image, ImageTk
 
 # Add parent directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -24,27 +24,30 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 # Import utilities and modules
-from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, VERSION, BASE_DIR
+from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, VERSION, BASE_DIR, BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, get_base_image_path
 from utilities.logging_utils import get_logger
 from utilities.alert_manager import AlertManager
 from utilities.time_utils import get_current_lighting_condition
 
 # Import GUI panels - now including all panel components
-from _front_end_panels import (
+from front_end_panels import (
     LogWindow, 
     LightingInfoPanel,
-    ControlPanel
+    ControlPanel,
+    BaseImagesPanel,
+    AlertImagePanel
 )
 
 # Import remaining components
 from motion_detection_settings import MotionDetectionSettings
+from wyze_camera_monitor import WyzeCameraMonitor
 
 class OwlApp:
     def __init__(self, root):
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("900x600+-1920+0")
+        self.root.geometry("900x750+-1920+0")  # Increased height for new panels
         self.root.update_idletasks()
         self.root.resizable(True, True)
 
@@ -73,6 +76,9 @@ class OwlApp:
         self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
         self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
         self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
+        
+        # Add clock style
+        self.style.configure('Clock.TLabel', foreground='darkblue', font=('Arial', 14, 'bold'))
 
         # Initialize managers
         self.alert_manager = AlertManager()
@@ -87,13 +93,20 @@ class OwlApp:
         )
         self.env_label.pack(side="top", pady=5)
 
-        # Add version label
+        # Create a frame for top elements (version label and clock)
+        self.top_frame = ttk.Frame(self.root)
+        self.top_frame.pack(side="top", fill="x", pady=2)
+        
+        # Add version label on the left
         self.version_label = ttk.Label(
-            self.root,
+            self.top_frame,
             text=f"Version: {VERSION}",
             font=("Arial", 8)
         )
-        self.version_label.pack(side="top", pady=2)
+        self.version_label.pack(side="left", padx=10)
+        
+        # Add clock on the right
+        self.initialize_clock()
         
         # Add lighting information panel
         self.lighting_info_panel = LightingInfoPanel(self.root)
@@ -119,6 +132,13 @@ class OwlApp:
 
         # Initialize components
         self.initialize_components()
+        
+        # Create bottom panels for image display
+        self.initialize_image_panels()
+        
+        # Initialize Wyze camera monitor
+        self.wyze_monitor = WyzeCameraMonitor()
+        self.wyze_monitor.start_monitoring()
 
         # Initialize redirector
         sys.stdout = self.LogRedirector(self)
@@ -127,6 +147,26 @@ class OwlApp:
         # Verify directories
         self.verify_directories()
         self.log_message("GUI initialized and ready", "INFO")
+
+    def initialize_clock(self):
+        """Initialize clock display in the upper right corner"""
+        self.clock_frame = ttk.Frame(self.top_frame)
+        self.clock_frame.pack(side="right", padx=10)
+        
+        self.clock_label = ttk.Label(
+            self.clock_frame,
+            style="Clock.TLabel"
+        )
+        self.clock_label.pack()
+        
+        # Start clock update
+        self.update_clock()
+
+    def update_clock(self):
+        """Update the clock display every second"""
+        current_time = datetime.now().strftime('%H:%M:%S')
+        self.clock_label.config(text=current_time)
+        self.root.after(1000, self.update_clock)  # Update every second
 
     def initialize_components(self):
         """Initialize all GUI components"""
@@ -147,7 +187,8 @@ class OwlApp:
             self.update_capture_interval,
             self.update_alert_delay,
             self.toggle_email_alerts,
-            self.log_window
+            self.log_window,
+            self.clear_saved_images
         )
         self.control_panel.pack(fill="both", expand=True)
         
@@ -163,6 +204,36 @@ class OwlApp:
         # Import test interface here to avoid circular import issues
         from test_interface import TestInterface
         self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
+
+    def initialize_image_panels(self):
+        """Initialize the base images and alert image panels at the bottom"""
+        # Create bottom panel for image display
+        self.bottom_frame = ttk.Frame(self.root)
+        self.bottom_frame.pack(side="bottom", fill="x", padx=5, pady=5)
+        
+        # Split bottom panel into left and right sides
+        self.left_frame = ttk.Frame(self.bottom_frame)
+        self.left_frame.pack(side="left", fill="both", expand=True)
+        
+        self.right_frame = ttk.Frame(self.bottom_frame)
+        self.right_frame.pack(side="right", fill="both", expand=True)
+        
+        # Load camera configurations for the base images panel
+        try:
+            config_path = os.path.join(SCRIPTS_DIR, "configs", "config.json")
+            with open(config_path, 'r') as f:
+                camera_configs = json.load(f)
+        except Exception as e:
+            self.log_message(f"Error loading camera configs: {e}", "ERROR")
+            camera_configs = {}
+        
+        # Add base images panel to left side
+        self.base_images_panel = BaseImagesPanel(self.left_frame, camera_configs)
+        self.base_images_panel.pack(fill="both", expand=True)
+        
+        # Add alert images panel to right side
+        self.alert_image_panel = AlertImagePanel(self.right_frame, self.alert_manager)
+        self.alert_image_panel.pack(fill="both", expand=True)
 
     def log_message(self, message, level="INFO"):
         """Log message to log window"""
@@ -323,7 +394,7 @@ class OwlApp:
         """Restart the entire application"""
         self.root.destroy()
         python_executable = sys.executable
-        script_path = os.path.join(SCRIPTS_DIR, "_front_end.py")
+        script_path = os.path.join(SCRIPTS_DIR, "front_end.py")  # Updated to new name
         os.execv(python_executable, [python_executable, script_path])
 
     def start_script(self):
@@ -383,3 +454,52 @@ class OwlApp:
                     self.log_message(line.strip())
         except Exception as e:
             self.log_message(f"Error reading logs: {e}", "ERROR")
+            
+    def clear_saved_images(self):
+        """Permanently delete all images in the saved_images directory"""
+        from tkinter import messagebox
+        import os
+        import shutil
+        from utilities.constants import SAVED_IMAGES_DIR
+        
+        try:
+            # Confirm action with user
+            response = messagebox.askyesno(
+                "Confirm Delete",
+                "This will PERMANENTLY DELETE all saved images.\nThis cannot be undone. Continue?",
+                icon='warning'
+            )
+            
+            if not response:
+                self.log_message("Clear saved images operation cancelled by user.")
+                return
+            
+            if not os.path.exists(SAVED_IMAGES_DIR):
+                self.log_message(f"Saved images directory not found: {SAVED_IMAGES_DIR}", "WARNING")
+                return
+            
+            # Count files before deletion
+            file_count = 0
+            for file in os.listdir(SAVED_IMAGES_DIR):
+                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
+                    file_count += 1
+            
+            if file_count == 0:
+                self.log_message("No images found to delete.")
+                messagebox.showinfo("No Images", "No saved images were found to delete.")
+                return
+            
+            # Delete all image files in the directory
+            deleted_count = 0
+            for file in os.listdir(SAVED_IMAGES_DIR):
+                file_path = os.path.join(SAVED_IMAGES_DIR, file)
+                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
+                    os.unlink(file_path)
+                    deleted_count += 1
+            
+            self.log_message(f"Successfully deleted {deleted_count} saved images.", "INFO")
+            messagebox.showinfo("Success", f"Successfully deleted {deleted_count} saved images.")
+            
+        except Exception as e:
+            self.log_message(f"Error clearing saved images: {e}", "ERROR")
+            messagebox.showerror("Error", f"Failed to clear saved images: {e}")
