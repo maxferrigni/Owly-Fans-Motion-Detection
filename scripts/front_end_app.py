@@ -495,7 +495,7 @@ class OwlApp:
                 # Update UI state
                 self.control_panel.update_run_state(True)
                 
-                # Start log monitoring
+                # Start log monitoring - SIMPLIFIED VERSION for stability
                 threading.Thread(target=self.refresh_logs, daemon=True).start()
 
             except Exception as e:
@@ -522,68 +522,42 @@ class OwlApp:
                 self.log_message(f"Error stopping script: {e}", "ERROR")
 
     def refresh_logs(self):
-        """Refresh log display with script output - improved error handling for v1.4.3"""
-        if not self.script_process or not self.script_process.stdout:
-            self.log_message("No active script process for logs", "WARNING")
-            return
-
+        """Refresh log display with script output - SIMPLIFIED from working version with minimal safety"""
         try:
-            while self.script_process and self.script_process.poll() is None:
+            # Use a local reference for thread safety
+            local_process = self.script_process
+            
+            while local_process and local_process.stdout:
                 try:
-                    # Use readline with timeout to prevent blocking
-                    line = self.script_process.stdout.readline()
-                    if not line:
-                        # Check if process is still running
-                        if self.script_process.poll() is not None:
-                            break
-                        # Small sleep to prevent CPU spinning
-                        time.sleep(0.1)
-                        continue
+                    line = local_process.stdout.readline()
+                    if not line:  # End of stream reached
+                        break
                         
                     if line.strip():
                         self.log_message(line.strip())
-                    
-                    # Periodically yield control to keep UI responsive
-                    try:
-                        self.root.update_idletasks()
-                    except tk.TclError:
-                        # Root may be destroyed
-                        break
-                        
-                except (ValueError, IOError) as e:
-                    # Process pipe issues
-                    self.log_message(f"Error reading process output: {e}", "ERROR")
+                except Exception as e:
+                    self.log_message(f"Error reading output: {e}", "ERROR")
                     break
-                        
-            # Process has ended or pipe closed
-            exit_code = self.script_process.poll() if self.script_process else None
-            self.log_message(f"Script process ended with exit code: {exit_code}", "INFO")
+                    
+            # Script has ended
+            self.log_message("Script process ended", "INFO")
             self.script_process = None
             
-            # Update UI safely
+            # Update UI state safely
             try:
-                if self.root.winfo_exists():
-                    self.control_panel.update_run_state(False)
-            except tk.TclError:
-                pass  # Root window may have been destroyed
+                self.control_panel.update_run_state(False)
+            except Exception:
+                pass  # Ignore errors during cleanup
                 
         except Exception as e:
             self.log_message(f"Error in log refresh thread: {e}", "ERROR")
-            self.logger.error(traceback.format_exc())
-            # Clean up process if error occurs
-            if self.script_process:
-                try:
-                    self.script_process.terminate()
-                except:
-                    pass
-                self.script_process = None
-                
-                # Update UI safely
-                try:
-                    if self.root.winfo_exists():
-                        self.control_panel.update_run_state(False)
-                except tk.TclError:
-                    pass  # Root window may have been destroyed
+            self.script_process = None
+            
+            # Ensure UI is updated
+            try:
+                self.control_panel.update_run_state(False)
+            except Exception:
+                pass  # Ignore errors during cleanup
     
     def clear_saved_images(self):
         """Permanently delete all images in the saved_images directory"""
