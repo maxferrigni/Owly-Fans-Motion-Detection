@@ -2,15 +2,18 @@
 # Purpose: Simple component for displaying base images and alert images
 # in the Owl Monitoring System GUI
 #
-# March 7, 2025 Update - Version 1.4.1
-# - Fixed image sizing for the bottom panel
-# - Improved layout and spacing for better display
-# - Added fixed dimensions for consistent UI appearance
+# March 7, 2025 Update - Version 1.4.3
+# - Complete redesign for improved reliability
+# - Fixed image loading and display logic
+# - Added explicit sizing constraints
+# - Improved error handling throughout
 
 import tkinter as tk
 from tkinter import ttk
 import os
 import time
+import threading
+import traceback
 from PIL import Image, ImageTk
 from datetime import datetime
 
@@ -23,117 +26,189 @@ from utilities.constants import (
     COMPARISON_IMAGE_FILENAMES
 )
 
-class ImageViewer:
+class ImageViewer(ttk.Frame):
     """
-    Simple component for displaying base images and alert images
+    Simple component for displaying base images and alert images.
+    Completely redesigned for reliability in v1.4.3.
     """
     def __init__(self, parent_frame, camera_configs):
+        # Initialize as a ttk.Frame (subclass)
+        super().__init__(parent_frame)
+        
+        # Store parameters
         self.parent_frame = parent_frame
         self.camera_configs = camera_configs
         self.logger = get_logger()
         
-        # Photo references to prevent garbage collection
-        self.photo_refs = {}
+        # Track images and references
+        self.photo_refs = {}  # Prevent garbage collection
+        self.image_paths = {
+            "day": None,
+            "night": None,
+            "transition": None,
+            "comparison": None
+        }
+        self.has_loaded = False  # Track if we've loaded images
         
-        # Create the interface
+        # Create default "no image" photo
+        self.create_no_image_photo()
+        
+        # Create the interface with fixed dimensions
         self.create_interface()
         
-        # Load images initially
-        self.load_all_images()
+        # Load images (in a separate thread to prevent blocking)
+        threading.Thread(target=self.load_all_images, daemon=True).start()
         
-        # Set up auto-refresh every 60 seconds
-        self.parent_frame.after(60000, self.refresh_images)
+        # Set up auto-refresh (less frequent to reduce resource usage)
+        self.after(30000, self.schedule_refresh)
+    
+    def create_no_image_photo(self):
+        """Create a default "No Image" display as fallback"""
+        try:
+            # Create a simple "No Image" indicator
+            no_image = Image.new('RGB', (120, 80), color=(240, 240, 240))
+            
+            # Set up basic drawing
+            from PIL import ImageDraw, ImageFont
+            draw = ImageDraw.Draw(no_image)
+            draw.rectangle([0, 0, 119, 79], outline=(200, 200, 200), width=1)
+            draw.text((30, 35), "No Image", fill=(100, 100, 100))
+            
+            # Convert to PhotoImage and store
+            self.no_image_photo = ImageTk.PhotoImage(no_image)
+        except Exception as e:
+            self.logger.error(f"Error creating no-image placeholder: {e}")
+            # If we can't create a placeholder, we'll handle this elsewhere
+            self.no_image_photo = None
     
     def create_interface(self):
-        """Create the basic interface layout with compact design"""
-        # Main container with horizontal layout
-        self.main_frame = ttk.Frame(self.parent_frame)
-        self.main_frame.pack(fill="both", expand=True, padx=2, pady=2)
-        
-        # Left side - Base images (with fixed width)
-        self.base_frame = ttk.LabelFrame(self.main_frame, text="Base Images")
-        self.base_frame.pack(side="left", fill="both", expand=True, padx=2, pady=2)
-        
-        # Image containers for base images (day, night, transition)
-        self.base_images_frame = ttk.Frame(self.base_frame)
-        self.base_images_frame.pack(fill="both", expand=True, padx=2, pady=2)
-        
-        self.base_labels = {}
-        
-        # Create smaller, more compact image containers
-        for i, condition in enumerate(["day", "night", "transition"]):
-            frame = ttk.Frame(self.base_images_frame)
-            frame.grid(row=0, column=i, padx=2, pady=2, sticky="nsew")
+        """Create the UI layout with proper sizing constraints"""
+        try:
+            # Main horizontal layout - Split into two equal sections
+            self.configure(height=175)  # Set fixed height
+
+            # Base images panel (left side)
+            self.base_panel = ttk.LabelFrame(self, text="Base Images")
+            self.base_panel.pack(side="left", fill="both", expand=True, padx=2, pady=2)
             
-            # Condition label with smaller font
-            ttk.Label(
-                frame, 
-                text=condition.capitalize(),
-                font=("Arial", 8)  # Smaller font
-            ).pack(pady=1)
+            # Comparison image panel (right side)
+            self.alert_panel = ttk.LabelFrame(self, text="Latest Alert")
+            self.alert_panel.pack(side="right", fill="both", expand=True, padx=2, pady=2)
             
-            # Image container with fixed size
-            label = ttk.Label(frame)
-            label.pack(fill="both", expand=True)
-            self.base_labels[condition] = label
-        
-        # Configure grid to distribute space evenly
-        for i in range(3):
-            self.base_images_frame.columnconfigure(i, weight=1)
-        
-        # Right side - Latest comparison image (with fixed width)
-        self.comp_frame = ttk.LabelFrame(self.main_frame, text="Latest Alert")
-        self.comp_frame.pack(side="right", fill="both", expand=True, padx=2, pady=2)
-        
-        # Single comparison image
-        self.comp_label = ttk.Label(self.comp_frame)
-        self.comp_label.pack(fill="both", expand=True)
+            # Create base image containers (3 columns for day, night, transition)
+            self.base_frame = ttk.Frame(self.base_panel)
+            self.base_frame.pack(fill="both", expand=True, padx=2, pady=2)
+            
+            # Create image labels
+            self.base_labels = {}
+            
+            # Create the three image positions with informative labels
+            for i, condition in enumerate(["day", "night", "transition"]):
+                frame = ttk.Frame(self.base_frame)
+                frame.grid(row=0, column=i, padx=2, pady=2, sticky="nsew")
+                
+                # Add condition label
+                ttk.Label(
+                    frame, 
+                    text=condition.capitalize(),
+                    font=("Arial", 8)
+                ).pack(pady=1)
+                
+                # Create label with fixed dimensions
+                label = ttk.Label(frame)
+                label.pack(padx=2, pady=2)
+                
+                # Set a default "loading" message
+                label.configure(text="Loading...", compound="center")
+                
+                # Store the label reference
+                self.base_labels[condition] = label
+            
+            # Configure base frame grid to distribute space evenly
+            for i in range(3):
+                self.base_frame.columnconfigure(i, weight=1)
+            
+            # Create comparison image container
+            self.comparison_label = ttk.Label(self.alert_panel)
+            self.comparison_label.pack(fill="both", expand=True, padx=2, pady=2)
+            self.comparison_label.configure(text="Loading...", compound="center")
+            
+            # Set initial "no image" photos if available
+            if hasattr(self, 'no_image_photo') and self.no_image_photo:
+                for condition in ["day", "night", "transition"]:
+                    self.base_labels[condition].configure(image=self.no_image_photo, text="")
+                self.comparison_label.configure(image=self.no_image_photo, text="")
+            
+        except Exception as e:
+            self.logger.error(f"Error creating image viewer interface: {e}")
+            self.logger.error(traceback.format_exc())
     
     def load_all_images(self):
-        """Load all images (base and comparison)"""
-        self.load_base_images()
-        self.load_comparison_image()
-    
-    def load_base_images(self):
-        """Load base images for all conditions with optimized sizing"""
+        """Load all images safely, with error handling for each image"""
         try:
             # Get the first camera from configs
             camera_name = next(iter(self.camera_configs)) if self.camera_configs else "Wyze Internal Camera"
             
-            # Load base images for each lighting condition
-            for condition in ["day", "night", "transition"]:
-                try:
-                    # Get the path for this condition
-                    image_path = get_base_image_path(camera_name, condition)
-                    
-                    # Check if file exists
-                    if os.path.exists(image_path):
-                        self.logger.debug(f"Loading {condition} base image: {image_path}")
-                        
-                        # Load and resize image - smaller size for compact display
-                        img = Image.open(image_path)
-                        img = img.resize((120, 80), Image.LANCZOS)
-                        photo = ImageTk.PhotoImage(img)
-                        
-                        # Store reference and update label
-                        self.photo_refs[f"base_{condition}"] = photo
-                        self.base_labels[condition].configure(image=photo)
-                    else:
-                        self.logger.debug(f"Base image not found: {image_path}")
-                        self.base_labels[condition].configure(text=f"No {condition} image")
-                except Exception as e:
-                    self.logger.error(f"Error loading {condition} base image: {e}")
-                    self.base_labels[condition].configure(text=f"Error loading")
+            # Load each type of image separately with its own error handling
+            self.load_base_image(camera_name, "day")
+            self.load_base_image(camera_name, "night")
+            self.load_base_image(camera_name, "transition")
+            self.load_comparison_image()
+            
+            # Mark that we've loaded images
+            self.has_loaded = True
+            
         except Exception as e:
-            self.logger.error(f"Error loading base images: {e}")
+            self.logger.error(f"Error in load_all_images: {e}")
+            self.logger.error(traceback.format_exc())
+    
+    def load_base_image(self, camera_name, condition):
+        """Load a single base image with robust error handling"""
+        try:
+            # Get the path for this image
+            image_path = get_base_image_path(camera_name, condition)
+            self.image_paths[condition] = image_path
+            
+            # Check if file exists
+            if not os.path.exists(image_path):
+                self.logger.warning(f"Base image not found: {image_path}")
+                # Use "No Image" placeholder
+                if hasattr(self, 'no_image_photo') and self.no_image_photo:
+                    self.update_image_display(condition, None, f"No {condition} image")
+                return
+            
+            # Try to load and resize the image
+            try:
+                # Load image
+                img = Image.open(image_path).convert("RGB")
+                
+                # Resize to small dimensions for the panel
+                img = img.resize((120, 80), Image.LANCZOS)
+                
+                # Convert to PhotoImage and store reference
+                photo = ImageTk.PhotoImage(img)
+                self.photo_refs[f"base_{condition}"] = photo
+                
+                # Update the label safely on the main thread
+                self.after_idle(lambda: self.update_image_display(condition, photo))
+                
+            except Exception as img_error:
+                self.logger.error(f"Error loading {condition} image: {img_error}")
+                # Use fallback image
+                if hasattr(self, 'no_image_photo') and self.no_image_photo:
+                    self.update_image_display(condition, None, f"Error: {condition}")
+            
+        except Exception as e:
+            self.logger.error(f"Error in load_base_image({condition}): {e}")
     
     def load_comparison_image(self):
-        """Load the latest comparison/alert image with optimized sizing"""
+        """Load the latest comparison/alert image with error handling"""
         try:
             # Find the most recent comparison image
             latest_file = None
             latest_time = 0
             
+            # Check each comparison image type
             for filename in COMPARISON_IMAGE_FILENAMES.values():
                 file_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
                 if os.path.exists(file_path):
@@ -142,55 +217,168 @@ class ImageViewer:
                         latest_time = mod_time
                         latest_file = file_path
             
+            # Update stored path
+            self.image_paths["comparison"] = latest_file
+            
             # If we found a file, load it
             if latest_file and os.path.exists(latest_file):
-                self.logger.debug(f"Loading comparison image: {latest_file}")
-                
-                # Load and resize the image
-                img = Image.open(latest_file)
-                
-                # Get available width - restrict to reasonable size for the panel
-                available_width = 250  # Fixed reasonable width
-                
-                # Calculate new dimensions keeping aspect ratio
-                width, height = img.size
-                new_width = min(available_width, width)
-                new_height = int(height * (new_width / width))
-                
-                # Cap height to avoid oversized images
-                if new_height > 150:
-                    new_height = 150
-                    new_width = int(width * (new_height / height))
-                
-                # Resize and display
-                img_resized = img.resize((new_width, new_height), Image.LANCZOS)
-                photo = ImageTk.PhotoImage(img_resized)
-                
-                # Store reference and update label
-                self.photo_refs["comparison"] = photo
-                self.comp_label.configure(image=photo)
+                try:
+                    # Load and resize the image
+                    img = Image.open(latest_file).convert("RGB")
+                    
+                    # Get available width - restrict to reasonable size
+                    img_width, img_height = img.size
+                    
+                    # Calculate new dimensions keeping aspect ratio
+                    # Height is more constrained in our layout
+                    max_height = 130  # Maximum height for the panel
+                    scale_factor = max_height / img_height
+                    new_width = int(img_width * scale_factor)
+                    new_height = max_height
+                    
+                    # Resize the image
+                    img_resized = img.resize((new_width, new_height), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(img_resized)
+                    
+                    # Store reference and update label safely on main thread
+                    self.photo_refs["comparison"] = photo
+                    self.after_idle(lambda: self.update_comparison_display(photo))
+                    
+                except Exception as img_error:
+                    self.logger.error(f"Error loading comparison image: {img_error}")
+                    # Use fallback image
+                    if hasattr(self, 'no_image_photo') and self.no_image_photo:
+                        self.update_comparison_display(None, "Error loading")
             else:
                 self.logger.debug("No comparison images found")
-                self.comp_label.configure(text="No alert images found")
+                # Use fallback image
+                if hasattr(self, 'no_image_photo') and self.no_image_photo:
+                    self.update_comparison_display(None, "No alert images")
+                
         except Exception as e:
-            self.logger.error(f"Error loading comparison image: {e}")
-            self.comp_label.configure(text="Error loading alert image")
+            self.logger.error(f"Error in load_comparison_image: {e}")
+    
+    def update_image_display(self, condition, photo, text=None):
+        """Update a single base image display safely"""
+        try:
+            if condition in self.base_labels:
+                label = self.base_labels[condition]
+                
+                if photo:
+                    label.configure(image=photo, text="", compound="image")
+                elif text:
+                    # If no photo but we have text, display text
+                    if hasattr(self, 'no_image_photo') and self.no_image_photo:
+                        label.configure(image=self.no_image_photo, text=text, compound="center")
+                    else:
+                        label.configure(image="", text=text)
+        except Exception as e:
+            self.logger.error(f"Error updating {condition} image display: {e}")
+    
+    def update_comparison_display(self, photo, text=None):
+        """Update the comparison image display safely"""
+        try:
+            if photo:
+                self.comparison_label.configure(image=photo, text="", compound="image")
+            elif text:
+                # If no photo but we have text, display text
+                if hasattr(self, 'no_image_photo') and self.no_image_photo:
+                    self.comparison_label.configure(image=self.no_image_photo, text=text, compound="center")
+                else:
+                    self.comparison_label.configure(image="", text=text)
+        except Exception as e:
+            self.logger.error(f"Error updating comparison display: {e}")
+    
+    def schedule_refresh(self):
+        """Schedule a refresh with better error handling"""
+        try:
+            # Only refresh if we've successfully loaded images before
+            if self.has_loaded:
+                # Use a separate thread for image loading to prevent UI freezing
+                threading.Thread(target=self.refresh_images, daemon=True).start()
+            else:
+                # Try initial load if we haven't loaded successfully yet
+                threading.Thread(target=self.load_all_images, daemon=True).start()
+            
+            # Schedule next refresh (every 30 seconds is sufficient)
+            self.after(30000, self.schedule_refresh)
+            
+        except Exception as e:
+            self.logger.error(f"Error scheduling refresh: {e}")
+            # Still try to reschedule
+            self.after(60000, self.schedule_refresh)  # Try again in a minute
     
     def refresh_images(self):
-        """Refresh all images"""
+        """Refresh all images with checks for changes"""
         try:
-            self.load_all_images()
+            # Get the first camera from configs
+            camera_name = next(iter(self.camera_configs)) if self.camera_configs else "Wyze Internal Camera"
+            
+            # Check each image for changes
+            self.check_and_reload_image(camera_name, "day")
+            self.check_and_reload_image(camera_name, "night")
+            self.check_and_reload_image(camera_name, "transition")
+            self.check_and_reload_comparison()
+            
         except Exception as e:
             self.logger.error(f"Error refreshing images: {e}")
-        
-        # Schedule next refresh
-        self.parent_frame.after(60000, self.refresh_images)
+    
+    def check_and_reload_image(self, camera_name, condition):
+        """Check if an image has changed and reload if needed"""
+        try:
+            # Get path for the base image
+            image_path = get_base_image_path(camera_name, condition)
+            
+            # Check if file exists
+            if not os.path.exists(image_path):
+                return
+                
+            # Check if path has changed or file was modified
+            if (self.image_paths[condition] != image_path or
+                (self.image_paths[condition] and 
+                 os.path.getmtime(image_path) > os.path.getmtime(self.image_paths[condition]))):
+                # Image has changed, reload it
+                self.load_base_image(camera_name, condition)
+                
+        except Exception as e:
+            self.logger.error(f"Error checking {condition} image for changes: {e}")
+    
+    def check_and_reload_comparison(self):
+        """Check if comparison image has changed and reload if needed"""
+        try:
+            # Find the most recent comparison image
+            latest_file = None
+            latest_time = 0
+            
+            # Check each comparison image type
+            for filename in COMPARISON_IMAGE_FILENAMES.values():
+                file_path = os.path.join(IMAGE_COMPARISONS_DIR, filename)
+                if os.path.exists(file_path):
+                    mod_time = os.path.getmtime(file_path)
+                    if mod_time > latest_time:
+                        latest_time = mod_time
+                        latest_file = file_path
+            
+            # If no comparison images found
+            if not latest_file:
+                return
+                
+            # Check if path has changed or file was modified
+            current_path = self.image_paths["comparison"]
+            if (current_path != latest_file or
+                (current_path and latest_file and 
+                 os.path.getmtime(latest_file) > os.path.getmtime(current_path))):
+                # Comparison image has changed, reload it
+                self.load_comparison_image()
+                
+        except Exception as e:
+            self.logger.error(f"Error checking comparison image for changes: {e}")
 
 # For testing the component directly
 if __name__ == "__main__":
     root = tk.Tk()
     root.title("Image Viewer Test")
-    root.geometry("800x200")  # Reduced height to match intended panel size
+    root.geometry("800x200")
     
     # Sample configs
     sample_configs = {
@@ -205,5 +393,6 @@ if __name__ == "__main__":
     
     # Create viewer
     viewer = ImageViewer(frame, sample_configs)
+    viewer.pack(fill="both", expand=True)
     
     root.mainloop()

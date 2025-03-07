@@ -1,11 +1,11 @@
 # File: front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 7, 2025 Update - Version 1.4.1
-# - Fixed bottom image panel sizing and display
-# - Improved window sizing and prevented resizing
-# - Optimized UI elements for space efficiency
-# - Fixed main container layout
+# March 7, 2025 Update - Version 1.4.3
+# - Fixed application crash on startup issues
+# - Completely rewrote image panel initialization
+# - Adjusted window sizing for better display
+# - Improved error handling throughout initialization
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -17,6 +17,7 @@ import json
 from datetime import datetime, timedelta
 import pytz
 from PIL import Image, ImageTk
+import traceback
 
 # Add parent directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -30,7 +31,7 @@ from utilities.alert_manager import AlertManager
 from utilities.time_utils import get_current_lighting_condition
 from utilities.configs_loader import load_camera_config  # Import the config loader
 
-# Import GUI panels - now including all panel components
+# Import GUI panels
 from front_end_panels import (
     LogWindow, 
     LightingInfoPanel,
@@ -46,203 +47,261 @@ from wyze_camera_monitor import WyzeCameraMonitor
 
 class OwlApp:
     def __init__(self, root):
-        # Initialize window
-        self.root = root
-        self.root.title("Owl Monitoring App")
-        self.root.geometry("900x650+-1920+0")  # Reduced height for better fit
-        self.root.minsize(900, 650)  # Set minimum size
-        # self.root.maxsize(900, 650)  # Remove maximum size limit
-        self.root.update_idletasks()
-        self.root.resizable(True, True)  # Enable resizing
-
-        # Initialize variables
-        self.script_process = None
-        self.local_saving_enabled = tk.BooleanVar(value=True)
-        self.capture_interval = tk.IntVar(value=60)  # Default to 60 seconds
-        self.alert_delay = tk.IntVar(value=30)      # Default to 30 minutes
-        
-        # Add alert toggle variables - simplified to only email alerts
-        self.email_alerts_enabled = tk.BooleanVar(value=True)
-        
-        # Initialize lighting condition
-        self.current_lighting_condition = get_current_lighting_condition()
-        self.in_transition = self.current_lighting_condition == 'transition'
-        
-        self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
-
-        # Set style for more immediate button rendering
-        self.style = ttk.Style()
-        self.style.configure('TButton', font=('Arial', 10))
-        self.style.configure('TFrame', padding=2)
-        self.style.configure('TLabelframe', padding=3)
-        
-        # Add custom styles for lighting indicators
-        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
-        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
-        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
-        
-        # Add clock style
-        self.style.configure('Clock.TLabel', foreground='darkblue', font=('Arial', 14, 'bold'))
-
-        # Initialize managers
-        self.alert_manager = AlertManager()
+        # Initialize logger immediately
         self.logger = get_logger()
-
-        # Add environment and version labels
-        self.env_label = ttk.Label(
-            self.root,
-            text="DEV ENVIRONMENT" if "Dev" in BASE_DIR else "PRODUCTION",
-            font=("Arial", 12, "bold"),
-            foreground="red" if "Dev" in BASE_DIR else "green"
-        )
-        self.env_label.pack(side="top", pady=5)
-
-        # Create a frame for top elements (version label and clock)
-        self.top_frame = ttk.Frame(self.root)
-        self.top_frame.pack(side="top", fill="x", pady=2)
+        self.logger.info("Starting Owl Monitoring App initialization...")
         
-        # Add version label on the left
-        self.version_label = ttk.Label(
-            self.top_frame,
-            text=f"Version: {VERSION}",
-            font=("Arial", 8)
-        )
-        self.version_label.pack(side="left", padx=10)
-        
-        # Add clock on the right
-        self.initialize_clock()
-        
-        # Add lighting information panel
-        self.lighting_info_panel = LightingInfoPanel(self.root)
-        self.lighting_info_panel.pack(side="top", pady=3, fill="x")
+        try:
+            # Initialize window
+            self.root = root
+            self.root.title("Owl Monitoring App")
+            self.root.geometry("900x650+-1920+0")  # Adjusted height for better fit
+            self.root.minsize(900, 650)  # Set minimum size
+            self.root.update_idletasks()
+            self.root.resizable(True, True)  # Enable resizing
 
-        # Create main container with definite size
-        self.main_container = ttk.Frame(self.root)
-        self.main_container.pack(fill="both", expand=True, padx=3, pady=3)
+            # Initialize variables
+            self.script_process = None
+            self.local_saving_enabled = tk.BooleanVar(value=True)
+            self.capture_interval = tk.IntVar(value=60)  # Default to 60 seconds
+            self.alert_delay = tk.IntVar(value=30)      # Default to 30 minutes
+            
+            # Add alert toggle variables - simplified to only email alerts
+            self.email_alerts_enabled = tk.BooleanVar(value=True)
+            
+            # Initialize lighting condition
+            self.current_lighting_condition = get_current_lighting_condition()
+            self.in_transition = self.current_lighting_condition == 'transition'
+            
+            self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
-        # Create main notebook for tab-based layout
-        self.notebook = ttk.Notebook(self.main_container)
-        self.notebook.pack(fill="both", expand=True)
+            # Set style for more immediate button rendering
+            self.style = ttk.Style()
+            self.style.configure('TButton', font=('Arial', 10))
+            self.style.configure('TFrame', padding=2)
+            self.style.configure('TLabelframe', padding=3)
+            
+            # Add custom styles for lighting indicators
+            self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
+            self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
+            self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
+            
+            # Add clock style
+            self.style.configure('Clock.TLabel', foreground='darkblue', font=('Arial', 14, 'bold'))
 
-        # Create tabs
-        self.control_tab = ttk.Frame(self.notebook)
-        self.settings_tab = ttk.Frame(self.notebook)
-        self.test_tab = ttk.Frame(self.notebook)
+            # Initialize managers
+            self.alert_manager = AlertManager()
+            
+            # Create UI structure from top to bottom
+            self.create_ui_structure()
+            
+            # Initialize redirector
+            sys.stdout = self.LogRedirector(self)
+            sys.stderr = self.LogRedirector(self)
 
-        # Add tabs to notebook
-        self.notebook.add(self.control_tab, text="Control")
-        self.notebook.add(self.settings_tab, text="Settings")
-        self.notebook.add(self.test_tab, text="Test")
+            # Verify directories
+            self.verify_directories()
+            self.log_message("GUI initialized and ready", "INFO")
+            
+        except Exception as e:
+            # Critical error handling - show error and log it
+            error_msg = f"Critical error during initialization: {str(e)}\n\n{traceback.format_exc()}"
+            self.logger.error(error_msg)
+            messagebox.showerror("Initialization Error", f"Error initializing application:\n{str(e)}")
+            
+    def create_ui_structure(self):
+        """Create the entire UI structure in the correct order"""
+        try:
+            # Add environment and version labels
+            self.env_label = ttk.Label(
+                self.root,
+                text="DEV ENVIRONMENT" if "Dev" in BASE_DIR else "PRODUCTION",
+                font=("Arial", 12, "bold"),
+                foreground="red" if "Dev" in BASE_DIR else "green"
+            )
+            self.env_label.pack(side="top", pady=5)
 
-        # Initialize components
-        self.initialize_components()
-        
-        # Create bottom panels for image display
-        self.initialize_image_panels()
-        
-        # Initialize Wyze camera monitor
-        self.wyze_monitor = WyzeCameraMonitor()
-        self.wyze_monitor.start_monitoring()
+            # Create a frame for top elements (version label and clock)
+            self.top_frame = ttk.Frame(self.root)
+            self.top_frame.pack(side="top", fill="x", pady=2)
+            
+            # Add version label on the left
+            self.version_label = ttk.Label(
+                self.top_frame,
+                text=f"Version: {VERSION}",
+                font=("Arial", 8)
+            )
+            self.version_label.pack(side="left", padx=10)
+            
+            # Add clock on the right
+            self.initialize_clock()
+            
+            # Add lighting information panel
+            self.lighting_info_panel = LightingInfoPanel(self.root)
+            self.lighting_info_panel.pack(side="top", pady=3, fill="x")
 
-        # Initialize redirector
-        sys.stdout = self.LogRedirector(self)
-        sys.stderr = self.LogRedirector(self)
+            # Create main container for center content
+            self.main_container = ttk.Frame(self.root)
+            self.main_container.pack(fill="both", expand=True, padx=3, pady=3)
 
-        # Verify directories
-        self.verify_directories()
-        self.log_message("GUI initialized and ready", "INFO")
+            # Create main notebook for tab-based layout
+            self.notebook = ttk.Notebook(self.main_container)
+            self.notebook.pack(fill="both", expand=True)
+
+            # Create tabs
+            self.control_tab = ttk.Frame(self.notebook)
+            self.settings_tab = ttk.Frame(self.notebook)
+            self.test_tab = ttk.Frame(self.notebook)
+
+            # Add tabs to notebook
+            self.notebook.add(self.control_tab, text="Control")
+            self.notebook.add(self.settings_tab, text="Settings")
+            self.notebook.add(self.test_tab, text="Test")
+
+            # Initialize components
+            self.initialize_components()
+            
+            # Create bottom panel for images AFTER main components
+            self.initialize_image_panels()
+            
+            # Initialize Wyze camera monitor LAST (after all UI is ready)
+            self.wyze_monitor = WyzeCameraMonitor()
+            self.wyze_monitor.start_monitoring()
+            
+        except Exception as e:
+            self.log_message(f"Error creating UI structure: {e}", "ERROR")
+            # Show detailed traceback in logs
+            self.logger.error(traceback.format_exc())
+            raise
 
     def initialize_clock(self):
         """Initialize clock display in the upper right corner"""
-        self.clock_frame = ttk.Frame(self.top_frame)
-        self.clock_frame.pack(side="right", padx=10)
-        
-        self.clock_label = ttk.Label(
-            self.clock_frame,
-            style="Clock.TLabel"
-        )
-        self.clock_label.pack()
-        
-        # Start clock update
-        self.update_clock()
+        try:
+            self.clock_frame = ttk.Frame(self.top_frame)
+            self.clock_frame.pack(side="right", padx=10)
+            
+            self.clock_label = ttk.Label(
+                self.clock_frame,
+                style="Clock.TLabel"
+            )
+            self.clock_label.pack()
+            
+            # Start clock update
+            self.update_clock()
+        except Exception as e:
+            self.log_message(f"Error initializing clock: {e}", "ERROR")
 
     def update_clock(self):
         """Update the clock display every second"""
-        current_time = datetime.now().strftime('%H:%M:%S')
-        self.clock_label.config(text=current_time)
-        self.root.after(1000, self.update_clock)  # Update every second
+        try:
+            current_time = datetime.now().strftime('%H:%M:%S')
+            self.clock_label.config(text=current_time)
+            self.root.after(1000, self.update_clock)  # Update every second
+        except Exception as e:
+            self.log_message(f"Error updating clock: {e}", "ERROR")
 
     def initialize_components(self):
         """Initialize all GUI components"""
-        # Initialize log window
-        self.log_window = LogWindow(self.root)
-        
-        # Create control panel - Now uses the panel class with simplified parameters
-        self.control_panel = ControlPanel(
-            self.control_tab,
-            self.local_saving_enabled,
-            self.capture_interval,
-            self.alert_delay,
-            self.email_alerts_enabled,
-            self.update_system,
-            self.start_script,
-            self.stop_script,
-            self.toggle_local_saving,
-            self.update_capture_interval,
-            self.update_alert_delay,
-            self.toggle_email_alerts,
-            self.log_window,
-            self.clear_saved_images
-        )
-        self.control_panel.pack(fill="both", expand=True)
-        
-        # Create motion detection settings in settings tab
-        settings_scroll = ttk.Frame(self.settings_tab)
-        settings_scroll.pack(fill="both", expand=True)
-        self.settings = MotionDetectionSettings(settings_scroll, self.logger)
-        
-        # Create test interface in test tab
-        test_scroll = ttk.Frame(self.test_tab)
-        test_scroll.pack(fill="both", expand=True)
-        
-        # Import test interface here to avoid circular import issues
-        from test_interface import TestInterface
-        self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
+        try:
+            # Initialize log window
+            self.log_window = LogWindow(self.root)
+            
+            # Create control panel - Now uses the panel class with simplified parameters
+            self.control_panel = ControlPanel(
+                self.control_tab,
+                self.local_saving_enabled,
+                self.capture_interval,
+                self.alert_delay,
+                self.email_alerts_enabled,
+                self.update_system,
+                self.start_script,
+                self.stop_script,
+                self.toggle_local_saving,
+                self.update_capture_interval,
+                self.update_alert_delay,
+                self.toggle_email_alerts,
+                self.log_window,
+                self.clear_saved_images
+            )
+            self.control_panel.pack(fill="both", expand=True)
+            
+            # Create motion detection settings in settings tab
+            settings_scroll = ttk.Frame(self.settings_tab)
+            settings_scroll.pack(fill="both", expand=True)
+            self.settings = MotionDetectionSettings(settings_scroll, self.logger)
+            
+            # Create test interface in test tab
+            test_scroll = ttk.Frame(self.test_tab)
+            test_scroll.pack(fill="both", expand=True)
+            
+            # Import test interface here to avoid circular import issues
+            from test_interface import TestInterface
+            self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
+        except Exception as e:
+            self.log_message(f"Error initializing components: {e}", "ERROR")
+            # Show detailed traceback in logs
+            self.logger.error(traceback.format_exc())
+            raise
 
     def initialize_image_panels(self):
-        """Initialize the image viewer panel at the bottom"""
-        # Create bottom panel for image display with fixed height
-        self.bottom_frame = ttk.Frame(self.root)
-        self.bottom_frame.pack(side="bottom", fill="x", padx=5, pady=5)
-        
-        # Set fixed height for bottom frame and prevent resizing
-        self.bottom_frame.configure(height=200)
-        self.bottom_frame.pack_propagate(False)  # Prevent size propagation
-        
-        # Load camera configurations
+        """Initialize the image viewer panel at the bottom - completely rewritten for v1.4.3"""
         try:
-            # Use the config loader that the rest of the application uses
-            camera_configs = load_camera_config()
-            if not camera_configs:
-                self.log_message("No camera configs found, using empty configuration", "WARNING")
+            # Create a fixed-height frame at the bottom of root
+            self.bottom_frame = ttk.Frame(self.root)
+            self.bottom_frame.pack(side="bottom", fill="x", padx=2, pady=2)
+            
+            # Set explicit height and prevent propagation of child sizes
+            self.bottom_frame.configure(height=180)
+            self.bottom_frame.pack_propagate(False)
+            
+            # Load camera configurations with robust error handling
+            try:
+                camera_configs = load_camera_config()
+                if not camera_configs:
+                    self.log_message("No camera configs found, using empty configuration", "WARNING")
+                    camera_configs = {}
+            except Exception as e:
+                self.log_message(f"Error loading camera configs: {e}", "ERROR")
                 camera_configs = {}
+            
+            # Create a separator line above the image panel
+            ttk.Separator(self.root, orient="horizontal").pack(fill="x", pady=2, before=self.bottom_frame)
+            
+            # Create the image viewer with explicit sizing
+            try:
+                self.image_viewer = ImageViewer(self.bottom_frame, camera_configs)
+                self.image_viewer.pack(fill="both", expand=True)
+                self.log_message("Image viewer initialized successfully", "INFO")
+            except Exception as e:
+                self.log_message(f"Error initializing image viewer: {e}", "ERROR")
+                self.logger.error(traceback.format_exc())
+                # Create a label instead of the image viewer as a fallback
+                ttk.Label(
+                    self.bottom_frame, 
+                    text=f"Could not initialize image viewer: {str(e)}",
+                    foreground="red"
+                ).pack(fill="both", expand=True)
         except Exception as e:
-            self.log_message(f"Error loading camera configs: {e}", "ERROR")
-            camera_configs = {}
-        
-        # Create the image viewer component
-        try:
-            self.image_viewer = ImageViewer(self.bottom_frame, camera_configs)
-            self.log_message("Image viewer initialized successfully", "INFO")
-        except Exception as e:
-            self.log_message(f"Error initializing image viewer: {e}", "ERROR")
+            self.log_message(f"Error creating image panels: {e}", "ERROR")
+            self.logger.error(traceback.format_exc())
 
     def log_message(self, message, level="INFO"):
-        """Log message to log window"""
+        """Log message to log window with robust error handling"""
         try:
-            self.log_window.log_message(message, level)
+            if hasattr(self, 'log_window') and self.log_window:
+                self.log_window.log_message(message, level)
+            else:
+                # Fall back to logger if log window isn't ready
+                if level == "ERROR":
+                    self.logger.error(message)
+                elif level == "WARNING":
+                    self.logger.warning(message)
+                else:
+                    self.logger.info(message)
         except Exception as e:
+            # Last resort: print to console
             print(f"Error logging message: {e}")
+            print(f"[{level}] {message}")
 
     def verify_directories(self):
         """Verify all required directories exist"""
@@ -256,27 +315,33 @@ class OwlApp:
 
     def toggle_local_saving(self):
         """Handle local saving toggle"""
-        is_enabled = self.local_saving_enabled.get()
-        self.log_message(f"Local image saving {'enabled' if is_enabled else 'disabled'}")
-        
-        # Set environment variable for child processes
-        os.environ['OWL_LOCAL_SAVING'] = str(is_enabled)
+        try:
+            is_enabled = self.local_saving_enabled.get()
+            self.log_message(f"Local image saving {'enabled' if is_enabled else 'disabled'}")
+            
+            # Set environment variable for child processes
+            os.environ['OWL_LOCAL_SAVING'] = str(is_enabled)
 
-        if is_enabled:
-            try:
-                ensure_directories_exist()
-            except Exception as e:
-                self.log_message(f"Error creating local directories: {e}", "ERROR")
-                messagebox.showerror("Error", f"Failed to create local directories: {e}")
-                self.local_saving_enabled.set(False)
+            if is_enabled:
+                try:
+                    ensure_directories_exist()
+                except Exception as e:
+                    self.log_message(f"Error creating local directories: {e}", "ERROR")
+                    messagebox.showerror("Error", f"Failed to create local directories: {e}")
+                    self.local_saving_enabled.set(False)
+        except Exception as e:
+            self.log_message(f"Error toggling local saving: {e}", "ERROR")
 
     def toggle_email_alerts(self):
         """Handle email alerts toggle"""
-        is_enabled = self.email_alerts_enabled.get()
-        self.log_message(f"Email alerts {'enabled' if is_enabled else 'disabled'}")
-        
-        # Set environment variable for child processes
-        os.environ['OWL_EMAIL_ALERTS'] = str(is_enabled)
+        try:
+            is_enabled = self.email_alerts_enabled.get()
+            self.log_message(f"Email alerts {'enabled' if is_enabled else 'disabled'}")
+            
+            # Set environment variable for child processes
+            os.environ['OWL_EMAIL_ALERTS'] = str(is_enabled)
+        except Exception as e:
+            self.log_message(f"Error toggling email alerts: {e}", "ERROR")
 
     def update_capture_interval(self, *args):
         """Handle changes to the capture interval"""
@@ -396,7 +461,7 @@ class OwlApp:
         """Restart the entire application"""
         self.root.destroy()
         python_executable = sys.executable
-        script_path = os.path.join(SCRIPTS_DIR, "front_end.py")  # Updated to new name
+        script_path = os.path.join(SCRIPTS_DIR, "front_end.py")
         os.execv(python_executable, [python_executable, script_path])
 
     def start_script(self):
@@ -441,41 +506,84 @@ class OwlApp:
             self.log_message("Stopping motion detection script...")
             try:
                 self.script_process.terminate()
-                self.script_process.wait(timeout=5)
+                # Give it 5 seconds to terminate gracefully
+                try:
+                    self.script_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # If it doesn't terminate, force kill it
+                    self.log_message("Script did not terminate gracefully, forcing kill", "WARNING")
+                    self.script_process.kill()
+                    self.script_process.wait(timeout=2)
+                
                 self.script_process = None
                 self.control_panel.update_run_state(False)
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}", "ERROR")
 
-def refresh_logs(self):
-    """Refresh log display with script output"""
-    try:
-        while self.script_process and self.script_process.stdout:
-            line = self.script_process.stdout.readline()
-            if not line:  # Process has ended
-                self.log_message("Script process ended", "INFO")
-                self.script_process = None
-                self.control_panel.update_run_state(False)
-                break
-                
-            if line.strip():
-                self.log_message(line.strip())
-                # Force GUI to update immediately
-                self.root.update_idletasks()
-            
-            # Yield control to GUI briefly to keep UI responsive
-            self.root.update()
-    except Exception as e:
-        self.log_message(f"Error reading logs: {e}", "ERROR")
-        # Clean up process if error occurs
-        if self.script_process:
-            try:
-                self.script_process.terminate()
-            except:
-                pass
+    def refresh_logs(self):
+        """Refresh log display with script output - improved error handling for v1.4.3"""
+        if not self.script_process or not self.script_process.stdout:
+            self.log_message("No active script process for logs", "WARNING")
+            return
+
+        try:
+            while self.script_process and self.script_process.poll() is None:
+                try:
+                    # Use readline with timeout to prevent blocking
+                    line = self.script_process.stdout.readline()
+                    if not line:
+                        # Check if process is still running
+                        if self.script_process.poll() is not None:
+                            break
+                        # Small sleep to prevent CPU spinning
+                        time.sleep(0.1)
+                        continue
+                        
+                    if line.strip():
+                        self.log_message(line.strip())
+                    
+                    # Periodically yield control to keep UI responsive
+                    try:
+                        self.root.update_idletasks()
+                    except tk.TclError:
+                        # Root may be destroyed
+                        break
+                        
+                except (ValueError, IOError) as e:
+                    # Process pipe issues
+                    self.log_message(f"Error reading process output: {e}", "ERROR")
+                    break
+                        
+            # Process has ended or pipe closed
+            exit_code = self.script_process.poll() if self.script_process else None
+            self.log_message(f"Script process ended with exit code: {exit_code}", "INFO")
             self.script_process = None
-            self.control_panel.update_run_state(False)
             
+            # Update UI safely
+            try:
+                if self.root.winfo_exists():
+                    self.control_panel.update_run_state(False)
+            except tk.TclError:
+                pass  # Root window may have been destroyed
+                
+        except Exception as e:
+            self.log_message(f"Error in log refresh thread: {e}", "ERROR")
+            self.logger.error(traceback.format_exc())
+            # Clean up process if error occurs
+            if self.script_process:
+                try:
+                    self.script_process.terminate()
+                except:
+                    pass
+                self.script_process = None
+                
+                # Update UI safely
+                try:
+                    if self.root.winfo_exists():
+                        self.control_panel.update_run_state(False)
+                except tk.TclError:
+                    pass  # Root window may have been destroyed
+    
     def clear_saved_images(self):
         """Permanently delete all images in the saved_images directory"""
         from tkinter import messagebox
