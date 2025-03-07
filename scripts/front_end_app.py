@@ -34,10 +34,11 @@ from utilities.configs_loader import load_camera_config  # Import the config loa
 from front_end_panels import (
     LogWindow, 
     LightingInfoPanel,
-    ControlPanel,
-    BaseImagesPanel,
-    AlertImagePanel
+    ControlPanel
 )
+
+# Import image viewer
+from front_end_image_viewer import ImageViewer
 
 # Import remaining components
 from motion_detection_settings import MotionDetectionSettings
@@ -207,21 +208,14 @@ class OwlApp:
         self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
 
     def initialize_image_panels(self):
-        """Initialize the base images and alert image panels at the bottom"""
+        """Initialize the image viewer panel at the bottom"""
         # Create bottom panel for image display
         self.bottom_frame = ttk.Frame(self.root)
         self.bottom_frame.pack(side="bottom", fill="x", padx=5, pady=5)
         
-        # Split bottom panel into left and right sides
-        self.left_frame = ttk.Frame(self.bottom_frame)
-        self.left_frame.pack(side="left", fill="both", expand=True)
-        
-        self.right_frame = ttk.Frame(self.bottom_frame)
-        self.right_frame.pack(side="right", fill="both", expand=True)
-        
-        # Load camera configurations for the base images panel
+        # Load camera configurations
         try:
-            # Use the same config loader that the rest of the application uses
+            # Use the config loader that the rest of the application uses
             camera_configs = load_camera_config()
             if not camera_configs:
                 self.log_message("No camera configs found, using empty configuration", "WARNING")
@@ -230,13 +224,12 @@ class OwlApp:
             self.log_message(f"Error loading camera configs: {e}", "ERROR")
             camera_configs = {}
         
-        # Add base images panel to left side
-        self.base_images_panel = BaseImagesPanel(self.left_frame, camera_configs)
-        self.base_images_panel.pack(fill="both", expand=True)
-        
-        # Add alert images panel to right side
-        self.alert_image_panel = AlertImagePanel(self.right_frame, self.alert_manager)
-        self.alert_image_panel.pack(fill="both", expand=True)
+        # Create the image viewer component
+        try:
+            self.image_viewer = ImageViewer(self.bottom_frame, camera_configs)
+            self.log_message("Image viewer initialized successfully", "INFO")
+        except Exception as e:
+            self.log_message(f"Error initializing image viewer: {e}", "ERROR")
 
     def log_message(self, message, level="INFO"):
         """Log message to log window"""
