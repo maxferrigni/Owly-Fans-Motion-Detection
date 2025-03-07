@@ -51,9 +51,9 @@ class OwlApp:
         self.root.title("Owl Monitoring App")
         self.root.geometry("900x650+-1920+0")  # Reduced height for better fit
         self.root.minsize(900, 650)  # Set minimum size
-        self.root.maxsize(900, 650)  # Set maximum size
+        # self.root.maxsize(900, 650)  # Remove maximum size limit
         self.root.update_idletasks()
-        self.root.resizable(False, False)  # Disable resizing
+        self.root.resizable(True, True)  # Enable resizing
 
         # Initialize variables
         self.script_process = None
@@ -447,15 +447,34 @@ class OwlApp:
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}", "ERROR")
 
-    def refresh_logs(self):
-        """Refresh log display with script output"""
-        try:
-            while self.script_process and self.script_process.stdout:
-                line = self.script_process.stdout.readline()
-                if line.strip():
-                    self.log_message(line.strip())
-        except Exception as e:
-            self.log_message(f"Error reading logs: {e}", "ERROR")
+def refresh_logs(self):
+    """Refresh log display with script output"""
+    try:
+        while self.script_process and self.script_process.stdout:
+            line = self.script_process.stdout.readline()
+            if not line:  # Process has ended
+                self.log_message("Script process ended", "INFO")
+                self.script_process = None
+                self.control_panel.update_run_state(False)
+                break
+                
+            if line.strip():
+                self.log_message(line.strip())
+                # Force GUI to update immediately
+                self.root.update_idletasks()
+            
+            # Yield control to GUI briefly to keep UI responsive
+            self.root.update()
+    except Exception as e:
+        self.log_message(f"Error reading logs: {e}", "ERROR")
+        # Clean up process if error occurs
+        if self.script_process:
+            try:
+                self.script_process.terminate()
+            except:
+                pass
+            self.script_process = None
+            self.control_panel.update_run_state(False)
             
     def clear_saved_images(self):
         """Permanently delete all images in the saved_images directory"""
