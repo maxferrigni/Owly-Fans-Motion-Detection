@@ -49,6 +49,7 @@ class ImageViewer(ttk.Frame):
             "comparison": None
         }
         self.has_loaded = False  # Track if we've loaded images
+        self.running = True
         
         # Create default "no image" photo
         self.create_no_image_photo()
@@ -56,11 +57,13 @@ class ImageViewer(ttk.Frame):
         # Create the interface with fixed dimensions
         self.create_interface()
         
-        # Load images (in a separate thread to prevent blocking)
-        threading.Thread(target=self.load_all_images, daemon=True).start()
+        # Load images in a separate thread with proper timeout
+        self.load_thread = threading.Thread(target=self.load_all_images, daemon=True)
+        self.load_thread.start()
         
-        # Set up auto-refresh (less frequent to reduce resource usage)
-        self.after(30000, self.schedule_refresh)
+        # Rather than starting an infinite loop with after(), use a single delayed update
+        # This ensures we don't block the UI thread or cause hangs
+        self.after(15000, self.schedule_single_refresh)
     
     def create_no_image_photo(self):
         """Create a default "No Image" display as fallback"""
@@ -150,10 +153,14 @@ class ImageViewer(ttk.Frame):
             camera_name = next(iter(self.camera_configs)) if self.camera_configs else "Wyze Internal Camera"
             
             # Load each type of image separately with its own error handling
-            self.load_base_image(camera_name, "day")
-            self.load_base_image(camera_name, "night")
-            self.load_base_image(camera_name, "transition")
-            self.load_comparison_image()
+            if self.running:
+                self.load_base_image(camera_name, "day")
+            if self.running:
+                self.load_base_image(camera_name, "night")
+            if self.running:
+                self.load_base_image(camera_name, "transition")
+            if self.running:
+                self.load_comparison_image()
             
             # Mark that we've loaded images
             self.has_loaded = True
@@ -190,7 +197,8 @@ class ImageViewer(ttk.Frame):
                 self.photo_refs[f"base_{condition}"] = photo
                 
                 # Update the label safely on the main thread
-                self.after_idle(lambda: self.update_image_display(condition, photo))
+                if self.running:
+                    self.after_idle(lambda: self.update_image_display(condition, photo))
                 
             except Exception as img_error:
                 self.logger.error(f"Error loading {condition} image: {img_error}")
@@ -242,7 +250,8 @@ class ImageViewer(ttk.Frame):
                     
                     # Store reference and update label safely on main thread
                     self.photo_refs["comparison"] = photo
-                    self.after_idle(lambda: self.update_comparison_display(photo))
+                    if self.running:
+                        self.after_idle(lambda: self.update_comparison_display(photo))
                     
                 except Exception as img_error:
                     self.logger.error(f"Error loading comparison image: {img_error}")
@@ -260,6 +269,9 @@ class ImageViewer(ttk.Frame):
     
     def update_image_display(self, condition, photo, text=None):
         """Update a single base image display safely"""
+        if not self.running:
+            return
+            
         try:
             if condition in self.base_labels:
                 label = self.base_labels[condition]
@@ -277,6 +289,9 @@ class ImageViewer(ttk.Frame):
     
     def update_comparison_display(self, photo, text=None):
         """Update the comparison image display safely"""
+        if not self.running:
+            return
+            
         try:
             if photo:
                 self.comparison_label.configure(image=photo, text="", compound="image")
@@ -289,28 +304,33 @@ class ImageViewer(ttk.Frame):
         except Exception as e:
             self.logger.error(f"Error updating comparison display: {e}")
     
-    def schedule_refresh(self):
-        """Schedule a refresh with better error handling"""
+    def schedule_single_refresh(self):
+        """Schedule a single refresh, not a recurring one"""
         try:
-            # Only refresh if we've successfully loaded images before
-            if self.has_loaded:
-                # Use a separate thread for image loading to prevent UI freezing
-                threading.Thread(target=self.refresh_images, daemon=True).start()
-            else:
-                # Try initial load if we haven't loaded successfully yet
-                threading.Thread(target=self.load_all_images, daemon=True).start()
-            
-            # Schedule next refresh (every 30 seconds is sufficient)
-            self.after(30000, self.schedule_refresh)
-            
+            # Only refresh if we're still running
+            if self.running:
+                # Refresh in a background thread
+                refresh_thread = threading.Thread(target=self.refresh_images, daemon=True)
+                refresh_thread.start()
+                
+                # Schedule another single refresh in 20 seconds
+                self.after(20000, self.schedule_single_refresh)
         except Exception as e:
             self.logger.error(f"Error scheduling refresh: {e}")
-            # Still try to reschedule
-            self.after(60000, self.schedule_refresh)  # Try again in a minute
+            # Try again in 60 seconds if there was an error
+            self.after(60000, self.schedule_single_refresh)
     
     def refresh_images(self):
         """Refresh all images with checks for changes"""
         try:
+            # Skip if not running
+            if not self.running:
+                return
+                
+            # Skip if we never loaded images successfully
+            if not self.has_loaded:
+                return
+                
             # Get the first camera from configs
             camera_name = next(iter(self.camera_configs)) if self.camera_configs else "Wyze Internal Camera"
             
@@ -326,6 +346,10 @@ class ImageViewer(ttk.Frame):
     def check_and_reload_image(self, camera_name, condition):
         """Check if an image has changed and reload if needed"""
         try:
+            # Skip if not running
+            if not self.running:
+                return
+                
             # Get path for the base image
             image_path = get_base_image_path(camera_name, condition)
             
@@ -346,6 +370,10 @@ class ImageViewer(ttk.Frame):
     def check_and_reload_comparison(self):
         """Check if comparison image has changed and reload if needed"""
         try:
+            # Skip if not running
+            if not self.running:
+                return
+                
             # Find the most recent comparison image
             latest_file = None
             latest_time = 0
@@ -373,26 +401,8 @@ class ImageViewer(ttk.Frame):
                 
         except Exception as e:
             self.logger.error(f"Error checking comparison image for changes: {e}")
-
-# For testing the component directly
-if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("Image Viewer Test")
-    root.geometry("800x200")
     
-    # Sample configs
-    sample_configs = {
-        "Wyze Internal Camera": {"roi": [-1899, 698, -1255, 1039]},
-        "Bindy Patio Camera": {"roi": [1441, 350, 1636, 526]},
-        "Upper Patio Camera": {"roi": [395, 454, 900, 680]}
-    }
-    
-    # Create frame
-    frame = ttk.Frame(root)
-    frame.pack(fill="both", expand=True)
-    
-    # Create viewer
-    viewer = ImageViewer(frame, sample_configs)
-    viewer.pack(fill="both", expand=True)
-    
-    root.mainloop()
+    def destroy(self):
+        """Clean up resources when destroyed"""
+        self.running = False
+        super().destroy()

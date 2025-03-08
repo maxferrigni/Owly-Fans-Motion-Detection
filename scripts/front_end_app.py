@@ -6,6 +6,7 @@
 # - Completely rewrote image panel initialization
 # - Adjusted window sizing for better display
 # - Improved error handling throughout initialization
+# - Added script execution timeout to prevent hanging
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -19,6 +20,7 @@ import pytz
 from PIL import Image, ImageTk
 import traceback
 import time
+import signal
 
 # Add parent directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -52,6 +54,11 @@ class OwlApp:
         self.logger = get_logger()
         self.logger.info("Starting Owl Monitoring App initialization...")
         
+        # Track process and threads
+        self.script_process = None
+        self.log_thread = None
+        self.monitoring_active = False
+        
         try:
             # Initialize window
             self.root = root
@@ -60,9 +67,11 @@ class OwlApp:
             self.root.minsize(900, 650)  # Set minimum size
             self.root.update_idletasks()
             self.root.resizable(True, True)  # Enable resizing
+            
+            # Set up protocol for clean exit
+            self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
             # Initialize variables
-            self.script_process = None
             self.local_saving_enabled = tk.BooleanVar(value=True)
             self.capture_interval = tk.IntVar(value=60)  # Default to 60 seconds
             self.alert_delay = tk.IntVar(value=30)      # Default to 30 minutes
@@ -109,6 +118,21 @@ class OwlApp:
             error_msg = f"Critical error during initialization: {str(e)}\n\n{traceback.format_exc()}"
             self.logger.error(error_msg)
             messagebox.showerror("Initialization Error", f"Error initializing application:\n{str(e)}")
+    
+    def on_close(self):
+        """Handle application closing"""
+        try:
+            # Stop any running process
+            self.monitoring_active = False
+            if self.script_process:
+                self.stop_script()
+            
+            # Close the application
+            self.root.destroy()
+        except Exception as e:
+            print(f"Error during close: {e}")
+            # Force exit if cleanup fails
+            os._exit(0)
             
     def create_ui_structure(self):
         """Create the entire UI structure in the correct order"""
@@ -268,22 +292,54 @@ class OwlApp:
             # Create a separator line above the image panel
             ttk.Separator(self.root, orient="horizontal").pack(fill="x", pady=2, before=self.bottom_frame)
             
-            # Create the image viewer with explicit sizing
+            # Create the image viewer with explicit sizing - with extended timeout
             try:
-                self.image_viewer = ImageViewer(self.bottom_frame, camera_configs)
-                self.image_viewer.pack(fill="both", expand=True)
+                # Run image viewer initialization with a timeout using threading
+                viewer_thread = threading.Thread(target=self._init_viewer_with_timeout)
+                viewer_thread.daemon = True
+                viewer_thread.start()
+                
+                # Give the thread time to complete
+                for _ in range(50):  # 5 second timeout
+                    if hasattr(self, 'image_viewer'):
+                        break
+                    time.sleep(0.1)
+                    self.root.update_idletasks()
+                
+                # Check if viewer was created
+                if not hasattr(self, 'image_viewer'):
+                    raise TimeoutError("Image viewer initialization timed out")
+                    
                 self.log_message("Image viewer initialized successfully", "INFO")
+                
             except Exception as e:
                 self.log_message(f"Error initializing image viewer: {e}", "ERROR")
                 self.logger.error(traceback.format_exc())
                 # Create a label instead of the image viewer as a fallback
                 ttk.Label(
                     self.bottom_frame, 
-                    text=f"Could not initialize image viewer: {str(e)}",
+                    text="Image display not available. Click [Test] for image tools.",
                     foreground="red"
                 ).pack(fill="both", expand=True)
         except Exception as e:
             self.log_message(f"Error creating image panels: {e}", "ERROR")
+            self.logger.error(traceback.format_exc())
+    
+    def _init_viewer_with_timeout(self):
+        """Initialize image viewer in a separate thread with timeout"""
+        try:
+            # Try to load camera configs again - redundant but safer
+            try:
+                camera_configs = load_camera_config()
+            except:
+                camera_configs = {}
+                
+            # Create the viewer
+            self.image_viewer = ImageViewer(self.bottom_frame, camera_configs)
+            self.image_viewer.pack(fill="both", expand=True)
+            
+        except Exception as e:
+            self.logger.error(f"Thread error initializing image viewer: {e}")
             self.logger.error(traceback.format_exc())
 
     def log_message(self, message, level="INFO"):
@@ -466,98 +522,240 @@ class OwlApp:
         os.execv(python_executable, [python_executable, script_path])
 
     def start_script(self):
-        """Start the motion detection script"""
+        """Start the motion detection script with timeout protection"""
         if not self.script_process:
             self.log_message("Starting motion detection script...")
             try:
                 # Pass configuration through environment variables
                 env = os.environ.copy()
                 env['OWL_LOCAL_SAVING'] = str(self.local_saving_enabled.get())
-                # Use the capture interval from the UI control
                 env['OWL_CAPTURE_INTERVAL'] = str(self.capture_interval.get())
-                
-                # Add the alert setting environment variables
                 env['OWL_EMAIL_ALERTS'] = str(self.email_alerts_enabled.get())
                 
                 # Set alert delay
                 self.alert_manager.set_alert_delay(self.alert_delay.get())
                 
+                # Create a non-blocking process
                 cmd = [sys.executable, self.main_script_path]
-                self.script_process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    env=env
-                )
+                
+                # Start the process with a different process group to ensure we can kill it properly
+                if os.name == 'nt':  # Windows
+                    self.script_process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                        env=env,
+                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                    )
+                else:  # Unix/Linux/Mac
+                    self.script_process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                        env=env,
+                        preexec_fn=os.setsid
+                    )
 
+                # Set this flag before starting the thread to avoid race conditions
+                self.monitoring_active = True
+                
                 # Update UI state
                 self.control_panel.update_run_state(True)
                 
-                # Start log monitoring - SIMPLIFIED VERSION for stability
-                threading.Thread(target=self.refresh_logs, daemon=True).start()
+                # Start log monitoring in a separate thread
+                self.log_thread = threading.Thread(target=self.refresh_logs, daemon=True)
+                self.log_thread.start()
+                
+                # Schedule a check after 10 seconds to verify script is still running
+                self.root.after(10000, self.check_script_startup)
 
             except Exception as e:
                 self.log_message(f"Error starting script: {e}", "ERROR")
-
-    def stop_script(self):
-        """Stop the motion detection script"""
-        if self.script_process:
-            self.log_message("Stopping motion detection script...")
-            try:
-                self.script_process.terminate()
-                # Give it 5 seconds to terminate gracefully
-                try:
-                    self.script_process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    # If it doesn't terminate, force kill it
-                    self.log_message("Script did not terminate gracefully, forcing kill", "WARNING")
-                    self.script_process.kill()
-                    self.script_process.wait(timeout=2)
-                
+                self.monitoring_active = False
                 self.script_process = None
                 self.control_panel.update_run_state(False)
+    
+    def check_script_startup(self):
+        """Check if script has started properly after timeout"""
+        # Only check if script process exists
+        if self.script_process:
+            # Check if process is still running
+            if self.script_process.poll() is not None:
+                # Process exited prematurely
+                exit_code = self.script_process.poll()
+                self.log_message(f"Script process exited prematurely with code {exit_code}", "ERROR")
+                self.script_process = None
+                self.monitoring_active = False
+                self.control_panel.update_run_state(False)
+            else:
+                # Process is running - schedule another check after 30 seconds
+                self.log_message("Script startup check passed", "INFO")
+                self.root.after(30000, self.check_script_health)
+        else:
+            self.log_message("No script process found during startup check", "WARNING")
+            self.monitoring_active = False
+            self.control_panel.update_run_state(False)
+    
+    def check_script_health(self):
+        """Periodic check of script health"""
+        # Only check if monitoring is still active
+        if self.monitoring_active and self.script_process:
+            # Check if process is still running
+            if self.script_process.poll() is not None:
+                # Process exited unexpectedly
+                exit_code = self.script_process.poll()
+                self.log_message(f"Script process exited unexpectedly with code {exit_code}", "ERROR")
+                self.script_process = None
+                self.monitoring_active = False
+                self.control_panel.update_run_state(False)
+            else:
+                # Process is still running, schedule another check
+                self.root.after(30000, self.check_script_health)
+
+    def stop_script(self):
+        """Stop the motion detection script with enhanced termination"""
+        if self.script_process:
+            self.log_message("Stopping motion detection script...")
+            
+            # First, set monitoring flag to false to signal threads to stop
+            self.monitoring_active = False
+            
+            try:
+                # Terminate process properly based on platform
+                if os.name == 'nt':  # Windows
+                    self.script_process.terminate()
+                else:  # Unix/Linux/Mac
+                    try:
+                        os.killpg(os.getpgid(self.script_process.pid), signal.SIGTERM)
+                    except:
+                        # Fallback to regular terminate
+                        self.script_process.terminate()
+                
+                # Give it 5 seconds to terminate gracefully
+                for _ in range(50):  # Check every 100ms for up to 5 seconds
+                    if self.script_process.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                    
+                # If still running, force kill
+                if self.script_process.poll() is None:
+                    self.log_message("Script did not terminate gracefully, forcing kill", "WARNING")
+                    if os.name == 'nt':  # Windows
+                        subprocess.call(['taskkill', '/F', '/T', '/PID', str(self.script_process.pid)])
+                    else:  # Unix/Linux/Mac
+                        try:
+                            os.killpg(os.getpgid(self.script_process.pid), signal.SIGKILL)
+                        except:
+                            # Last resort
+                            self.script_process.kill()
+                    
+                    # Give it a moment to finish
+                    time.sleep(0.5)
+                
+                # Update state variables
+                self.script_process = None
+                self.control_panel.update_run_state(False)
+                self.log_message("Script process stopped", "INFO")
+                
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}", "ERROR")
+                self.logger.error(traceback.format_exc())
+                
+                # Force reset state
+                self.script_process = None
+                self.monitoring_active = False
+                self.control_panel.update_run_state(False)
 
     def refresh_logs(self):
-        """Refresh log display with script output - SIMPLIFIED from working version with minimal safety"""
+        """Refresh log display with script output - completely rewritten for v1.4.3"""
+        if not self.script_process or not self.script_process.stdout:
+            self.log_message("No active script process for logs", "WARNING")
+            return
+        
         try:
-            # Use a local reference for thread safety
+            # Keep a local reference to the process
             local_process = self.script_process
             
-            while local_process and local_process.stdout:
+            # Set up a read timeout loop
+            while self.monitoring_active and local_process and local_process.poll() is None:
                 try:
-                    line = local_process.stdout.readline()
-                    if not line:  # End of stream reached
+                    # Try to read a line with timeout
+                    line = None
+                    for _ in range(10):  # Try for up to 1 second (10 * 0.1)
+                        if not self.monitoring_active:
+                            break
+                            
+                        # Check if there's data available to read
+                        import select
+                        if os.name == 'nt':  # Windows doesn't have select for pipes
+                            # Just try to read and catch errors
+                            try:
+                                line = local_process.stdout.readline()
+                                if line:
+                                    break
+                            except:
+                                pass
+                        else:  # Unix systems can use select
+                            ready, _, _ = select.select([local_process.stdout], [], [], 0.1)
+                            if ready:
+                                line = local_process.stdout.readline()
+                                break
+                        
+                        # Sleep briefly to avoid spinning
+                        time.sleep(0.1)
+                    
+                    # Process the line if we got one
+                    if line and line.strip():
+                        self.log_message(line.strip())
+                    
+                    # Yield to UI to keep it responsive, every 10 iterations
+                    try:
+                        self.root.update_idletasks()
+                    except tk.TclError:
+                        # Root may be destroyed
                         break
                         
-                    if line.strip():
-                        self.log_message(line.strip())
-                except Exception as e:
-                    self.log_message(f"Error reading output: {e}", "ERROR")
-                    break
-                    
-            # Script has ended
-            self.log_message("Script process ended", "INFO")
-            self.script_process = None
-            
-            # Update UI state safely
-            try:
-                self.control_panel.update_run_state(False)
-            except Exception:
-                pass  # Ignore errors during cleanup
+                except (ValueError, IOError, OSError) as e:
+                    self.log_message(f"Error reading process output: {e}", "ERROR")
+                    time.sleep(1)  # Pause before retry
                 
+                # Check if the process is still valid
+                if not self.monitoring_active or not local_process or local_process.poll() is not None:
+                    break
+            
+            # Process has ended or monitoring stopped
+            self.log_message("Log monitoring thread ending", "INFO")
+            
+            # Clean up if needed
+            if local_process and local_process.poll() is None:
+                self.log_message("Script process still running after monitoring stopped", "WARNING")
+            
+            # Reset states safely
+            if not self.monitoring_active:
+                # This was an intentional stop, no need to update UI
+                pass
+            else:
+                # Script ended on its own, update UI
+                self.monitoring_active = False
+                try:
+                    if self.root.winfo_exists():
+                        self.control_panel.update_run_state(False)
+                except tk.TclError:
+                    pass  # Root window may have been destroyed
+                
+                # Set script_process to None if it matches our local reference
+                if self.script_process == local_process:
+                    self.script_process = None
+            
         except Exception as e:
             self.log_message(f"Error in log refresh thread: {e}", "ERROR")
-            self.script_process = None
-            
-            # Ensure UI is updated
-            try:
-                self.control_panel.update_run_state(False)
-            except Exception:
-                pass  # Ignore errors during cleanup
+            self.logger.error(traceback.format_exc())
+            # Reset monitoring state
+            self.monitoring_active = False
     
     def clear_saved_images(self):
         """Permanently delete all images in the saved_images directory"""
