@@ -1,12 +1,5 @@
 # File: _front_end_app.py
-# Purpose: Main application window for the Owl Monitoring System
-#
-# March 8, 2025 Update - Version 1.5.0
-# - Added clock display to the UI
-# - Improved subprocess log reading for better reliability
-# - Made GUI properly resizable with minimum dimensions
-# - Added simple image viewer for base images
-# - Added system health monitoring framework
+# Purpose: Main application window for the Owl Monitoring System - MINIMAL VERSION FOR DEBUGGING
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -18,29 +11,49 @@ import json
 from datetime import datetime, timedelta
 import pytz
 
+# Debug statement
+print("Starting application initialization...")
+
 # Add parent directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-# Import utilities and modules
-from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, VERSION, BASE_DIR
-from utilities.logging_utils import get_logger
-from utilities.alert_manager import AlertManager
-from utilities.time_utils import get_current_lighting_condition
-
-# Import GUI panels - now including all panel components
-from _front_end_panels import (
-    LogWindow, 
-    LightingInfoPanel,
-    ControlPanel
-)
-
-# Import remaining components
-from motion_detection_settings import MotionDetectionSettings
+try:
+    # Import utilities and modules
+    print("Importing utilities...")
+    from utilities.constants import SCRIPTS_DIR, ensure_directories_exist, VERSION, BASE_DIR
+    from utilities.logging_utils import get_logger
+    
+    print("Importing alert manager...")
+    from utilities.alert_manager import AlertManager
+    
+    print("Importing time utils...")
+    from utilities.time_utils import get_current_lighting_condition
+    
+    # Import GUI panels - now including all panel components
+    print("Importing frontend panels...")
+    from _front_end_panels import (
+        LogWindow, 
+        ControlPanel
+    )
+    
+    # Skip LightingInfoPanel for now
+    # LightingInfoPanel
+    
+    # Import remaining components
+    print("Importing motion detection settings...")
+    from motion_detection_settings import MotionDetectionSettings
+    
+    print("All imports completed successfully")
+except Exception as e:
+    print(f"ERROR during imports: {e}")
+    raise
 
 class OwlApp:
     def __init__(self, root):
+        print("Starting OwlApp initialization...")
+        
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
@@ -51,6 +64,7 @@ class OwlApp:
         self.root.resizable(True, True)
         
         self.root.update_idletasks()
+        print("Window initialization complete")
 
         # Initialize variables
         self.script_process = None
@@ -62,88 +76,138 @@ class OwlApp:
         self.email_alerts_enabled = tk.BooleanVar(value=True)
         
         # Initialize lighting condition
-        self.current_lighting_condition = get_current_lighting_condition()
-        self.in_transition = self.current_lighting_condition == 'transition'
+        try:
+            print("Getting current lighting condition...")
+            self.current_lighting_condition = get_current_lighting_condition()
+            self.in_transition = self.current_lighting_condition == 'transition'
+            print(f"Current lighting condition: {self.current_lighting_condition}")
+        except Exception as e:
+            print(f"ERROR getting lighting condition: {e}")
+            self.current_lighting_condition = "day"  # Default
+            self.in_transition = False
         
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
-        # Set style for more immediate button rendering
-        self.style = ttk.Style()
-        self.style.configure('TButton', font=('Arial', 10))
-        self.style.configure('TFrame', padding=2)
-        self.style.configure('TLabelframe', padding=3)
-        
-        # Add custom styles for lighting indicators
-        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
-        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
-        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
+        try:
+            print("Setting up styles...")
+            # Set style for more immediate button rendering
+            self.style = ttk.Style()
+            self.style.configure('TButton', font=('Arial', 10))
+            self.style.configure('TFrame', padding=2)
+            self.style.configure('TLabelframe', padding=3)
+            
+            # Add custom styles for lighting indicators
+            self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
+            self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
+            self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
+            print("Styles configured successfully")
+        except Exception as e:
+            print(f"ERROR setting up styles: {e}")
 
-        # Initialize managers
-        self.alert_manager = AlertManager()
-        self.logger = get_logger()
+        try:
+            print("Initializing managers...")
+            # Initialize managers
+            self.alert_manager = AlertManager()
+            self.logger = get_logger()
+            print("Managers initialized successfully")
+        except Exception as e:
+            print(f"ERROR initializing managers: {e}")
+            raise
+            
+        try:
+            print("Creating UI framework...")
+            # Create header frame to contain environment, version, clock, and health indicators
+            self.header_frame = ttk.Frame(self.root)
+            self.header_frame.pack(side="top", fill="x", pady=5)
 
-        # Create header frame to contain environment, version, clock, and health indicators
-        self.header_frame = ttk.Frame(self.root)
-        self.header_frame.pack(side="top", fill="x", pady=5)
+            # Add environment label
+            self.env_label = ttk.Label(
+                self.header_frame,
+                text="DEV ENVIRONMENT" if "Dev" in BASE_DIR else "PRODUCTION",
+                font=("Arial", 12, "bold"),
+                foreground="red" if "Dev" in BASE_DIR else "green"
+            )
+            self.env_label.pack(side="top", pady=5)
 
-        # Add environment label
-        self.env_label = ttk.Label(
-            self.header_frame,
-            text="DEV ENVIRONMENT" if "Dev" in BASE_DIR else "PRODUCTION",
-            font=("Arial", 12, "bold"),
-            foreground="red" if "Dev" in BASE_DIR else "green"
-        )
-        self.env_label.pack(side="top", pady=5)
-
-        # Add version label
-        self.version_label = ttk.Label(
-            self.header_frame,
-            text=f"Version: {VERSION}",
-            font=("Arial", 8)
-        )
-        self.version_label.pack(side="top", pady=2)
+            # Add version label
+            self.version_label = ttk.Label(
+                self.header_frame,
+                text=f"Version: {VERSION}",
+                font=("Arial", 8)
+            )
+            self.version_label.pack(side="top", pady=2)
+            print("UI framework created successfully")
+        except Exception as e:
+            print(f"ERROR creating UI framework: {e}")
+            raise
         
         # Initialize clock
-        self.initialize_clock()
+        try:
+            print("Initializing clock...")
+            self.initialize_clock()
+            print("Clock initialized successfully")
+        except Exception as e:
+            print(f"ERROR initializing clock: {e}")
         
-        # Add lighting information panel
-        self.lighting_info_panel = LightingInfoPanel(self.root)
-        self.lighting_info_panel.pack(side="top", pady=3, fill="x")
-
-        # Create main container
-        self.main_container = ttk.Frame(self.root)
-        self.main_container.pack(fill="both", expand=True, padx=3, pady=3)
-
-        # Create main notebook for tab-based layout
-        self.notebook = ttk.Notebook(self.main_container)
-        self.notebook.pack(fill="both", expand=True)
-
-        # Create tabs
-        self.control_tab = ttk.Frame(self.notebook)
-        self.settings_tab = ttk.Frame(self.notebook)
-        self.test_tab = ttk.Frame(self.notebook)
-
-        # Add tabs to notebook
-        self.notebook.add(self.control_tab, text="Control")
-        self.notebook.add(self.settings_tab, text="Settings")
-        self.notebook.add(self.test_tab, text="Test")
-
-        # Initialize components
-        self.initialize_components()
+        # SKIP LIGHTING PANEL - likely cause of crash
+        print("SKIPPING lighting information panel for debugging")
         
-        # Initialize system health monitoring
-        self.initialize_health_monitor()
+        try:
+            print("Creating main container...")
+            # Create main container
+            self.main_container = ttk.Frame(self.root)
+            self.main_container.pack(fill="both", expand=True, padx=3, pady=3)
+
+            # Create main notebook for tab-based layout
+            self.notebook = ttk.Notebook(self.main_container)
+            self.notebook.pack(fill="both", expand=True)
+
+            # Create tabs
+            self.control_tab = ttk.Frame(self.notebook)
+            self.settings_tab = ttk.Frame(self.notebook)
+            self.test_tab = ttk.Frame(self.notebook)
+
+            # Add tabs to notebook
+            self.notebook.add(self.control_tab, text="Control")
+            self.notebook.add(self.settings_tab, text="Settings")
+            self.notebook.add(self.test_tab, text="Test")
+            print("Main container created successfully")
+        except Exception as e:
+            print(f"ERROR creating main container: {e}")
+            raise
+
+        try:
+            print("Initializing UI components...")
+            # Initialize components - basic only
+            self.initialize_basic_components()
+            print("UI components initialized successfully")
+        except Exception as e:
+            print(f"ERROR initializing UI components: {e}")
+            raise
         
-        # Initialize image viewers
-        self.initialize_image_viewers()
+        # SKIP NEW COMPONENTS FOR NOW
+        print("SKIPPING health monitoring for debugging")
+        print("SKIPPING image viewers for debugging")
 
         # Initialize redirector
-        sys.stdout = self.LogRedirector(self)
-        sys.stderr = self.LogRedirector(self)
+        try:
+            print("Setting up log redirectors...")
+            sys.stdout = self.LogRedirector(self)
+            sys.stderr = self.LogRedirector(self)
+            print("Log redirectors set up successfully")
+        except Exception as e:
+            print(f"ERROR setting up log redirectors: {e}")
 
         # Verify directories
-        self.verify_directories()
+        try:
+            print("Verifying directories...")
+            self.verify_directories()
+            print("Directories verified successfully")
+        except Exception as e:
+            print(f"ERROR verifying directories: {e}")
+        
         self.log_message("GUI initialized and ready", "INFO")
+        print("OwlApp initialization complete")
     
     def initialize_clock(self):
         """Add simple clock to the UI"""
@@ -161,8 +225,8 @@ class OwlApp:
         self.clock_label.config(text=current_time)
         self.root.after(1000, self.update_clock)
 
-    def initialize_components(self):
-        """Initialize all GUI components"""
+    def initialize_basic_components(self):
+        """Initialize minimal GUI components"""
         # Initialize log window
         self.log_window = LogWindow(self.root)
         
@@ -189,114 +253,10 @@ class OwlApp:
         settings_scroll.pack(fill="both", expand=True)
         self.settings = MotionDetectionSettings(settings_scroll, self.logger)
         
-        # Create test interface in test tab
+        # Skip test interface for now
         test_scroll = ttk.Frame(self.test_tab)
         test_scroll.pack(fill="both", expand=True)
-        
-        # Import test interface here to avoid circular import issues
-        from test_interface import TestInterface
-        self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
-    
-    def initialize_health_monitor(self):
-        """Initialize system health monitoring"""
-        # Import the health monitor
-        from system_health import SystemHealthMonitor
-        
-        # Create status frame in the header area
-        self.health_status_frame = ttk.Frame(self.header_frame)
-        self.health_status_frame.pack(side="left", padx=10)
-        
-        # Create status indicators
-        self.health_status_label = ttk.Label(
-            self.health_status_frame,
-            text="System: --",
-            font=("Arial", 9),
-            foreground="gray"
-        )
-        self.health_status_label.pack(side="left", padx=5)
-        
-        # Component status indicators
-        self.camera_status_label = ttk.Label(
-            self.health_status_frame,
-            text="Camera: --",
-            font=("Arial", 9),
-            foreground="gray"
-        )
-        self.camera_status_label.pack(side="left", padx=5)
-        
-        self.obs_status_label = ttk.Label(
-            self.health_status_frame,
-            text="OBS: --",
-            font=("Arial", 9),
-            foreground="gray"
-        )
-        self.obs_status_label.pack(side="left", padx=5)
-        
-        # Initialize health monitor with status callback
-        self.health_monitor = SystemHealthMonitor()
-        self.health_monitor.add_status_callback(self.update_health_status)
-        
-        # Start monitoring
-        self.health_monitor.start_monitoring()
-    
-    def update_health_status(self, status):
-        """Update health status indicators"""
-        # Update overall status
-        if status["healthy"]:
-            self.health_status_label.config(text="System: OK", foreground="green")
-        else:
-            self.health_status_label.config(text="System: ISSUE", foreground="red")
-            
-        # Update component statuses
-        for check in status["checks"]:
-            if check["name"] == "Wyze Camera":
-                if check["healthy"]:
-                    self.camera_status_label.config(text="Camera: OK", foreground="green")
-                else:
-                    self.camera_status_label.config(text=f"Camera: {check['status']}", foreground="red")
-            elif check["name"] == "OBS Process":
-                if check["healthy"]:
-                    self.obs_status_label.config(text="OBS: Running", foreground="green")
-                else:
-                    self.obs_status_label.config(text="OBS: Stopped", foreground="red")
-    
-    def initialize_image_viewers(self):
-        """Initialize simple image viewers"""
-        # Create bottom panel for viewers
-        self.bottom_frame = ttk.Frame(self.root)
-        self.bottom_frame.pack(side="bottom", fill="x", padx=5, pady=5)
-        
-        # Import the viewer
-        from simple_image_viewer import SimpleImageViewer
-        
-        # Create day viewer
-        self.day_image_viewer = SimpleImageViewer(self.bottom_frame, "Day Base Image")
-        self.day_image_viewer.pack(side="left", fill="both", expand=True, padx=5)
-        
-        # Create night viewer
-        self.night_image_viewer = SimpleImageViewer(self.bottom_frame, "Night Base Image")
-        self.night_image_viewer.pack(side="left", fill="both", expand=True, padx=5)
-        
-        # Schedule initial image loading
-        self.root.after(2000, self.load_base_images)
-    
-    def load_base_images(self):
-        """Load base images into viewers"""
-        from utilities.constants import get_base_image_path
-        
-        # Default camera
-        camera_name = "Wyze Internal Camera"
-        
-        # Load day image
-        day_path = get_base_image_path(camera_name, "day")
-        self.day_image_viewer.load_image(day_path)
-        
-        # Load night image
-        night_path = get_base_image_path(camera_name, "night")
-        self.night_image_viewer.load_image(night_path)
-        
-        # Schedule refresh
-        self.root.after(60000, self.load_base_images)  # Refresh every minute
+        # self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
 
     def log_message(self, message, level="INFO"):
         """Log message to log window"""
