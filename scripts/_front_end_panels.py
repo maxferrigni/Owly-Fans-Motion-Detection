@@ -1,18 +1,17 @@
 # File: _front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.3.0
-# - Removed StatusPanel class
-# - Removed ReportsPanel class
-# - Simplified ControlPanel by merging settings panes
-# - Removed manual base image capture and report generation buttons
-# - Removed text alerts and email-to-text alert settings
+# March 8, 2025 Update - Version 1.5.1
+# - Re-enabled LightingInfoPanel for improved visibility
+# - Fixed timer shutdown in LightingInfoPanel's destroy method
+# - Enhanced error handling in LightingInfoPanel
 
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 from datetime import datetime, timedelta
 import threading
 import time
+import traceback
 from utilities.logging_utils import get_logger
 from utilities.time_utils import get_lighting_info, format_time_until, get_current_lighting_condition
 
@@ -314,7 +313,7 @@ class ControlPanel(ttk.Frame):
 class LightingInfoPanel(ttk.LabelFrame):
     """
     Panel showing lighting information, sunrise/sunset times, and countdown timers.
-    Retained from v1.2.1.
+    Re-enabled in v1.5.1 with enhanced error handling.
     """
     def __init__(self, parent):
         super().__init__(parent, text="Lighting Information")
@@ -347,17 +346,43 @@ class LightingInfoPanel(ttk.LabelFrame):
         self.to_true_night = tk.StringVar(value="--:--")
         self.transition_percentage = tk.DoubleVar(value=0)
         self.is_transition = False
+        self.logger = get_logger()
         
-        # Create panel components
-        self.create_lighting_display()
-        self.create_sun_times_display()
-        self.create_countdown_display()
-        self.create_transition_progress()
-        
-        # Start update thread
+        # Initialize state for update thread
         self.update_thread = None
-        self.running = True
-        self.start_update_thread()
+        self.running = False
+
+        try:
+            # Create panel components
+            self.create_lighting_display()
+            self.create_sun_times_display()
+            self.create_countdown_display()
+            self.create_transition_progress()
+            
+            # Start update thread
+            self.start_update_thread()
+            
+            self.logger.info("Lighting information panel initialized successfully")
+        except Exception as e:
+            self.logger.error(f"Error initializing lighting panel: {e}")
+            traceback.print_exc()
+            # Create error display instead
+            self.create_error_display(str(e))
+        
+    def create_error_display(self, error_message):
+        """Create simplified error display if initialization fails"""
+        # Clear any existing widgets
+        for widget in self.winfo_children():
+            widget.destroy()
+            
+        # Create simple error message
+        error_label = ttk.Label(
+            self,
+            text=f"Error initializing lighting panel: {error_message}",
+            foreground="red",
+            wraplength=600
+        )
+        error_label.pack(padx=10, pady=10)
         
     def create_lighting_display(self):
         """Create the current lighting condition display"""
@@ -545,7 +570,8 @@ class LightingInfoPanel(ttk.LabelFrame):
                     self.is_transition = False
                     
         except Exception as e:
-            print(f"Error updating lighting info: {e}")
+            self.logger.error(f"Error updating lighting info: {e}")
+            # Don't raise the exception - allow the panel to continue functioning
             
     def start_update_thread(self):
         """Start the background thread to update lighting information"""
@@ -562,9 +588,10 @@ class LightingInfoPanel(ttk.LabelFrame):
                         time.sleep(0.1)
                         
                 except Exception as e:
-                    print(f"Error in update thread: {e}")
+                    self.logger.error(f"Error in update thread: {e}")
                     time.sleep(5)  # Wait 5 seconds on error
         
+        self.running = True
         self.update_thread = threading.Thread(target=update_loop, daemon=True)
         self.update_thread.start()
         
@@ -572,9 +599,17 @@ class LightingInfoPanel(ttk.LabelFrame):
         """Stop the update thread when panel is destroyed"""
         self.running = False
         if self.update_thread:
-            self.update_thread.join(timeout=1)
+            try:
+                self.update_thread.join(timeout=1)
+                self.logger.info("Lighting panel update thread stopped")
+            except Exception as e:
+                self.logger.error(f"Error stopping lighting panel update thread: {e}")
             
     def destroy(self):
         """Clean up resources when panel is destroyed"""
-        self.stop_update_thread()
-        super().destroy()
+        try:
+            self.stop_update_thread()
+        except Exception as e:
+            self.logger.error(f"Error during lighting panel cleanup: {e}")
+        finally:
+            super().destroy()
