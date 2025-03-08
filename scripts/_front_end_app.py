@@ -282,18 +282,28 @@ class OwlApp:
             return
 
         try:
-            self.log_message("Resetting local repository and pulling latest updates...")
+            self.log_message("Fetching latest updates from GitHub...")
             original_dir = os.getcwd()
             os.chdir(os.path.dirname(SCRIPTS_DIR))
 
             try:
+                # Fetch the latest from origin
+                result_fetch = subprocess.run(
+                    ["git", "fetch", "origin"],
+                    capture_output=True,
+                    text=True
+                )
+                self.log_message(result_fetch.stdout)
+                
+                # Reset to exactly match the remote dev branch
                 result_reset = subprocess.run(
-                    ["git", "reset", "--hard"],
+                    ["git", "reset", "--hard", "origin/dev"],
                     capture_output=True,
                     text=True
                 )
                 self.log_message(result_reset.stdout)
 
+                # Clean untracked files (but respect .gitignore)
                 result_clean = subprocess.run(
                     ["git", "clean", "-fd"],
                     capture_output=True,
@@ -301,18 +311,11 @@ class OwlApp:
                 )
                 self.log_message(result_clean.stdout)
 
-                result_pull = subprocess.run(
-                    ["git", "pull"],
-                    capture_output=True,
-                    text=True
-                )
-
-                if result_pull.returncode == 0:
-                    self.log_message("Git pull successful. Restarting application...")
-                    self.restart_application()
-                else:
-                    self.log_message(f"Git pull failed: {result_pull.stderr}", "ERROR")
-                    messagebox.showerror("Update Failed", "Git pull failed. Check logs for details.")
+                self.log_message("Update successful. Restarting application...")
+                self.restart_application()
+            except Exception as e:
+                self.log_message(f"Git update failed: {e}", "ERROR")
+                messagebox.showerror("Update Failed", f"Failed to update from GitHub: {e}")
             finally:
                 os.chdir(original_dir)
         except Exception as e:
