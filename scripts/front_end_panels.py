@@ -1,20 +1,23 @@
-# File: _front_end_panels.py
+# File: front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.3.0
-# - Removed StatusPanel class
-# - Removed ReportsPanel class
-# - Simplified ControlPanel by merging settings panes
-# - Removed manual base image capture and report generation buttons
-# - Removed text alerts and email-to-text alert settings
+# March 7, 2025 Update - Version 1.4.3
+# - Completely simplified LightingInfoPanel
+# - Reduced redundant time displays
+# - Made time panel more compact
+# - Enhanced UI responsiveness with better state management
 
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import scrolledtext, ttk, messagebox
 from datetime import datetime, timedelta
 import threading
 import time
+import os
+import traceback
+from PIL import Image, ImageTk
 from utilities.logging_utils import get_logger
 from utilities.time_utils import get_lighting_info, format_time_until, get_current_lighting_condition
+from utilities.constants import get_base_image_path, IMAGE_COMPARISONS_DIR
 
 class LogWindow(tk.Toplevel):
     """Enhanced logging window with filtering and search"""
@@ -174,11 +177,12 @@ class LogWindow(tk.Toplevel):
         self.lift()  # Bring to front
 
 class ControlPanel(ttk.Frame):
-    """Panel for controlling the application - Simplified for v1.3.0"""
+    """Panel for controlling the application - Enhanced with error handling for v1.4.3"""
     def __init__(self, parent, local_saving_enabled, capture_interval, alert_delay,
                  email_alerts_enabled, update_system_func, start_script_func,
                  stop_script_func, toggle_local_saving_func, update_capture_interval_func,
-                 update_alert_delay_func, toggle_email_alerts_func, log_window):
+                 update_alert_delay_func, toggle_email_alerts_func, log_window, 
+                 clear_saved_images_func=None):
         super().__init__(parent)
         
         self.local_saving_enabled = local_saving_enabled
@@ -194,7 +198,11 @@ class ControlPanel(ttk.Frame):
         self.update_capture_interval_func = update_capture_interval_func
         self.update_alert_delay_func = update_alert_delay_func
         self.toggle_email_alerts_func = toggle_email_alerts_func
+        self.clear_saved_images_func = clear_saved_images_func
         self.log_window = log_window
+        
+        # For logging
+        self.logger = get_logger()
         
         # Create UI components
         self.create_control_interface()
@@ -212,14 +220,14 @@ class ControlPanel(ttk.Frame):
         self.start_button = ttk.Button(
             button_frame,
             text="Start Detection",
-            command=self.start_script_func
+            command=self.start_script_handler
         )
         self.start_button.pack(side=tk.LEFT, padx=5)
         
         self.stop_button = ttk.Button(
             button_frame,
             text="Stop Detection",
-            command=self.stop_script_func,
+            command=self.stop_script_handler,
             state=tk.DISABLED
         )
         self.stop_button.pack(side=tk.LEFT, padx=5)
@@ -227,15 +235,23 @@ class ControlPanel(ttk.Frame):
         self.update_button = ttk.Button(
             button_frame,
             text="Update System",
-            command=self.update_system_func
+            command=self.update_system_handler
         )
         self.update_button.pack(side=tk.LEFT, padx=5)
+        
+        # Maintenance button
+        self.clear_images_button = ttk.Button(
+            button_frame,
+            text="Clear Saved Images",
+            command=self.clear_saved_images_handler
+        )
+        self.clear_images_button.pack(side=tk.LEFT, padx=5)
         
         # View logs button
         self.view_logs_button = ttk.Button(
             button_frame,
             text="View Logs",
-            command=self.show_logs
+            command=self.show_logs_handler
         )
         self.view_logs_button.pack(side=tk.RIGHT, padx=5)
         
@@ -252,7 +268,7 @@ class ControlPanel(ttk.Frame):
             setting_controls,
             text="Enable Local Image Saving",
             variable=self.local_saving_enabled,
-            command=self.toggle_local_saving_func
+            command=self.toggle_local_saving_handler
         )
         local_saving_cb.grid(row=0, column=0, sticky="w", padx=5, pady=2)
         
@@ -268,7 +284,7 @@ class ControlPanel(ttk.Frame):
             to=300,
             width=5,
             textvariable=self.capture_interval,
-            command=self.update_capture_interval_func
+            command=self.update_capture_interval_handler
         )
         interval_spinner.pack(side=tk.LEFT, padx=5)
         
@@ -284,7 +300,7 @@ class ControlPanel(ttk.Frame):
             to=120,
             width=5,
             textvariable=self.alert_delay,
-            command=self.update_alert_delay_func
+            command=self.update_alert_delay_handler
         )
         delay_spinner.pack(side=tk.LEFT, padx=5)
         
@@ -293,204 +309,248 @@ class ControlPanel(ttk.Frame):
             setting_controls,
             text="Enable Email Alerts",
             variable=self.email_alerts_enabled,
-            command=self.toggle_email_alerts_func
+            command=self.toggle_email_alerts_handler
         )
         email_cb.grid(row=3, column=0, sticky="w", padx=5, pady=2)
     
-    def show_logs(self):
-        """Show the log window"""
-        if hasattr(self.log_window, 'show'):
-            self.log_window.show()
+    # Adding error handling to all button handlers
+    def start_script_handler(self):
+        """Start script with error handling"""
+        try:
+            self.logger.info("Start detection button clicked")
+            self.start_script_func()
+        except Exception as e:
+            error_message = f"Error starting detection: {e}"
+            self.logger.error(error_message)
+            self.logger.error(traceback.format_exc())
+            messagebox.showerror("Error", error_message)
+    
+    def stop_script_handler(self):
+        """Stop script with error handling"""
+        try:
+            self.logger.info("Stop detection button clicked")
+            self.stop_script_func()
+        except Exception as e:
+            error_message = f"Error stopping detection: {e}"
+            self.logger.error(error_message)
+            self.logger.error(traceback.format_exc())
+            messagebox.showerror("Error", error_message)
+    
+    def update_system_handler(self):
+        """Update system with error handling"""
+        try:
+            self.logger.info("Update system button clicked")
+            self.update_system_func()
+        except Exception as e:
+            error_message = f"Error updating system: {e}"
+            self.logger.error(error_message)
+            self.logger.error(traceback.format_exc())
+            messagebox.showerror("Error", error_message)
+
+    def clear_saved_images_handler(self):
+        """Clear saved images with error handling"""
+        try:
+            self.logger.info("Clear saved images button clicked")
+            if self.clear_saved_images_func:
+                self.clear_saved_images_func()
+            else:
+                messagebox.showinfo("Not Available", "Clear saved images function is not available")
+        except Exception as e:
+            error_message = f"Error clearing saved images: {e}"
+            self.logger.error(error_message)
+            self.logger.error(traceback.format_exc())
+            messagebox.showerror("Error", error_message)
+
+    def show_logs_handler(self):
+        """Show logs with error handling"""
+        try:
+            self.logger.info("View logs button clicked")
+            if hasattr(self.log_window, 'show'):
+                self.log_window.show()
+            else:
+                messagebox.showinfo("Not Available", "Log window is not available")
+        except Exception as e:
+            error_message = f"Error showing logs: {e}"
+            self.logger.error(error_message)
+            self.logger.error(traceback.format_exc())
+            messagebox.showerror("Error", error_message)
+    
+    def toggle_local_saving_handler(self):
+        """Toggle local saving with error handling"""
+        try:
+            self.toggle_local_saving_func()
+        except Exception as e:
+            error_message = f"Error toggling local saving: {e}"
+            self.logger.error(error_message)
+            self.logger.error(traceback.format_exc())
+            messagebox.showerror("Error", error_message)
+            # Reset checkbox to previous state
+            self.local_saving_enabled.set(not self.local_saving_enabled.get())
+    
+    def update_capture_interval_handler(self):
+        """Update capture interval with error handling"""
+        try:
+            self.update_capture_interval_func()
+        except Exception as e:
+            error_message = f"Error updating capture interval: {e}"
+            self.logger.error(error_message)
+            self.logger.error(traceback.format_exc())
+            messagebox.showerror("Error", error_message)
+    
+    def update_alert_delay_handler(self):
+        """Update alert delay with error handling"""
+        try:
+            self.update_alert_delay_func()
+        except Exception as e:
+            error_message = f"Error updating alert delay: {e}"
+            self.logger.error(error_message)
+            self.logger.error(traceback.format_exc())
+            messagebox.showerror("Error", error_message)
+    
+    def toggle_email_alerts_handler(self):
+        """Toggle email alerts with error handling"""
+        try:
+            self.toggle_email_alerts_func()
+        except Exception as e:
+            error_message = f"Error toggling email alerts: {e}"
+            self.logger.error(error_message)
+            self.logger.error(traceback.format_exc())
+            messagebox.showerror("Error", error_message)
+            # Reset checkbox to previous state
+            self.email_alerts_enabled.set(not self.email_alerts_enabled.get())
     
     def update_run_state(self, is_running):
         """Update UI based on whether the script is running"""
-        if is_running:
-            self.start_button.config(state=tk.DISABLED)
-            self.stop_button.config(state=tk.NORMAL)
-        else:
-            self.start_button.config(state=tk.NORMAL)
-            self.stop_button.config(state=tk.DISABLED)
+        try:
+            if is_running:
+                self.start_button.config(state=tk.DISABLED)
+                self.stop_button.config(state=tk.NORMAL)
+            else:
+                self.start_button.config(state=tk.NORMAL)
+                self.stop_button.config(state=tk.DISABLED)
+        except Exception as e:
+            self.logger.error(f"Error updating run state: {e}")
 
 class LightingInfoPanel(ttk.LabelFrame):
     """
-    Panel showing lighting information, sunrise/sunset times, and countdown timers.
-    Retained from v1.2.1.
+    Simplified panel showing only essential lighting information.
+    Completely redesigned for v1.4.3 to be more compact and efficient.
     """
     def __init__(self, parent):
         super().__init__(parent, text="Lighting Information")
         
-        # Create custom progress bar style
+        # Initialize logger
+        self.logger = get_logger()
+        
+        # Create styles for lighting conditions
         self.style = ttk.Style()
-        self.style.configure(
-            "Transition.Horizontal.TProgressbar", 
-            troughcolor="#E0E0E0", 
-            background="#FFA500"  # Orange for transition progress
-        )
+        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 9, 'bold'))
+        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 9, 'bold'))
+        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 9, 'bold'))
+        self.style.configure('TimeValue.TLabel', foreground='black', font=('Arial', 9))
         
-        # Create styles for different lighting conditions
-        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
-        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
-        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
-        self.style.configure('DuskDawn.TLabel', foreground='#FF6600', font=('Arial', 9))
-        self.style.configure('CountdownTime.TLabel', foreground='green', font=('Arial', 10, 'bold'))
-        
-        # Initialize variables
+        # Initialize variables for the essential information only
         self.lighting_condition = tk.StringVar(value="Unknown")
-        self.detailed_condition = tk.StringVar(value="Unknown")
         self.sunrise_time = tk.StringVar(value="--:--")
         self.sunset_time = tk.StringVar(value="--:--")
         self.true_day_time = tk.StringVar(value="--:--")
         self.true_night_time = tk.StringVar(value="--:--")
-        self.to_sunrise = tk.StringVar(value="--:--")
-        self.to_sunset = tk.StringVar(value="--:--")
-        self.to_true_day = tk.StringVar(value="--:--")
-        self.to_true_night = tk.StringVar(value="--:--")
-        self.transition_percentage = tk.DoubleVar(value=0)
-        self.is_transition = False
         
-        # Create panel components
-        self.create_lighting_display()
-        self.create_sun_times_display()
-        self.create_countdown_display()
-        self.create_transition_progress()
+        # Track running state
+        self.running = True
+        
+        # Create simplified single-row layout
+        self.create_compact_layout()
         
         # Start update thread
-        self.update_thread = None
-        self.running = True
         self.start_update_thread()
-        
-    def create_lighting_display(self):
-        """Create the current lighting condition display"""
-        lighting_frame = ttk.Frame(self)
-        lighting_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Current lighting condition
-        ttk.Label(lighting_frame, text="Current Condition:").grid(row=0, column=0, sticky="w", padx=5)
-        self.condition_label = ttk.Label(
-            lighting_frame,
-            textvariable=self.lighting_condition,
-            style="Day.TLabel"  # Default style, will be updated
-        )
-        self.condition_label.grid(row=0, column=1, sticky="w", padx=5)
-        
-        # Detailed condition (dawn/dusk/etc)
-        self.detailed_label = ttk.Label(
-            lighting_frame,
-            textvariable=self.detailed_condition,
-            style="DuskDawn.TLabel"
-        )
-        self.detailed_label.grid(row=0, column=2, sticky="w", padx=5)
-        
-        # Configure grid
-        lighting_frame.columnconfigure(0, weight=0)
-        lighting_frame.columnconfigure(1, weight=0)
-        lighting_frame.columnconfigure(2, weight=1)
-        
-    def create_sun_times_display(self):
-        """Create the sunrise/sunset times display"""
-        times_frame = ttk.Frame(self)
-        times_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Create a 2x4 grid for the times
-        ttk.Label(times_frame, text="Sunrise:").grid(row=0, column=0, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.sunrise_time).grid(row=0, column=1, sticky="w", padx=5)
-        
-        ttk.Label(times_frame, text="Sunset:").grid(row=0, column=2, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.sunset_time).grid(row=0, column=3, sticky="w", padx=5)
-        
-        ttk.Label(times_frame, text="True Day:").grid(row=1, column=0, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.true_day_time).grid(row=1, column=1, sticky="w", padx=5)
-        
-        ttk.Label(times_frame, text="True Night:").grid(row=1, column=2, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.true_night_time).grid(row=1, column=3, sticky="w", padx=5)
-        
-        # Configure grid
-        for i in range(4):
-            times_frame.columnconfigure(i, weight=1)
-            
-    def create_countdown_display(self):
-        """Create the countdown/countup display"""
-        countdown_frame = ttk.Frame(self)
-        countdown_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Create a 2x4 grid for the countdowns
-        ttk.Label(countdown_frame, text="Until Sunrise:").grid(row=0, column=0, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_sunrise,
-            style="CountdownTime.TLabel"
-        ).grid(row=0, column=1, sticky="w", padx=5)
-        
-        ttk.Label(countdown_frame, text="Until Sunset:").grid(row=0, column=2, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_sunset,
-            style="CountdownTime.TLabel"
-        ).grid(row=0, column=3, sticky="w", padx=5)
-        
-        ttk.Label(countdown_frame, text="Until True Day:").grid(row=1, column=0, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_true_day,
-            style="CountdownTime.TLabel"
-        ).grid(row=1, column=1, sticky="w", padx=5)
-        
-        ttk.Label(countdown_frame, text="Until True Night:").grid(row=1, column=2, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_true_night,
-            style="CountdownTime.TLabel"
-        ).grid(row=1, column=3, sticky="w", padx=5)
-        
-        # Configure grid
-        for i in range(4):
-            countdown_frame.columnconfigure(i, weight=1)
-            
-    def create_transition_progress(self):
-        """Create the transition progress display"""
-        self.transition_frame = ttk.Frame(self)
-        self.transition_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Transition progress bar label
-        self.progress_label = ttk.Label(
-            self.transition_frame, 
-            text="Transition Progress:"
-        )
-        self.progress_label.pack(side=tk.LEFT, padx=5)
-        
-        # Progress bar
-        self.progress_bar = ttk.Progressbar(
-            self.transition_frame,
-            variable=self.transition_percentage,
-            style="Transition.Horizontal.TProgressbar",
-            length=200,
-            mode='determinate'
-        )
-        self.progress_bar.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
-        
-        # Percentage label
-        self.percentage_label = ttk.Label(
-            self.transition_frame,
-            text="0%"
-        )
-        self.percentage_label.pack(side=tk.LEFT, padx=5)
-        
-        # Initially hide the transition progress
-        self.transition_frame.pack_forget()
-        
-    def update_lighting_info(self):
-        """Update all lighting information"""
+    
+    def create_compact_layout(self):
+        """Create a simplified single-row layout with only essential information"""
         try:
-            # Get current lighting information
+            # Create main container frame with very small padding
+            main_frame = ttk.Frame(self)
+            main_frame.pack(fill="x", padx=2, pady=2)
+            
+            # Create a single row with 5 equally-spaced columns
+            
+            # 1. Current condition display
+            condition_frame = ttk.Frame(main_frame)
+            condition_frame.pack(side="left", padx=5)
+            
+            ttk.Label(condition_frame, text="Condition:").pack(side="left")
+            self.condition_label = ttk.Label(
+                condition_frame,
+                textvariable=self.lighting_condition,
+                style="Day.TLabel"  # Default style
+            )
+            self.condition_label.pack(side="left", padx=2)
+            
+            # Add a separator
+            ttk.Separator(main_frame, orient="vertical").pack(side="left", fill="y", padx=5)
+            
+            # 2. Sunrise info
+            sunrise_frame = ttk.Frame(main_frame)
+            sunrise_frame.pack(side="left", padx=5)
+            
+            ttk.Label(sunrise_frame, text="Sunrise:").pack(side="left")
+            ttk.Label(
+                sunrise_frame,
+                textvariable=self.sunrise_time,
+                style="TimeValue.TLabel"
+            ).pack(side="left", padx=2)
+            
+            # 3. True day info
+            true_day_frame = ttk.Frame(main_frame)
+            true_day_frame.pack(side="left", padx=5)
+            
+            ttk.Label(true_day_frame, text="True Day:").pack(side="left")
+            ttk.Label(
+                true_day_frame,
+                textvariable=self.true_day_time,
+                style="TimeValue.TLabel"
+            ).pack(side="left", padx=2)
+            
+            # Add a separator
+            ttk.Separator(main_frame, orient="vertical").pack(side="left", fill="y", padx=5)
+            
+            # 4. Sunset info
+            sunset_frame = ttk.Frame(main_frame)
+            sunset_frame.pack(side="left", padx=5)
+            
+            ttk.Label(sunset_frame, text="Sunset:").pack(side="left")
+            ttk.Label(
+                sunset_frame,
+                textvariable=self.sunset_time,
+                style="TimeValue.TLabel"
+            ).pack(side="left", padx=2)
+            
+            # 5. True night info
+            true_night_frame = ttk.Frame(main_frame)
+            true_night_frame.pack(side="left", padx=5)
+            
+            ttk.Label(true_night_frame, text="True Night:").pack(side="left")
+            ttk.Label(
+                true_night_frame,
+                textvariable=self.true_night_time,
+                style="TimeValue.TLabel"
+            ).pack(side="left", padx=2)
+            
+        except Exception as e:
+            self.logger.error(f"Error creating lighting info layout: {e}")
+            self.logger.error(traceback.format_exc())
+    
+    def update_lighting_info(self):
+        """Update lighting information with essential data only"""
+        try:
+            # Get lighting information
             lighting_info = get_lighting_info()
             
-            # Update condition variables
+            # Update condition
             condition = lighting_info.get('condition', 'unknown')
-            detailed = lighting_info.get('detailed_condition', 'unknown')
-            
             self.lighting_condition.set(condition.upper())
             
-            # Update condition label style
+            # Update condition style
             if condition == 'day':
                 self.condition_label.configure(style='Day.TLabel')
             elif condition == 'night':
@@ -498,13 +558,6 @@ class LightingInfoPanel(ttk.LabelFrame):
             else:
                 self.condition_label.configure(style='Transition.TLabel')
             
-            # Update detailed condition if in transition
-            if condition == 'transition':
-                self.detailed_condition.set(f"({detailed.upper()})")
-                self.detailed_label.pack()
-            else:
-                self.detailed_condition.set("")
-                
             # Update times
             if lighting_info.get('next_sunrise'):
                 self.sunrise_time.set(lighting_info.get('next_sunrise'))
@@ -515,66 +568,52 @@ class LightingInfoPanel(ttk.LabelFrame):
             if lighting_info.get('next_true_night'):
                 self.true_night_time.set(lighting_info.get('next_true_night'))
                 
-            # Update countdowns
-            countdown = lighting_info.get('countdown', {})
-            
-            if countdown.get('to_sunrise') is not None:
-                self.to_sunrise.set(format_time_until(countdown.get('to_sunrise')))
-            if countdown.get('to_sunset') is not None:
-                self.to_sunset.set(format_time_until(countdown.get('to_sunset')))
-            if countdown.get('to_true_day') is not None:
-                self.to_true_day.set(format_time_until(countdown.get('to_true_day')))
-            if countdown.get('to_true_night') is not None:
-                self.to_true_night.set(format_time_until(countdown.get('to_true_night')))
-                
-            # Update transition progress
-            is_transition = lighting_info.get('is_transition', False)
-            if is_transition:
-                progress = lighting_info.get('transition_percentage', 0)
-                self.transition_percentage.set(progress)
-                self.percentage_label.config(text=f"{progress:.1f}%")
-                
-                # Show transition progress
-                if not self.is_transition:
-                    self.transition_frame.pack(fill="x", padx=5, pady=5)
-                    self.is_transition = True
-            else:
-                # Hide transition progress
-                if self.is_transition:
-                    self.transition_frame.pack_forget()
-                    self.is_transition = False
-                    
         except Exception as e:
-            print(f"Error updating lighting info: {e}")
-            
+            self.logger.error(f"Error updating lighting info: {e}")
+            self.logger.error(traceback.format_exc())
+    
     def start_update_thread(self):
-        """Start the background thread to update lighting information"""
+        """Start background thread for updates"""
         def update_loop():
             while self.running:
                 try:
                     # Update lighting info
                     self.update_lighting_info()
                     
-                    # Sleep for 5 seconds
-                    for _ in range(50):  # 5 seconds in 100ms increments
+                    # Sleep for 10 seconds (less frequent updates to save resources)
+                    for _ in range(100):  # 10 seconds in 100ms increments
                         if not self.running:
                             break
                         time.sleep(0.1)
                         
                 except Exception as e:
-                    print(f"Error in update thread: {e}")
+                    self.logger.error(f"Error in lighting update thread: {e}")
                     time.sleep(5)  # Wait 5 seconds on error
         
         self.update_thread = threading.Thread(target=update_loop, daemon=True)
         self.update_thread.start()
-        
+    
     def stop_update_thread(self):
-        """Stop the update thread when panel is destroyed"""
+        """Stop the update thread"""
         self.running = False
         if self.update_thread:
             self.update_thread.join(timeout=1)
-            
+    
     def destroy(self):
-        """Clean up resources when panel is destroyed"""
+        """Clean up resources when destroyed"""
         self.stop_update_thread()
         super().destroy()
+
+# Test the layouts
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.title("Panel Test")
+    
+    # Test lighting info panel
+    lighting_panel = LightingInfoPanel(root)
+    lighting_panel.pack(fill="x", pady=10)
+    
+    # Add dummy labels to show layout
+    ttk.Label(root, text="Main Content Would Go Here").pack(pady=50)
+    
+    root.mainloop()

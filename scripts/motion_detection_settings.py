@@ -1,10 +1,17 @@
 # File: motion_detection_settings.py
 # Purpose: GUI controls for motion detection parameters
+# 
+# March 7, 2025 Update - Version 1.4.2
+# - Fixed excessive digits in settings display
+# - Improved layout to save vertical space
+# - Added error handling to settings operations
+# - Fixed update propagation between controls
 
 import tkinter as tk
 from tkinter import ttk, messagebox
 import json
 import os
+import traceback
 from utilities.constants import CONFIGS_DIR, CAMERA_MAPPINGS
 from utilities.logging_utils import get_logger
 
@@ -33,11 +40,13 @@ class MotionDetectionSettings:
         """Load current configuration from config.json"""
         try:
             config_path = os.path.join(CONFIGS_DIR, "config.json")
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Configuration file not found: {config_path}")
             with open(config_path, 'r') as f:
                 return json.load(f)
         except Exception as e:
             self.logger.error(f"Error loading config: {e}")
-            messagebox.showerror("Error", f"Failed to load configuration: {e}")
+            self.show_error("Error", f"Failed to load configuration: {e}")
             return {}
             
     def save_config(self):
@@ -50,7 +59,7 @@ class MotionDetectionSettings:
             messagebox.showinfo("Success", "Settings saved successfully")
         except Exception as e:
             self.logger.error(f"Error saving config: {e}")
-            messagebox.showerror("Error", f"Failed to save configuration: {e}")
+            self.show_error("Error", f"Failed to save configuration: {e}")
 
     def create_settings_interface(self):
         """Create the settings interface with tabbed layout"""
@@ -96,7 +105,7 @@ class MotionDetectionSettings:
             1
         )
         
-        # Create confidence threshold controls (NEW)
+        # Create confidence threshold controls
         confidence_frame = ttk.LabelFrame(tab, text="Confidence Thresholds")
         confidence_frame.pack(fill="x", padx=5, pady=5)
         
@@ -193,61 +202,125 @@ class MotionDetectionSettings:
                                min_val, max_val, default_val, resolution,
                                is_motion_param=False, is_integer=False):
         """Create a labeled scale control for a parameter"""
-        frame = ttk.Frame(parent)
-        frame.pack(fill="x", padx=5, pady=2)
-        
-        # Create label
-        ttk.Label(frame, text=label_text).pack(side=tk.LEFT)
-        
-        # Create scale
-        var = tk.DoubleVar(value=default_val)
-        scale = ttk.Scale(
-            frame,
-            from_=min_val,
-            to=max_val,
-            variable=var,
-            orient="horizontal"
-        )
-        scale.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
-        
-        # Create value entry
-        entry = ttk.Entry(frame, width=8)
-        entry.pack(side=tk.LEFT)
-        entry.insert(0, str(int(default_val) if is_integer else default_val))
-        
-        # Store original value
-        if is_motion_param:
-            if "motion_detection" not in self.original_values[camera]:
-                self.original_values[camera]["motion_detection"] = {}
-            self.original_values[camera]["motion_detection"][param_name] = default_val
-        else:
-            self.original_values[camera][param_name] = default_val
-        
-        # Update functions
-        def update_entry(*args):
-            value = var.get()
-            if is_integer:
-                value = int(value)
-            entry.delete(0, tk.END)
-            entry.insert(0, f"{value}")
-            self.update_config(camera, param_name, value, is_motion_param)
+        try:
+            frame = ttk.Frame(parent)
+            frame.pack(fill="x", padx=5, pady=2)
             
-        def update_scale(event):
-            try:
-                value = float(entry.get())
-                if is_integer:
-                    value = int(value)
-                if min_val <= value <= max_val:
-                    var.set(value)
+            # Create label
+            ttk.Label(frame, text=label_text, width=15, anchor="w").pack(side=tk.LEFT)
+            
+            # Create scale
+            var = tk.DoubleVar(value=default_val)
+            scale = ttk.Scale(
+                frame,
+                from_=min_val,
+                to=max_val,
+                variable=var,
+                orient="horizontal"
+            )
+            scale.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
+            
+            # Create value entry with limited width
+            entry = ttk.Entry(frame, width=8)
+            entry.pack(side=tk.LEFT)
+            
+            # Format value appropriately for initial display
+            if is_integer:
+                entry.insert(0, str(int(default_val)))
+            else:
+                # Format with appropriate decimal places
+                if resolution < 0.1:
+                    # For small resolutions (like 0.01), use 2 decimal places
+                    entry.insert(0, f"{default_val:.2f}")
+                else:
+                    # For larger resolutions, use 1 decimal place
+                    entry.insert(0, f"{default_val:.1f}")
+            
+            # Store original value
+            if is_motion_param:
+                if "motion_detection" not in self.original_values[camera]:
+                    self.original_values[camera]["motion_detection"] = {}
+                self.original_values[camera]["motion_detection"][param_name] = default_val
+            else:
+                self.original_values[camera][param_name] = default_val
+            
+            # Update functions
+            def update_entry(*args):
+                try:
+                    value = var.get()
+                    if is_integer:
+                        value = int(value)
+                        entry.delete(0, tk.END)
+                        entry.insert(0, f"{value}")
+                    else:
+                        entry.delete(0, tk.END)
+                        # Format with appropriate decimal places
+                        if resolution < 0.1:
+                            entry.insert(0, f"{value:.2f}")
+                        else:
+                            entry.insert(0, f"{value:.1f}")
                     self.update_config(camera, param_name, value, is_motion_param)
-            except ValueError:
-                entry.delete(0, tk.END)
-                entry.insert(0, f"{int(var.get()) if is_integer else var.get():.2f}")
-        
-        # Bind updates
-        var.trace_add("write", update_entry)
-        entry.bind('<Return>', update_scale)
-        entry.bind('<FocusOut>', update_scale)
+                except Exception as e:
+                    self.logger.error(f"Error updating entry: {e}")
+                    self.show_error("Settings Error", f"Error updating value: {e}")
+                
+            def update_scale(event):
+                try:
+                    raw_value = entry.get()
+                    # Remove any non-numeric characters except decimal point
+                    clean_value = ''.join(c for c in raw_value if c.isdigit() or c == '.')
+                    
+                    # Convert to appropriate type
+                    if is_integer:
+                        try:
+                            value = int(float(clean_value))
+                        except ValueError:
+                            value = int(default_val)
+                    else:
+                        try:
+                            value = float(clean_value)
+                        except ValueError:
+                            value = default_val
+                    
+                    # Enforce boundaries
+                    value = max(min_val, min(max_val, value))
+                    
+                    # Update scale
+                    var.set(value)
+                    
+                    # Update entry with properly formatted value
+                    entry.delete(0, tk.END)
+                    if is_integer:
+                        entry.insert(0, f"{value}")
+                    else:
+                        # Format with appropriate decimal places
+                        if resolution < 0.1:
+                            entry.insert(0, f"{value:.2f}")
+                        else:
+                            entry.insert(0, f"{value:.1f}")
+                            
+                    # Update config
+                    self.update_config(camera, param_name, value, is_motion_param)
+                except Exception as e:
+                    self.logger.error(f"Error updating scale: {e}")
+                    # Reset to default on error
+                    var.set(default_val)
+                    entry.delete(0, tk.END)
+                    if is_integer:
+                        entry.insert(0, f"{int(default_val)}")
+                    else:
+                        if resolution < 0.1:
+                            entry.insert(0, f"{default_val:.2f}")
+                        else:
+                            entry.insert(0, f"{default_val:.1f}")
+            
+            # Bind updates
+            var.trace_add("write", update_entry)
+            entry.bind('<Return>', update_scale)
+            entry.bind('<FocusOut>', update_scale)
+        except Exception as e:
+            self.logger.error(f"Error creating parameter control: {e}")
+            self.show_error("Settings Error", f"Failed to create parameter control: {e}")
 
     def update_config(self, camera, param_name, value, is_motion_param):
         """Update configuration with new parameter value"""
@@ -260,6 +333,7 @@ class MotionDetectionSettings:
                 self.config[camera][param_name] = value
         except Exception as e:
             self.logger.error(f"Error updating config: {e}")
+            self.show_error("Settings Error", f"Failed to update configuration: {e}")
 
     def create_control_buttons(self):
         """Create save and reset buttons"""
@@ -270,22 +344,49 @@ class MotionDetectionSettings:
         ttk.Button(
             button_frame,
             text="Save Changes",
-            command=self.save_config
+            command=self.save_config_with_error_handling
         ).pack(side=tk.LEFT, padx=5)
         
         # Reset button
         ttk.Button(
             button_frame,
             text="Reset to Default",
-            command=self.reset_to_default
+            command=self.reset_to_default_with_error_handling
         ).pack(side=tk.LEFT, padx=5)
         
-        # Apply to running system button (NEW)
+        # Apply to running system button
         ttk.Button(
             button_frame,
             text="Apply Now",
-            command=self.apply_to_running_system
+            command=self.apply_to_running_system_with_error_handling
         ).pack(side=tk.LEFT, padx=5)
+
+    def save_config_with_error_handling(self):
+        """Save config with error handling"""
+        try:
+            self.save_config()
+        except Exception as e:
+            self.logger.error(f"Error saving config: {e}")
+            self.logger.error(traceback.format_exc())
+            self.show_error("Error", f"Failed to save configuration: {e}")
+
+    def reset_to_default_with_error_handling(self):
+        """Reset all parameters to their original values with error handling"""
+        try:
+            self.reset_to_default()
+        except Exception as e:
+            self.logger.error(f"Error resetting to default: {e}")
+            self.logger.error(traceback.format_exc())
+            self.show_error("Error", f"Failed to reset settings: {e}")
+
+    def apply_to_running_system_with_error_handling(self):
+        """Apply settings to running system with error handling"""
+        try:
+            self.apply_to_running_system()
+        except Exception as e:
+            self.logger.error(f"Error applying to running system: {e}")
+            self.logger.error(traceback.format_exc())
+            self.show_error("Error", f"Failed to apply settings: {e}")
 
     def reset_to_default(self):
         """Reset all parameters to their original values"""
@@ -307,7 +408,7 @@ class MotionDetectionSettings:
             
         except Exception as e:
             self.logger.error(f"Error resetting settings: {e}")
-            messagebox.showerror("Error", f"Failed to reset settings: {e}")
+            raise
             
     def apply_to_running_system(self):
         """Apply current settings to the running system without restarting"""
@@ -342,7 +443,7 @@ class MotionDetectionSettings:
                 
         except Exception as e:
             self.logger.error(f"Error applying settings: {e}")
-            messagebox.showerror("Error", f"Failed to apply settings: {e}")
+            raise
 
     def get_confidence_thresholds(self):
         """Get all configured confidence thresholds"""
@@ -355,6 +456,11 @@ class MotionDetectionSettings:
         except Exception as e:
             self.logger.error(f"Error getting confidence thresholds: {e}")
             return {}
+            
+    def show_error(self, title, message):
+        """Show error message box and log the error"""
+        self.logger.error(message)
+        messagebox.showerror(title, message)
 
 if __name__ == "__main__":
     # Test the interface

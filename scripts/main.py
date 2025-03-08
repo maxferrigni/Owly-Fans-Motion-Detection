@@ -1,5 +1,10 @@
 # File: main.py
 # Purpose: Main controller for the motion detection system
+#
+# March 7, 2025 Update - Version 1.4.1
+# - Added tracking for initial base image capture to prevent redundant captures
+# - Improved error handling and logging
+# - Optimized startup sequence
 
 import time
 import sys
@@ -16,6 +21,7 @@ from utilities.constants import (
 from utilities.configs_loader import load_camera_config
 from utilities.logging_utils import get_logger
 from utilities.time_utils import get_current_lighting_condition
+from utilities.database_utils import ensure_required_tables_exist
 
 # Local imports
 from motion_workflow import process_cameras, initialize_system
@@ -27,6 +33,9 @@ from push_to_supabase import format_detection_results  # Changed to push_to_supa
 
 # Set up logging
 logger = get_logger()
+
+# Flag to track initial base image capture
+initial_capture_completed = False
 
 def setup_system():
     """Initialize the system by ensuring directories exist and loading configs"""
@@ -42,6 +51,12 @@ def setup_system():
         # Create remaining directory structure
         ensure_directories_exist()
         
+        # Ensure database tables exist with proper columns
+        try:
+            ensure_required_tables_exist()
+        except Exception as db_error:
+            logger.warning(f"Database initialization error (continuing anyway): {db_error}")
+        
         # Load camera configurations
         CAMERA_CONFIGS = load_camera_config()
         logger.info("Camera configuration loaded successfully")
@@ -54,6 +69,8 @@ def setup_system():
 
 def motion_detection():
     """Main motion detection function"""
+    global initial_capture_completed
+    
     try:
         # Initialize system and load camera configurations
         CAMERA_CONFIGS = setup_system()
@@ -63,12 +80,15 @@ def motion_detection():
             logger.error("Failed to initialize motion detection system")
             sys.exit(1)
             
-        # Capture initial base images
+        # Capture initial base images (only once)
         logger.info("Capturing initial base images...")
         initial_condition = get_current_lighting_condition()
         if not capture_base_images(initial_condition, force_capture=True):
             logger.error("Failed to capture initial base images")
             sys.exit(1)
+            
+        # Mark initial capture as completed to prevent redundant captures
+        initial_capture_completed = True
             
         # Additional delay after base image capture
         logger.info("Waiting for base image stabilization...")
@@ -87,8 +107,8 @@ def motion_detection():
         # Main detection loop
         while True:
             try:
-                # Process all cameras in one batch
-                camera_results = process_cameras(CAMERA_CONFIGS)
+                # Process all cameras in one batch, passing the initial capture flag
+                camera_results = process_cameras(CAMERA_CONFIGS, initial_capture=initial_capture_completed)
                 
                 # Format and upload results for each camera
                 for result in camera_results:

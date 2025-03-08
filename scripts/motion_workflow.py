@@ -1,5 +1,10 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
+#
+# March 7, 2025 Update - Version 1.4.3
+# - Fixed redundant base image captures on startup
+# - Added attribute tracking to prevent duplicate captures
+# - Enhanced error handling for more reliable detection
 
 import os
 import time
@@ -38,6 +43,9 @@ alert_manager = AlertManager()
 
 # Set timezone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
+
+# Track initial base image capture to prevent redundancy
+_initial_capture_done = False
 
 def initialize_system(camera_configs, is_test=False):
     """Initialize the motion detection system."""
@@ -231,7 +239,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             "camera": camera_name,
             "status": "Error",
             "error_message": str(e),
-            "is_test": is_test if 'is_test' in locals() else False,
+            "is_test": test_images is not None,
             "is_owl_present": False,
             "owl_confidence": 0.0,
             "consecutive_owl_frames": 0,
@@ -243,6 +251,8 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
 
 def process_cameras(camera_configs, test_images=None):
     """Process all cameras in batch for efficient motion detection"""
+    global _initial_capture_done
+    
     try:
         # Get lighting information once for all cameras
         lighting_condition = get_current_lighting_condition()
@@ -255,12 +265,18 @@ def process_cameras(camera_configs, test_images=None):
         
         logger.info(f"Processing cameras under {lighting_condition} condition")
         
-        # Only verify base images in real-time mode
-        if not test_images:
-            if should_capture_base_image():
-                logger.info("Time to capture new base images")
-                capture_base_images(lighting_condition, force_capture=True)
-                time.sleep(3)  # Allow system to stabilize after capture
+        # Only verify base images in real-time mode, not in test mode,
+        # and not if initial capture was already done in main.py
+        if not test_images and not _initial_capture_done:
+            # First run - mark initial capture as done but don't capture again
+            # since main.py already did the initial capture
+            logger.info("First detection cycle - initial base images already captured")
+            _initial_capture_done = True
+        elif not test_images and should_capture_base_image():
+            # After initial run, capture base images when needed
+            logger.info("Time to capture new base images")
+            capture_base_images(lighting_condition, force_capture=True)
+            time.sleep(3)  # Allow system to stabilize after capture
         
         # Process each camera with shared lighting info
         results = []
