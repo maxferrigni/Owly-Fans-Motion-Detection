@@ -213,7 +213,12 @@ class MotionDetectionSettings:
         # Create value entry
         entry = ttk.Entry(frame, width=8)
         entry.pack(side=tk.LEFT)
-        entry.insert(0, str(int(default_val) if is_integer else default_val))
+        
+        # Format the initial display appropriately
+        if is_integer:
+            entry.insert(0, str(int(default_val)))
+        else:
+            entry.insert(0, f"{default_val:.2f}")  # Format with 2 decimal places
         
         # Store original value
         if is_motion_param:
@@ -228,8 +233,11 @@ class MotionDetectionSettings:
             value = var.get()
             if is_integer:
                 value = int(value)
-            entry.delete(0, tk.END)
-            entry.insert(0, f"{value}")
+                entry.delete(0, tk.END)
+                entry.insert(0, f"{value}")
+            else:
+                entry.delete(0, tk.END)
+                entry.insert(0, f"{value:.2f}")  # Format with 2 decimal places
             self.update_config(camera, param_name, value, is_motion_param)
             
         def update_scale(event):
@@ -241,8 +249,13 @@ class MotionDetectionSettings:
                     var.set(value)
                     self.update_config(camera, param_name, value, is_motion_param)
             except ValueError:
-                entry.delete(0, tk.END)
-                entry.insert(0, f"{int(var.get()) if is_integer else var.get():.2f}")
+                # Reset entry to match current scale value
+                if is_integer:
+                    entry.delete(0, tk.END)
+                    entry.insert(0, f"{int(var.get())}")
+                else:
+                    entry.delete(0, tk.END)
+                    entry.insert(0, f"{var.get():.2f}")  # Format with 2 decimal places
         
         # Bind updates
         var.trace_add("write", update_entry)

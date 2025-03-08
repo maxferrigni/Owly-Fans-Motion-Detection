@@ -1,12 +1,12 @@
 # File: _front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.3.0
-# - Removed status panel and all references
-# - Removed text alerts and email-to-text functionality
-# - Removed manual base image capture functionality
-# - Removed after action report functionality and Reports tab
-# - Simplified UI and reduced code complexity
+# March 8, 2025 Update - Version 1.5.0
+# - Added clock display to the UI
+# - Improved subprocess log reading for better reliability
+# - Made GUI properly resizable with minimum dimensions
+# - Added simple image viewer for base images
+# - Added system health monitoring framework
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -45,8 +45,12 @@ class OwlApp:
         self.root = root
         self.root.title("Owl Monitoring App")
         self.root.geometry("900x600+-1920+0")
-        self.root.update_idletasks()
+        
+        # Allow resizing but with minimum dimensions
+        self.root.minsize(800, 500)
         self.root.resizable(True, True)
+        
+        self.root.update_idletasks()
 
         # Initialize variables
         self.script_process = None
@@ -78,9 +82,13 @@ class OwlApp:
         self.alert_manager = AlertManager()
         self.logger = get_logger()
 
-        # Add environment and version labels
+        # Create header frame to contain environment, version, clock, and health indicators
+        self.header_frame = ttk.Frame(self.root)
+        self.header_frame.pack(side="top", fill="x", pady=5)
+
+        # Add environment label
         self.env_label = ttk.Label(
-            self.root,
+            self.header_frame,
             text="DEV ENVIRONMENT" if "Dev" in BASE_DIR else "PRODUCTION",
             font=("Arial", 12, "bold"),
             foreground="red" if "Dev" in BASE_DIR else "green"
@@ -89,11 +97,14 @@ class OwlApp:
 
         # Add version label
         self.version_label = ttk.Label(
-            self.root,
+            self.header_frame,
             text=f"Version: {VERSION}",
             font=("Arial", 8)
         )
         self.version_label.pack(side="top", pady=2)
+        
+        # Initialize clock
+        self.initialize_clock()
         
         # Add lighting information panel
         self.lighting_info_panel = LightingInfoPanel(self.root)
@@ -119,6 +130,12 @@ class OwlApp:
 
         # Initialize components
         self.initialize_components()
+        
+        # Initialize system health monitoring
+        self.initialize_health_monitor()
+        
+        # Initialize image viewers
+        self.initialize_image_viewers()
 
         # Initialize redirector
         sys.stdout = self.LogRedirector(self)
@@ -127,6 +144,22 @@ class OwlApp:
         # Verify directories
         self.verify_directories()
         self.log_message("GUI initialized and ready", "INFO")
+    
+    def initialize_clock(self):
+        """Add simple clock to the UI"""
+        self.clock_label = ttk.Label(
+            self.header_frame,
+            font=("Arial", 11),
+            foreground="darkblue"
+        )
+        self.clock_label.pack(side="right", padx=10)
+        self.update_clock()
+    
+    def update_clock(self):
+        """Update clock display every second"""
+        current_time = datetime.now().strftime('%H:%M:%S')
+        self.clock_label.config(text=current_time)
+        self.root.after(1000, self.update_clock)
 
     def initialize_components(self):
         """Initialize all GUI components"""
@@ -163,6 +196,107 @@ class OwlApp:
         # Import test interface here to avoid circular import issues
         from test_interface import TestInterface
         self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
+    
+    def initialize_health_monitor(self):
+        """Initialize system health monitoring"""
+        # Import the health monitor
+        from system_health import SystemHealthMonitor
+        
+        # Create status frame in the header area
+        self.health_status_frame = ttk.Frame(self.header_frame)
+        self.health_status_frame.pack(side="left", padx=10)
+        
+        # Create status indicators
+        self.health_status_label = ttk.Label(
+            self.health_status_frame,
+            text="System: --",
+            font=("Arial", 9),
+            foreground="gray"
+        )
+        self.health_status_label.pack(side="left", padx=5)
+        
+        # Component status indicators
+        self.camera_status_label = ttk.Label(
+            self.health_status_frame,
+            text="Camera: --",
+            font=("Arial", 9),
+            foreground="gray"
+        )
+        self.camera_status_label.pack(side="left", padx=5)
+        
+        self.obs_status_label = ttk.Label(
+            self.health_status_frame,
+            text="OBS: --",
+            font=("Arial", 9),
+            foreground="gray"
+        )
+        self.obs_status_label.pack(side="left", padx=5)
+        
+        # Initialize health monitor with status callback
+        self.health_monitor = SystemHealthMonitor()
+        self.health_monitor.add_status_callback(self.update_health_status)
+        
+        # Start monitoring
+        self.health_monitor.start_monitoring()
+    
+    def update_health_status(self, status):
+        """Update health status indicators"""
+        # Update overall status
+        if status["healthy"]:
+            self.health_status_label.config(text="System: OK", foreground="green")
+        else:
+            self.health_status_label.config(text="System: ISSUE", foreground="red")
+            
+        # Update component statuses
+        for check in status["checks"]:
+            if check["name"] == "Wyze Camera":
+                if check["healthy"]:
+                    self.camera_status_label.config(text="Camera: OK", foreground="green")
+                else:
+                    self.camera_status_label.config(text=f"Camera: {check['status']}", foreground="red")
+            elif check["name"] == "OBS Process":
+                if check["healthy"]:
+                    self.obs_status_label.config(text="OBS: Running", foreground="green")
+                else:
+                    self.obs_status_label.config(text="OBS: Stopped", foreground="red")
+    
+    def initialize_image_viewers(self):
+        """Initialize simple image viewers"""
+        # Create bottom panel for viewers
+        self.bottom_frame = ttk.Frame(self.root)
+        self.bottom_frame.pack(side="bottom", fill="x", padx=5, pady=5)
+        
+        # Import the viewer
+        from simple_image_viewer import SimpleImageViewer
+        
+        # Create day viewer
+        self.day_image_viewer = SimpleImageViewer(self.bottom_frame, "Day Base Image")
+        self.day_image_viewer.pack(side="left", fill="both", expand=True, padx=5)
+        
+        # Create night viewer
+        self.night_image_viewer = SimpleImageViewer(self.bottom_frame, "Night Base Image")
+        self.night_image_viewer.pack(side="left", fill="both", expand=True, padx=5)
+        
+        # Schedule initial image loading
+        self.root.after(2000, self.load_base_images)
+    
+    def load_base_images(self):
+        """Load base images into viewers"""
+        from utilities.constants import get_base_image_path
+        
+        # Default camera
+        camera_name = "Wyze Internal Camera"
+        
+        # Load day image
+        day_path = get_base_image_path(camera_name, "day")
+        self.day_image_viewer.load_image(day_path)
+        
+        # Load night image
+        night_path = get_base_image_path(camera_name, "night")
+        self.night_image_viewer.load_image(night_path)
+        
+        # Schedule refresh
+        self.root.after(60000, self.load_base_images)  # Refresh every minute
 
     def log_message(self, message, level="INFO"):
         """Log message to log window"""
@@ -378,10 +512,13 @@ class OwlApp:
                 self.log_message(f"Error stopping script: {e}", "ERROR")
 
     def refresh_logs(self):
-        """Refresh log display with script output"""
+        """Refresh log display with script output - more reliable version"""
         try:
             while self.script_process and self.script_process.stdout:
+                # Read line by line
                 line = self.script_process.stdout.readline()
+                if not line:  # EOF reached
+                    break
                 if line.strip():
                     self.log_message(line.strip())
         except Exception as e:
