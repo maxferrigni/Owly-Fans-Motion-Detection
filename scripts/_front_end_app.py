@@ -189,14 +189,11 @@ class OwlApp:
         print("SKIPPING health monitoring for debugging")
         print("SKIPPING image viewers for debugging")
 
-        # Initialize redirector
-        try:
-            print("Setting up log redirectors...")
-            sys.stdout = self.LogRedirector(self)
-            sys.stderr = self.LogRedirector(self)
-            print("Log redirectors set up successfully")
-        except Exception as e:
-            print(f"ERROR setting up log redirectors: {e}")
+        # SKIP LOG REDIRECTORS - potential cause of crash
+        print("SKIPPING log redirectors for debugging")
+        # DO NOT initialize redirector
+        # sys.stdout = self.LogRedirector(self)
+        # sys.stderr = self.LogRedirector(self)
 
         # Verify directories
         try:
