@@ -1,21 +1,22 @@
 # File: _front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 8, 2025 Update - Version 1.5.4
+# March 9, 2025 Update - Version 1.5.5
 # - Fixed redundant base image display
 # - Improved base image display timing with detection state
 # - Enhanced LogWindow functionality
 # - Improved control panel design
+# - Added tooltips to refresh button
 
 import tkinter as tk
-from tkinter import scrolledtext, ttk, messagebox
-from datetime import datetime, timedelta
+from tkinter import scrolledtext, ttk, messagebox, Toplevel, Label
 import threading
 import time
 import traceback
 import os
 import glob
 from PIL import Image, ImageTk
+from datetime import datetime, timedelta
 
 from utilities.logging_utils import get_logger
 from utilities.constants import (
@@ -24,6 +25,32 @@ from utilities.constants import (
     CAMERA_MAPPINGS,
     get_base_image_path
 )
+
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tip_window or not self.text:
+            return
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+        self.tip_window = Toplevel(self.widget)
+        self.tip_window.wm_overrideredirect(True)
+        self.tip_window.wm_geometry(f"+{x}+{y}")
+        label = Label(self.tip_window, text=self.text, justify="left",
+                     background="#ffffe0", relief="solid", borderwidth=1)
+        label.pack()
+
+    def hide_tip(self, event=None):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
 
 class LogWindow(tk.Toplevel):
     """Enhanced logging window with filtering and search"""
@@ -185,7 +212,7 @@ class LogWindow(tk.Toplevel):
 class BaseImagesPanel(ttk.LabelFrame):
     """
     Improved panel to display base images for all cameras.
-    In v1.5.4: Only shows images after detection starts.
+    In v1.5.5: Only shows images after detection starts.
     """
     def __init__(self, parent, logger=None):
         super().__init__(parent, text="Camera Base Images")
@@ -223,6 +250,9 @@ class BaseImagesPanel(ttk.LabelFrame):
             state=tk.DISABLED  # Disabled until detection starts
         )
         self.refresh_button.pack(side=tk.RIGHT, padx=5)
+        
+        # Add tooltip
+        ToolTip(self.refresh_button, "Manually refresh base images from cameras.\nUseful if base images weren't captured correctly.")
         
         # Container for images
         self.images_frame = ttk.Frame(main_frame)
@@ -464,7 +494,7 @@ class ControlPanel(ttk.Frame):
         self.base_images_panel = None
         
     def create_control_interface(self):
-        """Create control interface components - Simplified for v1.5.4"""
+        """Create control interface components - Simplified for v1.5.5"""
         # Main controls frame
         controls_frame = ttk.LabelFrame(self, text="Motion Detection Controls")
         controls_frame.pack(fill="x", padx=5, pady=5)
@@ -525,7 +555,7 @@ class ControlPanel(ttk.Frame):
         )
         self.cleanup_button.pack(side=tk.LEFT, padx=2)
         
-        # Settings section - simplified for v1.5.4
+        # Settings section - simplified for v1.5.5
         settings_frame = ttk.LabelFrame(self, text="Settings")
         settings_frame.pack(fill="x", padx=5, pady=5)
         
@@ -608,12 +638,12 @@ class ControlPanel(ttk.Frame):
     
     def notify_detection_started(self):
         """Notify base images panel that detection has started"""
-        if self.base_images_panel:
+        if hasattr(self, 'base_images_panel') and self.base_images_panel:
             self.base_images_panel.detection_started()
             
     def notify_detection_stopped(self):
         """Notify base images panel that detection has stopped"""
-        if self.base_images_panel:
+        if hasattr(self, 'base_images_panel') and self.base_images_panel:
             self.base_images_panel.detection_stopped()
             
     def cleanup_saved_images(self):

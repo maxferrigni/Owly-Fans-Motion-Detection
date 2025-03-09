@@ -1,6 +1,6 @@
 # File: _front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System - IMPROVED STABILITY AND UI FIXES
-# Version: 1.5.4
+# Version: 1.5.5
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -58,7 +58,6 @@ def acquire_lock():
                     pid = int(f.read().strip())
                 
                 # Check if the process is still running
-                # This is a basic check without psutil
                 try:
                     # On Unix-like systems, sending signal 0 checks if process exists
                     if sys.platform != "win32":
@@ -66,7 +65,7 @@ def acquire_lock():
                         print(f"Lock file exists and process {pid} is still running")
                         return False
                     else:
-                        # On Windows, we can't easily check without psutil, so just assume it's stale
+                        # On Windows, assume it's stale
                         print(f"Assuming stale lock file on Windows. Removing.")
                         os.remove(lock_file_path)
                 except OSError:
@@ -134,7 +133,7 @@ try:
         traceback.print_exc()
         raise
     
-    # Import GUI panels - simplified for v1.5.4
+    # Import GUI panels - simplified for v1.5.5
     print("Importing frontend panels...")
     try:
         from _front_end_panels import (
@@ -157,7 +156,7 @@ try:
         traceback.print_exc()
         raise
     
-    # Import TestInterface - simplified for v1.5.4
+    # Import TestInterface - simplified for v1.5.5
     print("Importing test interface...")
     try:
         from test_interface import TestInterface
@@ -223,9 +222,13 @@ class OwlApp:
 
         try:
             print("Setting up styles...")
-            # Set style for more immediate button rendering
+            # Set style for more immediate button rendering and add hover/active effects
             self.style = ttk.Style()
             self.style.configure('TButton', font=('Arial', 10))
+            self.style.map('TButton',
+                background=[('active', '#d9d9d9'), ('pressed', '#a6a6a6')],
+                relief=[('pressed', 'sunken'), ('!pressed', 'raised')]
+            )
             self.style.configure('TFrame', padding=2)
             self.style.configure('TLabelframe', padding=3)
             print("Styles configured successfully")
@@ -308,7 +311,7 @@ class OwlApp:
             self.notebook = ttk.Notebook(self.main_container)
             self.notebook.pack(fill="both", expand=True)
 
-            # Create tabs - SIMPLIFIED FOR v1.5.4
+            # Create tabs - SIMPLIFIED FOR v1.5.5
             self.control_tab = ttk.Frame(self.notebook)
             self.settings_tab = ttk.Frame(self.notebook)
             self.test_tab = ttk.Frame(self.notebook)
@@ -374,7 +377,7 @@ class OwlApp:
             # Initialize log window
             self.log_window = LogWindow(self.root)
             
-            # Create control panel - UPDATED FOR v1.5.4 to fix base image display
+            # Create control panel - UPDATED FOR v1.5.5 to fix base image display
             self.control_panel = ControlPanel(
                 self.control_tab,
                 self.local_saving_enabled,
@@ -392,7 +395,7 @@ class OwlApp:
             )
             self.control_panel.pack(fill="both", expand=True)
             
-            # Create motion detection settings in settings tab (simplified in v1.5.4)
+            # Create motion detection settings in settings tab (simplified in v1.5.5)
             self.settings_frame = ttk.Frame(self.settings_tab)
             self.settings_frame.pack(fill="both", expand=True)
             
@@ -414,7 +417,7 @@ class OwlApp:
             
             self.settings = MotionDetectionSettings(self.settings_scrollable_frame, self.logger)
             
-            # Initialize test interface with improved error handling for v1.5.4
+            # Initialize test interface with improved error handling for v1.5.5
             try:
                 test_scroll = ttk.Frame(self.test_tab)
                 test_scroll.pack(fill="both", expand=True)
@@ -656,7 +659,7 @@ class OwlApp:
                 # Start log monitoring
                 threading.Thread(target=self.refresh_logs, daemon=True).start()
                 
-                # Notify base images panel that detection has started (new in v1.5.4)
+                # Notify control panel that detection has started - THIS IS CRITICAL
                 self.control_panel.notify_detection_started()
 
             except Exception as e:
@@ -674,7 +677,7 @@ class OwlApp:
                 self.detection_running = False
                 self.control_panel.update_run_state(False)
                 
-                # Notify base images panel that detection has stopped (new in v1.5.4)
+                # Notify control panel that detection has stopped - THIS IS CRITICAL
                 self.control_panel.notify_detection_stopped()
                 
             except Exception as e:

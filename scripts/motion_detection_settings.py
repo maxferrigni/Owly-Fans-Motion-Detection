@@ -1,12 +1,23 @@
 # File: motion_detection_settings.py
 # Purpose: Simplified GUI controls for motion detection parameters
 # 
-# March 8, 2025 Update - Version 1.5.4
+# March 9, 2025 Update - Version 1.5.5
 # - Completely redesigned UI with a simpler linear layout
 # - Added scrollable container for all settings
 # - Removed nested sections and subsections
 # - Standardized all control elements
 # - Enhanced error handling
+
+"""
+Motion Detection Settings Panel
+------------------------------
+This module provides a user interface for adjusting motion detection parameters.
+
+Settings Storage:
+- All settings are saved locally in the config.json file
+- Settings are NOT synchronized with Supabase
+- Changes take effect when motion detection is restarted
+"""
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -44,15 +55,19 @@ class MotionDetectionSettings:
             return {}
             
     def save_config(self):
-        """Save current configuration to config.json"""
+        """
+        Save current configuration to config.json.
+        
+        Note: Settings are saved locally only and are not uploaded to Supabase.
+        """
         try:
             config_path = os.path.join(CONFIGS_DIR, "config.json")
             with open(config_path, 'w') as f:
                 json.dump(self.config, f, indent=4)
                 
             # Log success messages
-            self.logger.info("Configuration saved successfully")
-            messagebox.showinfo("Success", "Settings saved successfully")
+            self.logger.info("Configuration saved successfully to local config file")
+            messagebox.showinfo("Success", "Settings saved successfully to local configuration")
             
             return True
         except Exception as e:

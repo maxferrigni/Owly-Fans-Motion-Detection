@@ -1,8 +1,9 @@
 # File: test_interface.py
 # Purpose: Email alert testing interface for the Owl Monitoring System
-# Version: 1.5.4
+# Version: 1.5.5
 #
-# Major updates in v1.5.4:
+# Major updates in v1.5.5:
+# - Simplified UI by removing unnecessary sections
 # - Fixed non-functional alert test buttons
 # - Added proper logging of test results
 # - Enhanced visual feedback during and after tests
@@ -51,32 +52,18 @@ class TestInterface:
             self.log_message_callback(message, level)
         
     def create_interface(self):
-        """Create the alert testing interface"""
+        """Create the alert testing interface - simplified UI"""
         # Main frame
         self.main_frame = ttk.Frame(self.parent_frame)
         self.main_frame.pack(fill="both", expand=True, padx=15, pady=15)
         
-        # Title and instructions
+        # Title
         title_label = ttk.Label(
             self.main_frame,
             text="Email Alert Testing",
             font=("Arial", 14, "bold")
         )
-        title_label.pack(pady=(0, 10))
-        
-        instructions = (
-            "Use the buttons below to test email alerts for different owl activities. "
-            "Each test will generate a real email alert with 'TEST:' in the subject. "
-            "Test results will appear in the Owl Monitor Log."
-        )
-        
-        instruction_label = ttk.Label(
-            self.main_frame,
-            text=instructions,
-            wraplength=500,
-            justify="center"
-        )
-        instruction_label.pack(pady=(0, 20))
+        title_label.pack(pady=(0, 20))
         
         # Test alert buttons in a grid layout
         self.buttons_frame = ttk.Frame(self.main_frame)
@@ -144,26 +131,6 @@ class TestInterface:
             length=200
         )
         # Don't pack initially - will be shown during test
-        
-        # Information about email alerts
-        info_frame = ttk.LabelFrame(self.main_frame, text="About Email Alerts")
-        info_frame.pack(fill="x", pady=10, padx=20)
-        
-        info_text = (
-            "Email alerts are sent to all subscribers who have selected to "
-            "receive alerts for the specific owl location. Test alerts include "
-            "'TEST:' in the subject line and will not trigger cooldown periods "
-            "for real alerts."
-        )
-        
-        info_label = ttk.Label(
-            info_frame,
-            text=info_text,
-            wraplength=480,
-            justify="left",
-            padding=10
-        )
-        info_label.pack()
 
     def run_test_alert(self, alert_type):
         """Run a test alert for the specified alert type"""
