@@ -1,6 +1,6 @@
 # File: _front_end_app.py
-# Purpose: Main application window for the Owl Monitoring System - ENHANCED WITH ERROR HANDLING
-# Version: 1.5.1
+# Purpose: Main application window for the Owl Monitoring System
+# Version: 1.5.3 - Simplified for stability
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -10,7 +10,7 @@ import os
 import sys
 import json
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
 # Debug statement
@@ -134,22 +134,12 @@ try:
         traceback.print_exc()
         raise
     
-    print("Importing time utils...")
-    try:
-        from utilities.time_utils import get_current_lighting_condition, get_lighting_info
-        print("Imported time_utils successfully")
-    except Exception as e:
-        print(f"ERROR importing time_utils: {e}")
-        traceback.print_exc()
-        raise
-    
-    # Import GUI panels - now including all panel components
+    # Import GUI panels - now with simplified components
     print("Importing frontend panels...")
     try:
         from _front_end_panels import (
             LogWindow, 
-            ControlPanel,
-            LightingInfoPanel  # Re-enable LightingInfoPanel
+            ControlPanel
         )
         print("Imported frontend panels successfully")
     except Exception as e:
@@ -167,7 +157,7 @@ try:
         traceback.print_exc()
         raise
     
-    # Import TestInterface
+    # Import TestInterface - simplified for email testing only
     print("Importing test interface...")
     try:
         from test_interface import TestInterface
@@ -177,7 +167,7 @@ try:
         traceback.print_exc()
         # Continue without TestInterface if it fails
     
-    # Import new components
+    # Import new components - simplified for 1.5.3
     print("Importing camera feed panel...")
     try:
         from camera_feed_panel import CameraFeedPanel
@@ -187,9 +177,9 @@ try:
         traceback.print_exc()
         # Continue without CameraFeedPanel if it fails
     
-    print("Importing health status panel...")
+    print("Importing empty health status panel...")
     try:
-        from health_status_panel import HealthStatusPanel
+        from health_status_panel import EmptyHealthPanel
         print("Imported health_status_panel successfully")
     except Exception as e:
         print(f"ERROR importing health_status_panel: {e}")
@@ -218,10 +208,10 @@ class OwlApp:
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("900x600+-1920+0")
+        self.root.geometry("800x600+-1920+0")
         
         # Allow resizing but with minimum dimensions
-        self.root.minsize(800, 500)
+        self.root.minsize(600, 400)
         self.root.resizable(True, True)
         
         # Set up a handler for the window close event
@@ -243,23 +233,11 @@ class OwlApp:
         self.log_window = None
         self.control_panel = None
         self.settings = None
-        self.lighting_panel = None
         self.test_interface = None
         self.camera_panel = None
         self.health_panel = None
         
-        # Initialize lighting condition
-        try:
-            print("Getting current lighting condition...")
-            self.current_lighting_condition = get_current_lighting_condition()
-            self.in_transition = self.current_lighting_condition == 'transition'
-            print(f"Current lighting condition: {self.current_lighting_condition}")
-        except Exception as e:
-            print(f"ERROR getting lighting condition: {e}")
-            traceback.print_exc()
-            self.current_lighting_condition = "day"  # Default
-            self.in_transition = False
-        
+        # Main script path
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         try:
@@ -269,11 +247,6 @@ class OwlApp:
             self.style.configure('TButton', font=('Arial', 10))
             self.style.configure('TFrame', padding=2)
             self.style.configure('TLabelframe', padding=3)
-            
-            # Add custom styles for lighting indicators
-            self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
-            self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
-            self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
             print("Styles configured successfully")
         except Exception as e:
             print(f"ERROR setting up styles: {e}")
@@ -343,17 +316,6 @@ class OwlApp:
             print(f"ERROR initializing clock: {e}")
             traceback.print_exc()
         
-        # Add Lighting Information Panel - Re-enabling in v1.5.1
-        try:
-            print("Initializing lighting information panel...")
-            self.lighting_panel = LightingInfoPanel(self.root)
-            self.lighting_panel.pack(side="top", fill="x", padx=5, pady=2)
-            print("Lighting panel initialized successfully")
-        except Exception as e:
-            print(f"ERROR initializing lighting panel: {e}")
-            traceback.print_exc()
-            # Continue without lighting panel
-        
         try:
             print("Creating main container...")
             # Create main container
@@ -369,7 +331,7 @@ class OwlApp:
             self.settings_tab = ttk.Frame(self.notebook)
             self.test_tab = ttk.Frame(self.notebook)
             self.monitor_tab = ttk.Frame(self.notebook)  # New tab for monitoring
-            self.health_tab = ttk.Frame(self.notebook)   # New tab for health monitoring
+            self.health_tab = ttk.Frame(self.notebook)   # New tab for health monitoring (empty for 1.5.3)
 
             # Add tabs to notebook
             self.notebook.add(self.control_tab, text="Control")
@@ -393,7 +355,7 @@ class OwlApp:
             traceback.print_exc()
             raise
         
-        # Initialize new components in v1.5.1
+        # Initialize simplified components for v1.5.3
         try:
             print("Initializing camera feed panel...")
             self.camera_panel = CameraFeedPanel(self.monitor_tab, self.logger)
@@ -405,20 +367,14 @@ class OwlApp:
             # Continue without camera panel
         
         try:
-            print("Initializing health status panel...")
-            self.health_panel = HealthStatusPanel(self.health_tab, self.logger)
+            print("Initializing empty health status panel...")
+            self.health_panel = EmptyHealthPanel(self.health_tab, self.logger)
             self.health_panel.pack(fill="both", expand=True, padx=5, pady=5)
-            print("Health status panel initialized successfully")
+            print("Empty health status panel initialized successfully")
         except Exception as e:
             print(f"ERROR initializing health status panel: {e}")
             traceback.print_exc()
             # Continue without health panel
-
-        # SKIP LOG REDIRECTORS - potential cause of crash
-        print("SKIPPING log redirectors for debugging")
-        # DO NOT initialize redirector
-        # sys.stdout = self.LogRedirector(self)
-        # sys.stderr = self.LogRedirector(self)
 
         # Verify directories
         try:
@@ -459,7 +415,7 @@ class OwlApp:
             # Initialize log window
             self.log_window = LogWindow(self.root)
             
-            # Create control panel - Now uses the panel class with simplified parameters
+            # Create control panel - Now displays base images
             self.control_panel = ControlPanel(
                 self.control_tab,
                 self.local_saving_enabled,
@@ -482,7 +438,7 @@ class OwlApp:
             settings_scroll.pack(fill="both", expand=True)
             self.settings = MotionDetectionSettings(settings_scroll, self.logger)
             
-            # Initialize test interface - Re-enabled in v1.5.1
+            # Initialize simplified test interface - for email testing only
             try:
                 test_scroll = ttk.Frame(self.test_tab)
                 test_scroll.pack(fill="both", expand=True)
@@ -604,39 +560,6 @@ class OwlApp:
             self.log_message(f"Error updating alert delay: {e}", "ERROR")
             # Reset to default on error
             self.alert_delay.set(30)
-
-    class LogRedirector:
-        """Redirects stdout/stderr to log window"""
-        def __init__(self, app):
-            self.app = app
-            self.buffer = ""
-
-        def write(self, message):
-            try:
-                self.buffer += message
-                if '\n' in self.buffer:
-                    lines = self.buffer.split('\n')
-                    for line in lines[:-1]:  # Process all but the last line
-                        if line.strip():
-                            if "error" in line.lower():
-                                self.app.log_message(line.strip(), "ERROR")
-                            elif "warning" in line.lower():
-                                self.app.log_message(line.strip(), "WARNING")
-                            else:
-                                self.app.log_message(line.strip(), "INFO")
-                    self.buffer = lines[-1]  # Keep the last line in buffer
-            except Exception as e:
-                print(f"Error in log redirector: {e}")
-                # Fall back to standard output
-                sys.__stdout__.write(message)
-
-        def flush(self):
-            if self.buffer.strip():
-                try:
-                    self.app.log_message(self.buffer.strip(), "INFO")
-                except:
-                    sys.__stdout__.write(self.buffer)
-                self.buffer = ""
 
     def update_system(self):
         """Update the system from git repository"""
@@ -778,9 +701,6 @@ class OwlApp:
                 
             if self.health_panel:
                 self.health_panel.destroy()
-                
-            if self.lighting_panel:
-                self.lighting_panel.destroy()
             
             # Release the lock file
             release_lock()

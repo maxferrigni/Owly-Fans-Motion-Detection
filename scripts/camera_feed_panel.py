@@ -1,14 +1,16 @@
 # File: camera_feed_panel.py
-# Purpose: Organize and display camera feeds and comparison images
-# Version: 1.5.2
+# Purpose: Simplified camera feed display - Version 1.5.3
+# Version: 1.5.3
 # 
-# Update in v1.5.2:
-# - Fixed grid layout error (changed "-col" to "-column")
+# Update in v1.5.3:
+# - Significantly simplified for stability
+# - Removed auto-update functionality and controls
+# - Focused only on basic image display
+# - Improved error handling
 
 import tkinter as tk
 from tkinter import ttk
 import os
-import threading
 import time
 from datetime import datetime
 from PIL import Image, ImageTk
@@ -18,7 +20,7 @@ from utilities.constants import IMAGE_COMPARISONS_DIR, CAMERA_MAPPINGS
 from simple_image_viewer import SimpleImageViewer
 
 class CameraFeedPanel(ttk.LabelFrame):
-    """Panel to display camera feeds and comparison images"""
+    """Simplified panel to display camera feeds"""
     
     def __init__(self, parent, logger=None):
         super().__init__(parent, text="Camera Feeds")
@@ -26,8 +28,6 @@ class CameraFeedPanel(ttk.LabelFrame):
         self.logger = logger or get_logger()
         self.viewers = {}
         self.comparison_paths = {}
-        self.update_thread = None
-        self.running = False
         
         # Create panel components
         self.create_interface()
@@ -54,7 +54,6 @@ class CameraFeedPanel(ttk.LabelFrame):
                 
                 # Create frame for this camera
                 camera_frame = ttk.LabelFrame(main_frame, text=camera_name)
-                # Fixed in v1.5.2: Changed 'col' to 'column' to avoid ambiguous option error
                 camera_frame.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
                 
                 # Add image viewer
@@ -73,24 +72,13 @@ class CameraFeedPanel(ttk.LabelFrame):
             for i in range(cols):
                 main_frame.columnconfigure(i, weight=1)
                 
-            # Add update controls
+            # Add manual update button
             control_frame = ttk.Frame(self)
             control_frame.pack(fill="x", padx=5, pady=5)
             
-            # Add auto-update checkbox
-            self.auto_update = tk.BooleanVar(value=True)
-            auto_cb = ttk.Checkbutton(
-                control_frame,
-                text="Auto-update images",
-                variable=self.auto_update,
-                command=self.toggle_auto_update
-            )
-            auto_cb.pack(side=tk.LEFT, padx=5)
-            
-            # Add manual update button
             update_btn = ttk.Button(
                 control_frame,
-                text="Update Now",
+                text="Update Images",
                 command=self.update_images
             )
             update_btn.pack(side=tk.LEFT, padx=5)
@@ -102,9 +90,8 @@ class CameraFeedPanel(ttk.LabelFrame):
             )
             self.last_update_label.pack(side=tk.RIGHT, padx=5)
             
-            # Start auto-update if enabled
-            if self.auto_update.get():
-                self.start_auto_update()
+            # Run initial update
+            self.update_images()
                 
             self.logger.info("Camera feed panel initialized successfully")
             
@@ -135,18 +122,14 @@ class CameraFeedPanel(ttk.LabelFrame):
                     comparison_filename = f"{alert_type_clean}_comparison.jpg"
                     comparison_path = os.path.join(IMAGE_COMPARISONS_DIR, comparison_filename)
                     
-                    # Check if file exists and has been modified since last update
+                    # Check if file exists
                     if os.path.exists(comparison_path):
-                        if (self.comparison_paths.get(camera_name) != comparison_path or
-                            (self.comparison_paths.get(camera_name) == comparison_path and
-                             os.path.getmtime(comparison_path) > viewer.last_update_time)):
-                            
-                            # Load the image
-                            max_size = (400, 300)  # Larger display size for main panel
-                            if viewer.load_image(comparison_path, max_size):
-                                self.comparison_paths[camera_name] = comparison_path
-                                images_updated = True
-                                self.logger.debug(f"Updated image for {camera_name}")
+                        # Load the image
+                        max_size = (400, 300)  # Larger display size for main panel
+                        if viewer.load_image(comparison_path, max_size):
+                            self.comparison_paths[camera_name] = comparison_path
+                            images_updated = True
+                            self.logger.debug(f"Updated image for {camera_name}")
                     else:
                         self.logger.debug(f"Comparison image not found for {camera_name}: {comparison_path}")
                         
@@ -160,56 +143,8 @@ class CameraFeedPanel(ttk.LabelFrame):
         except Exception as e:
             self.logger.error(f"Error updating images: {e}")
     
-    def toggle_auto_update(self):
-        """Toggle automatic image updates"""
-        try:
-            if self.auto_update.get():
-                self.start_auto_update()
-            else:
-                self.stop_auto_update()
-        except Exception as e:
-            self.logger.error(f"Error toggling auto-update: {e}")
-    
-    def start_auto_update(self):
-        """Start auto-update thread"""
-        if self.update_thread and self.update_thread.is_alive():
-            return  # Already running
-            
-        self.running = True
-        self.update_thread = threading.Thread(target=self.auto_update_loop, daemon=True)
-        self.update_thread.start()
-        self.logger.info("Auto-update started")
-    
-    def stop_auto_update(self):
-        """Stop auto-update thread"""
-        self.running = False
-        if self.update_thread:
-            self.update_thread.join(timeout=1)
-        self.logger.info("Auto-update stopped")
-    
-    def auto_update_loop(self):
-        """Background thread to update images periodically"""
-        update_interval = 5  # seconds
-        
-        while self.running:
-            try:
-                # Update images
-                self.update_images()
-                
-                # Sleep in small increments to allow for clean shutdown
-                for _ in range(update_interval * 10):  # 10 checks per second
-                    if not self.running:
-                        break
-                    time.sleep(0.1)
-                    
-            except Exception as e:
-                self.logger.error(f"Error in auto-update loop: {e}")
-                # Sleep before retry
-                time.sleep(update_interval)
-    
     def destroy(self):
         """Clean up resources when panel is destroyed"""
-        self.stop_auto_update()
         super().destroy()
 
 
