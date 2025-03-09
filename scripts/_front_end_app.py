@@ -1,6 +1,6 @@
 # File: _front_end_app.py
-# Purpose: Main application window for the Owl Monitoring System
-# Version: 1.5.3 - Simplified for stability
+# Purpose: Main application window for the Owl Monitoring System - SIMPLIFIED FOR STABILITY
+# Version: 1.5.3
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -134,7 +134,7 @@ try:
         traceback.print_exc()
         raise
     
-    # Import GUI panels - now with simplified components
+    # Import GUI panels - simplified for v1.5.3
     print("Importing frontend panels...")
     try:
         from _front_end_panels import (
@@ -157,7 +157,7 @@ try:
         traceback.print_exc()
         raise
     
-    # Import TestInterface - simplified for email testing only
+    # Import TestInterface - simplified for v1.5.3
     print("Importing test interface...")
     try:
         from test_interface import TestInterface
@@ -167,24 +167,15 @@ try:
         traceback.print_exc()
         # Continue without TestInterface if it fails
     
-    # Import new components - simplified for 1.5.3
-    print("Importing camera feed panel...")
+    # Import base images display
+    print("Importing base images panel...")
     try:
-        from camera_feed_panel import CameraFeedPanel
-        print("Imported camera_feed_panel successfully")
+        from camera_feed_panel import BaseImagesPanel
+        print("Imported base images panel successfully")
     except Exception as e:
-        print(f"ERROR importing camera_feed_panel: {e}")
+        print(f"ERROR importing base_images_panel: {e}")
         traceback.print_exc()
-        # Continue without CameraFeedPanel if it fails
-    
-    print("Importing empty health status panel...")
-    try:
-        from health_status_panel import EmptyHealthPanel
-        print("Imported health_status_panel successfully")
-    except Exception as e:
-        print(f"ERROR importing health_status_panel: {e}")
-        traceback.print_exc()
-        # Continue without HealthStatusPanel if it fails
+        # Continue without BaseImagesPanel if it fails
     
     print("All imports completed successfully")
 except Exception as e:
@@ -208,10 +199,10 @@ class OwlApp:
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("800x600+-1920+0")
+        self.root.geometry("900x600+-1920+0")
         
         # Allow resizing but with minimum dimensions
-        self.root.minsize(600, 400)
+        self.root.minsize(800, 500)
         self.root.resizable(True, True)
         
         # Set up a handler for the window close event
@@ -234,10 +225,8 @@ class OwlApp:
         self.control_panel = None
         self.settings = None
         self.test_interface = None
-        self.camera_panel = None
-        self.health_panel = None
+        self.base_images_panel = None
         
-        # Main script path
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
         try:
@@ -281,7 +270,7 @@ class OwlApp:
             
         try:
             print("Creating UI framework...")
-            # Create header frame to contain environment, version, clock, and health indicators
+            # Create header frame to contain environment, version, and clock
             self.header_frame = ttk.Frame(self.root)
             self.header_frame.pack(side="top", fill="x", pady=5)
 
@@ -301,20 +290,21 @@ class OwlApp:
                 font=("Arial", 8)
             )
             self.version_label.pack(side="top", pady=2)
+            
+            # Add simple clock
+            self.clock_label = ttk.Label(
+                self.header_frame,
+                font=("Arial", 11),
+                foreground="darkblue"
+            )
+            self.clock_label.pack(side="right", padx=10)
+            self.update_clock()
+            
             print("UI framework created successfully")
         except Exception as e:
             print(f"ERROR creating UI framework: {e}")
             traceback.print_exc()
             raise
-        
-        # Initialize clock
-        try:
-            print("Initializing clock...")
-            self.initialize_clock()
-            print("Clock initialized successfully")
-        except Exception as e:
-            print(f"ERROR initializing clock: {e}")
-            traceback.print_exc()
         
         try:
             print("Creating main container...")
@@ -326,18 +316,16 @@ class OwlApp:
             self.notebook = ttk.Notebook(self.main_container)
             self.notebook.pack(fill="both", expand=True)
 
-            # Create tabs
+            # Create tabs - SIMPLIFIED FOR v1.5.3
             self.control_tab = ttk.Frame(self.notebook)
             self.settings_tab = ttk.Frame(self.notebook)
             self.test_tab = ttk.Frame(self.notebook)
-            self.monitor_tab = ttk.Frame(self.notebook)  # New tab for monitoring
-            self.health_tab = ttk.Frame(self.notebook)   # New tab for health monitoring (empty for 1.5.3)
+            self.health_tab = ttk.Frame(self.notebook)  # Empty placeholder
 
             # Add tabs to notebook
             self.notebook.add(self.control_tab, text="Control")
             self.notebook.add(self.settings_tab, text="Settings")
             self.notebook.add(self.test_tab, text="Test")
-            self.notebook.add(self.monitor_tab, text="Monitoring")
             self.notebook.add(self.health_tab, text="Health")
             print("Main container created successfully")
         except Exception as e:
@@ -355,26 +343,15 @@ class OwlApp:
             traceback.print_exc()
             raise
         
-        # Initialize simplified components for v1.5.3
+        # Create empty health tab placeholder
         try:
-            print("Initializing camera feed panel...")
-            self.camera_panel = CameraFeedPanel(self.monitor_tab, self.logger)
-            self.camera_panel.pack(fill="both", expand=True, padx=5, pady=5)
-            print("Camera feed panel initialized successfully")
+            print("Initializing health tab...")
+            self.create_health_tab_placeholder()
+            print("Health tab initialized successfully")
         except Exception as e:
-            print(f"ERROR initializing camera feed panel: {e}")
+            print(f"ERROR initializing health tab: {e}")
             traceback.print_exc()
-            # Continue without camera panel
-        
-        try:
-            print("Initializing empty health status panel...")
-            self.health_panel = EmptyHealthPanel(self.health_tab, self.logger)
-            self.health_panel.pack(fill="both", expand=True, padx=5, pady=5)
-            print("Empty health status panel initialized successfully")
-        except Exception as e:
-            print(f"ERROR initializing health status panel: {e}")
-            traceback.print_exc()
-            # Continue without health panel
+            # Continue without health tab if it fails
 
         # Verify directories
         try:
@@ -388,16 +365,6 @@ class OwlApp:
         # Log startup success
         self.log_message("GUI initialized and ready", "INFO")
         print("OwlApp initialization complete")
-    
-    def initialize_clock(self):
-        """Add simple clock to the UI"""
-        self.clock_label = ttk.Label(
-            self.header_frame,
-            font=("Arial", 11),
-            foreground="darkblue"
-        )
-        self.clock_label.pack(side="right", padx=10)
-        self.update_clock()
     
     def update_clock(self):
         """Update clock display every second"""
@@ -415,7 +382,7 @@ class OwlApp:
             # Initialize log window
             self.log_window = LogWindow(self.root)
             
-            # Create control panel - Now displays base images
+            # Create control panel 
             self.control_panel = ControlPanel(
                 self.control_tab,
                 self.local_saving_enabled,
@@ -431,14 +398,21 @@ class OwlApp:
                 self.toggle_email_alerts,
                 self.log_window
             )
-            self.control_panel.pack(fill="both", expand=True)
+            self.control_panel.pack(fill="x", expand=False)
             
+            # Add base images panel to control tab
+            try:
+                self.base_images_panel = BaseImagesPanel(self.control_tab, self.logger)
+                self.base_images_panel.pack(fill="both", expand=True, padx=5, pady=5)
+            except Exception as e:
+                self.log_message(f"Error initializing base images panel: {e}", "ERROR")
+                
             # Create motion detection settings in settings tab
             settings_scroll = ttk.Frame(self.settings_tab)
             settings_scroll.pack(fill="both", expand=True)
             self.settings = MotionDetectionSettings(settings_scroll, self.logger)
             
-            # Initialize simplified test interface - for email testing only
+            # Initialize simplified test interface
             try:
                 test_scroll = ttk.Frame(self.test_tab)
                 test_scroll.pack(fill="both", expand=True)
@@ -460,6 +434,22 @@ class OwlApp:
             print(f"Error initializing basic components: {e}")
             traceback.print_exc()
             raise
+            
+    def create_health_tab_placeholder(self):
+        """Create empty placeholder for health tab"""
+        try:
+            # Create a simple message indicating future functionality
+            message_frame = ttk.Frame(self.health_tab)
+            message_frame.pack(expand=True, fill="both", padx=20, pady=20)
+            
+            ttk.Label(
+                message_frame,
+                text="Health monitoring features will be available in a future update.",
+                font=("Arial", 12)
+            ).pack(pady=50)
+            
+        except Exception as e:
+            self.log_message(f"Error creating health tab placeholder: {e}", "ERROR")
 
     def log_message(self, message, level="INFO"):
         """Log message to log window"""
@@ -696,11 +686,8 @@ class OwlApp:
                 self.stop_script()
             
             # Clean up component resources
-            if self.camera_panel:
-                self.camera_panel.destroy()
-                
-            if self.health_panel:
-                self.health_panel.destroy()
+            if self.base_images_panel:
+                self.base_images_panel.destroy()
             
             # Release the lock file
             release_lock()

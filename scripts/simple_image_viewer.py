@@ -3,14 +3,14 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 import os
 from utilities.logging_utils import get_logger
-from utilities.constants import get_base_image_path, BASE_IMAGE_FILENAMES
+from utilities.constants import get_base_image_path
 
 logger = get_logger()
 
-class SimpleImageViewer(ttk.LabelFrame):
-    """A simple panel to display images with improved error handling and base image support"""
-    def __init__(self, parent, title="Image Viewer"):
-        super().__init__(parent, text=title)
+class SimpleImageViewer(ttk.Frame):
+    """A minimal image viewer without annotations or extra text"""
+    def __init__(self, parent, title=None):
+        super().__init__(parent)
         
         # Keep reference to loaded images
         self.image_references = {}
@@ -18,22 +18,27 @@ class SimpleImageViewer(ttk.LabelFrame):
         # Track last update time for change detection
         self.last_update_time = 0
         
+        # Save title if provided
+        self.title = title
+        
         # Create the UI
         self.create_interface()
         
     def create_interface(self):
-        """Create the image display interface"""
-        self.frame = ttk.Frame(self)
-        self.frame.pack(fill="both", expand=True, padx=5, pady=5)
+        """Create a simple display with just the image"""
+        # Add title if provided
+        if self.title:
+            self.title_label = ttk.Label(self, text=self.title)
+            self.title_label.pack(pady=(0, 5))
         
-        # Create image label
-        self.image_label = ttk.Label(self.frame, text="No image loaded")
-        self.image_label.pack(pady=5)
+        # Create image label - no additional text
+        self.image_label = ttk.Label(self)
+        self.image_label.pack(padx=5, pady=5)
         
     def load_image(self, image_path, max_size=(200, 150)):
-        """Load and display an image"""
+        """Load and display an image without annotations"""
         if not os.path.exists(image_path):
-            self.image_label.config(text=f"Image not found:\n{os.path.basename(image_path)}", image="")
+            logger.warning(f"Image not found: {image_path}")
             return False
             
         # Load the image
@@ -50,8 +55,8 @@ class SimpleImageViewer(ttk.LabelFrame):
             # Convert to PhotoImage
             photo = ImageTk.PhotoImage(img)
             
-            # Update label
-            self.image_label.config(image=photo, text="")
+            # Update label - just the image, no text
+            self.image_label.config(image=photo)
             
             # Keep reference to prevent garbage collection
             self.image_references[image_path] = photo
@@ -60,7 +65,6 @@ class SimpleImageViewer(ttk.LabelFrame):
             return True
         except Exception as e:
             logger.error(f"Error loading image {image_path}: {e}")
-            self.image_label.config(text=f"Error loading image", image="")
             return False
     
     def load_base_image(self, camera_name, lighting_condition, max_size=(200, 150)):
@@ -83,24 +87,23 @@ class SimpleImageViewer(ttk.LabelFrame):
             return self.load_image(image_path, max_size)
         except Exception as e:
             logger.error(f"Error loading base image for {camera_name} ({lighting_condition}): {e}")
-            self.image_label.config(text=f"Error loading base image", image="")
             return False
         
     def clear(self):
         """Clear the displayed image"""
-        self.image_label.config(image="", text="No image loaded")
+        self.image_label.config(image="")
         
         # Clear references to allow garbage collection
         self.image_references.clear()
 
-# Test code (only runs when script is executed directly)
+
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title("Image Viewer Test")
+    root.title("Simple Image Viewer Test")
     
     # Create a test viewer
-    viewer = SimpleImageViewer(root, "Test Viewer")
-    viewer.pack(fill="both", expand=True, padx=10, pady=10)
+    viewer = SimpleImageViewer(root, "Test Base Image")
+    viewer.pack(padx=10, pady=10)
     
     # Create test buttons
     button_frame = ttk.Frame(root)
@@ -126,18 +129,6 @@ if __name__ == "__main__":
         button_frame,
         text="Clear",
         command=viewer.clear
-    ).pack(side=tk.LEFT, padx=5)
-    
-    # Test base image loading
-    def load_test_base():
-        from utilities.constants import CAMERA_MAPPINGS
-        camera_name = list(CAMERA_MAPPINGS.keys())[0]  # Get first camera
-        viewer.load_base_image(camera_name, 'day', max_size=(300, 200))
-    
-    ttk.Button(
-        button_frame,
-        text="Test Base Image",
-        command=load_test_base
     ).pack(side=tk.LEFT, padx=5)
     
     root.mainloop()
