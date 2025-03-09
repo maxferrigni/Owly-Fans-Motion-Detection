@@ -1,10 +1,11 @@
 # File: _front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 8, 2025 Update - Version 1.5.3
-# - Removed LightingInfoPanel completely
-# - Added Base Images display to ControlPanel
-# - Simplified UI for improved stability
+# March 8, 2025 Update - Version 1.5.4
+# - Fixed redundant base image display
+# - Improved base image display timing with detection state
+# - Enhanced LogWindow functionality
+# - Improved control panel design
 
 import tkinter as tk
 from tkinter import scrolledtext, ttk, messagebox
@@ -18,8 +19,8 @@ from PIL import Image, ImageTk
 
 from utilities.logging_utils import get_logger
 from utilities.constants import (
-    SAVED_IMAGES_DIR, 
-    BASE_IMAGES_DIR,
+    SAVED_IMAGES_DIR,
+    BASE_IMAGES_DIR, 
     CAMERA_MAPPINGS,
     get_base_image_path
 )
@@ -181,30 +182,47 @@ class LogWindow(tk.Toplevel):
         self.position_window()
         self.lift()  # Bring to front
 
-class BaseImageViewer(ttk.LabelFrame):
+class BaseImagesPanel(ttk.LabelFrame):
     """
-    Component to display base images for all cameras.
-    Added in v1.5.3 to provide basic visual feedback.
+    Improved panel to display base images for all cameras.
+    In v1.5.4: Only shows images after detection starts.
     """
     def __init__(self, parent, logger=None):
-        super().__init__(parent, text="Current Base Images")
+        super().__init__(parent, text="Camera Base Images")
         
         self.logger = logger or get_logger()
         self.image_references = {}  # Store references to prevent garbage collection
+        self.detection_active = False  # Track if detection is running
         
         # Create UI
         self.create_interface()
         
-        # Load images initially
-        self.load_base_images()
-        
-        # Set up periodic refresh
-        self.start_refresh_timer()
-    
     def create_interface(self):
-        """Create the image display interface"""
+        """Create the improved image display interface"""
         main_frame = ttk.Frame(self)
         main_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Add status indicator
+        self.status_frame = ttk.Frame(main_frame)
+        self.status_frame.pack(fill="x", pady=(0, 5))
+        
+        self.status_var = tk.StringVar(value="Waiting for detection to start...")
+        self.status_label = ttk.Label(
+            self.status_frame, 
+            textvariable=self.status_var,
+            font=("Arial", 10, "italic"),
+            foreground="gray"
+        )
+        self.status_label.pack(side=tk.LEFT)
+        
+        # Add refresh button
+        self.refresh_button = ttk.Button(
+            self.status_frame,
+            text="Refresh Images",
+            command=self.refresh_images,
+            state=tk.DISABLED  # Disabled until detection starts
+        )
+        self.refresh_button.pack(side=tk.RIGHT, padx=5)
         
         # Container for images
         self.images_frame = ttk.Frame(main_frame)
@@ -221,19 +239,24 @@ class BaseImageViewer(ttk.LabelFrame):
             camera_frame = ttk.LabelFrame(self.images_frame, text=camera_name)
             camera_frame.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")
             
-            # Add label for lighting condition
-            condition_var = tk.StringVar(value="Loading...")
-            condition_label = ttk.Label(camera_frame, textvariable=condition_var)
-            condition_label.pack(pady=(5, 0))
+            # Add placeholder for when no images available
+            placeholder_frame = ttk.Frame(camera_frame, width=200, height=150)
+            placeholder_frame.pack(padx=5, pady=5)
+            placeholder_frame.pack_propagate(False)  # Maintain size even when empty
             
-            # Add image label
-            image_label = ttk.Label(camera_frame, text="Loading base image...")
-            image_label.pack(padx=5, pady=5)
+            # Add placeholder text
+            placeholder_label = ttk.Label(
+                placeholder_frame,
+                text="Base image will appear\nafter detection starts",
+                justify="center"
+            )
+            placeholder_label.place(relx=0.5, rely=0.5, anchor="center")
             
-            # Store references
+            # Store reference to placeholder
             self.image_labels[camera_name] = {
-                "label": image_label,
-                "condition_var": condition_var
+                "frame": placeholder_frame,
+                "placeholder": placeholder_label,
+                "image_label": None  # Will be created when needed
             }
         
         # Configure grid to expand properly
@@ -242,28 +265,58 @@ class BaseImageViewer(ttk.LabelFrame):
         self.images_frame.columnconfigure(2, weight=1)
         self.images_frame.rowconfigure(0, weight=1)
         
-        # Add refresh button at the bottom
-        controls_frame = ttk.Frame(main_frame)
-        controls_frame.pack(fill="x", pady=5)
-        
-        ttk.Button(
-            controls_frame,
-            text="Refresh Images",
-            command=self.load_base_images
-        ).pack(side=tk.RIGHT, padx=5)
-        
         # Add last update time label
-        self.last_update_var = tk.StringVar(value="Last update: Never")
-        ttk.Label(
-            controls_frame,
-            textvariable=self.last_update_var
-        ).pack(side=tk.LEFT, padx=5)
+        self.last_update_var = tk.StringVar(value="Detection not active")
+        last_update_label = ttk.Label(
+            main_frame,
+            textvariable=self.last_update_var,
+            font=("Arial", 8),
+            foreground="gray"
+        )
+        last_update_label.pack(side=tk.LEFT, padx=5, pady=(5, 0))
+        
+    def detection_started(self):
+        """Called when detection script starts"""
+        self.detection_active = True
+        self.status_var.set("Loading base images...")
+        self.refresh_button.config(state=tk.NORMAL)
+        
+        # Schedule image loading after a short delay
+        self.after(2000, self.load_base_images)
+        
+    def detection_stopped(self):
+        """Called when detection script stops"""
+        self.detection_active = False
+        self.status_var.set("Waiting for detection to start...")
+        self.refresh_button.config(state=tk.DISABLED)
+        self.last_update_var.set("Detection not active")
+        
+        # Clear all images and show placeholders
+        self.clear_images()
+        
+    def clear_images(self):
+        """Clear all images and show placeholders"""
+        for camera_name, components in self.image_labels.items():
+            # Remove image label if it exists
+            if components["image_label"] is not None:
+                components["image_label"].destroy()
+                components["image_label"] = None
+            
+            # Show placeholder
+            components["placeholder"].place(relx=0.5, rely=0.5, anchor="center")
+            
+        # Clear image references to release memory
+        self.image_references.clear()
     
     def load_base_images(self):
         """Load all base images for display"""
+        if not self.detection_active:
+            return
+            
         try:
             # Update all three lighting conditions
             lighting_conditions = ["day", "night", "transition"]
+            found_images = False
             
             # Check which lighting condition has the most recent base images
             latest_condition = self.get_latest_base_image_condition()
@@ -279,6 +332,7 @@ class BaseImageViewer(ttk.LabelFrame):
                     
                     # Check if file exists
                     if os.path.exists(image_path):
+                        found_images = True
                         # Load and resize image
                         img = Image.open(image_path)
                         img.thumbnail((200, 150), Image.LANCZOS)
@@ -286,37 +340,64 @@ class BaseImageViewer(ttk.LabelFrame):
                         # Convert to PhotoImage
                         photo = ImageTk.PhotoImage(img)
                         
-                        # Update label
-                        self.image_labels[camera_name]["label"].config(image=photo, text="")
+                        # Get component references
+                        components = self.image_labels[camera_name]
                         
-                        # Update condition label
-                        self.image_labels[camera_name]["condition_var"].set(
-                            f"Current: {latest_condition.capitalize()}"
-                        )
+                        # Hide placeholder
+                        components["placeholder"].place_forget()
+                        
+                        # Create or update image label
+                        if components["image_label"] is None:
+                            components["image_label"] = ttk.Label(components["frame"])
+                            components["image_label"].pack(fill="both", expand=True)
+                        
+                        # Update image
+                        components["image_label"].config(image=photo)
                         
                         # Keep reference to prevent garbage collection
                         self.image_references[camera_name] = photo
                     else:
-                        self.image_labels[camera_name]["label"].config(
-                            text=f"No {latest_condition} base image found",
-                            image=""
+                        self.logger.debug(f"No {latest_condition} base image found for {camera_name}")
+                        
+                        # Show placeholder with message
+                        components = self.image_labels[camera_name]
+                        if components["image_label"] is not None:
+                            components["image_label"].destroy()
+                            components["image_label"] = None
+                            
+                        components["placeholder"].config(
+                            text=f"No {latest_condition} base image found"
                         )
-                        self.image_labels[camera_name]["condition_var"].set(
-                            f"Missing: {latest_condition.capitalize()}"
-                        )
+                        components["placeholder"].place(relx=0.5, rely=0.5, anchor="center")
                         
                 except Exception as e:
                     self.logger.error(f"Error loading base image for {camera_name}: {e}")
-                    self.image_labels[camera_name]["label"].config(
-                        text=f"Error loading image: {str(e)[:50]}",
-                        image=""
+                    
+                    # Show placeholder with error message
+                    components = self.image_labels[camera_name]
+                    if components["image_label"] is not None:
+                        components["image_label"].destroy()
+                        components["image_label"] = None
+                        
+                    components["placeholder"].config(
+                        text=f"Error loading image:\n{str(e)[:50]}..."
                     )
+                    components["placeholder"].place(relx=0.5, rely=0.5, anchor="center")
             
-            # Update last update time
-            self.last_update_var.set(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
+            # Update last update time and status
+            if found_images:
+                self.last_update_var.set(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
+                self.status_var.set(f"Showing {latest_condition} base images")
+            else:
+                self.last_update_var.set("No base images found")
+                self.status_var.set("Waiting for base images to be captured...")
+                
+                # Schedule another attempt in 5 seconds
+                self.after(5000, self.load_base_images)
             
         except Exception as e:
             self.logger.error(f"Error loading base images: {e}")
+            self.status_var.set(f"Error: {str(e)[:50]}...")
     
     def get_latest_base_image_condition(self):
         """
@@ -341,18 +422,11 @@ class BaseImageViewer(ttk.LabelFrame):
         
         return latest_condition
     
-    def start_refresh_timer(self):
-        """Start a timer to periodically refresh the base images"""
-        # Refresh every 5 minutes
-        self.after(300000, self.refresh_timer_callback)
-    
-    def refresh_timer_callback(self):
-        """Callback for the refresh timer"""
-        try:
+    def refresh_images(self):
+        """Manual refresh of base images"""
+        if self.detection_active:
+            self.status_var.set("Refreshing base images...")
             self.load_base_images()
-        finally:
-            # Schedule next refresh regardless of success/failure
-            self.start_refresh_timer()
     
     def destroy(self):
         """Clean up resources"""
@@ -361,7 +435,7 @@ class BaseImageViewer(ttk.LabelFrame):
         super().destroy()
 
 class ControlPanel(ttk.Frame):
-    """Panel for controlling the application with base image display"""
+    """Panel for controlling the application with improved base image display"""
     def __init__(self, parent, local_saving_enabled, capture_interval, alert_delay,
                  email_alerts_enabled, update_system_func, start_script_func,
                  stop_script_func, toggle_local_saving_func, update_capture_interval_func,
@@ -386,36 +460,25 @@ class ControlPanel(ttk.Frame):
         # Create UI components
         self.create_control_interface()
         
+        # Base images panel reference - initialize after detection starts
+        self.base_images_panel = None
+        
     def create_control_interface(self):
-        """Create control interface components"""
-        # Create scrollable frame for all content
-        self.canvas = tk.Canvas(self, highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.scrollable_frame = ttk.Frame(self.canvas)
+        """Create control interface components - Simplified for v1.5.4"""
+        # Main controls frame
+        controls_frame = ttk.LabelFrame(self, text="Motion Detection Controls")
+        controls_frame.pack(fill="x", padx=5, pady=5)
         
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(
-                scrollregion=self.canvas.bbox("all")
-            )
-        )
+        # Button grid layout for controls
+        button_grid = ttk.Frame(controls_frame)
+        button_grid.pack(fill="x", padx=5, pady=5)
         
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-        
-        # Main controls frame - now inside scrollable_frame
-        main_controls = ttk.LabelFrame(self.scrollable_frame, text="Motion Detection Controls")
-        main_controls.pack(padx=5, pady=5, fill="x")
-        
-        # More compact button layout with multiple rows
-        button_frame1 = ttk.Frame(main_controls)
-        button_frame1.pack(pady=2, fill="x")
+        # First row of buttons
+        row1 = ttk.Frame(button_grid)
+        row1.pack(fill="x", pady=2)
         
         self.start_button = ttk.Button(
-            button_frame1,
+            row1,
             text="Start Detection",
             command=self.start_script_func,
             width=15
@@ -423,7 +486,7 @@ class ControlPanel(ttk.Frame):
         self.start_button.pack(side=tk.LEFT, padx=2)
         
         self.stop_button = ttk.Button(
-            button_frame1,
+            row1,
             text="Stop Detection",
             command=self.stop_script_func,
             state=tk.DISABLED,
@@ -431,11 +494,23 @@ class ControlPanel(ttk.Frame):
         )
         self.stop_button.pack(side=tk.LEFT, padx=2)
         
-        button_frame2 = ttk.Frame(main_controls)
-        button_frame2.pack(pady=2, fill="x")
+        # Add spacer between button groups
+        ttk.Label(row1, text="").pack(side=tk.LEFT, padx=10)
+        
+        self.view_logs_button = ttk.Button(
+            row1,
+            text="View Logs",
+            command=self.show_logs,
+            width=15
+        )
+        self.view_logs_button.pack(side=tk.LEFT, padx=2)
+        
+        # Second row of buttons
+        row2 = ttk.Frame(button_grid)
+        row2.pack(fill="x", pady=2)
         
         self.update_button = ttk.Button(
-            button_frame2,
+            row2,
             text="Update System",
             command=self.update_system_func,
             width=15
@@ -443,56 +518,47 @@ class ControlPanel(ttk.Frame):
         self.update_button.pack(side=tk.LEFT, padx=2)
         
         self.cleanup_button = ttk.Button(
-            button_frame2,
+            row2,
             text="Clear Saved Images",
             command=self.cleanup_saved_images,
             width=15
         )
         self.cleanup_button.pack(side=tk.LEFT, padx=2)
         
-        # View logs button
-        self.view_logs_button = ttk.Button(
-            button_frame2,
-            text="View Logs",
-            command=self.show_logs,
-            width=15
-        )
-        self.view_logs_button.pack(side=tk.LEFT, padx=2)
+        # Settings section - simplified for v1.5.4
+        settings_frame = ttk.LabelFrame(self, text="Settings")
+        settings_frame.pack(fill="x", padx=5, pady=5)
         
-        # Combined Settings section (merged settings and alert settings)
-        settings_frame = ttk.LabelFrame(self.scrollable_frame, text="Settings")
-        settings_frame.pack(padx=5, pady=5, fill="x")
+        # Create settings in two rows
+        row1 = ttk.Frame(settings_frame)
+        row1.pack(fill="x", pady=5)
         
-        # Create settings controls - more compact layout
-        setting_controls = ttk.Frame(settings_frame)
-        setting_controls.pack(pady=2, fill="x")
-        
-        # 2-column layout for more compact display
-        # Local saving checkbox and Capture interval on first row
-        row1 = ttk.Frame(setting_controls)
-        row1.pack(fill="x", pady=1)
-        
-        # Left column
-        col1 = ttk.Frame(row1)
-        col1.pack(side=tk.LEFT, fill="x", expand=True)
-        
+        # Local saving and Email alerts (checkboxes)
         local_saving_cb = ttk.Checkbutton(
-            col1,
+            row1,
             text="Enable Local Image Saving",
             variable=self.local_saving_enabled,
             command=self.toggle_local_saving_func
         )
-        local_saving_cb.pack(side=tk.LEFT, padx=2, pady=1, anchor="w")
+        local_saving_cb.pack(side=tk.LEFT, padx=10)
         
-        # Right column
-        col2 = ttk.Frame(row1)
-        col2.pack(side=tk.RIGHT, fill="x", expand=True)
+        email_cb = ttk.Checkbutton(
+            row1,
+            text="Enable Email Alerts",
+            variable=self.email_alerts_enabled,
+            command=self.toggle_email_alerts_func
+        )
+        email_cb.pack(side=tk.LEFT, padx=10)
         
-        interval_frame = ttk.Frame(col2)
-        interval_frame.pack(side=tk.LEFT, fill="x", padx=2, pady=1)
+        # Capture interval and Alert delay (spinners)
+        row2 = ttk.Frame(settings_frame)
+        row2.pack(fill="x", pady=5)
+        
+        # Capture interval
+        interval_frame = ttk.Frame(row2)
+        interval_frame.pack(side=tk.LEFT, padx=10)
         
         ttk.Label(interval_frame, text="Capture Interval (sec):").pack(side=tk.LEFT)
-        
         interval_spinner = ttk.Spinbox(
             interval_frame,
             from_=10,
@@ -501,21 +567,13 @@ class ControlPanel(ttk.Frame):
             textvariable=self.capture_interval,
             command=self.update_capture_interval_func
         )
-        interval_spinner.pack(side=tk.LEFT, padx=2)
+        interval_spinner.pack(side=tk.LEFT, padx=5)
         
-        # Alert delay and Email alerts on second row
-        row2 = ttk.Frame(setting_controls)
-        row2.pack(fill="x", pady=1)
-        
-        # Left column
-        col3 = ttk.Frame(row2)
-        col3.pack(side=tk.LEFT, fill="x", expand=True)
-        
-        delay_frame = ttk.Frame(col3)
-        delay_frame.pack(side=tk.LEFT, fill="x", padx=2, pady=1)
+        # Alert delay
+        delay_frame = ttk.Frame(row2)
+        delay_frame.pack(side=tk.LEFT, padx=10)
         
         ttk.Label(delay_frame, text="Alert Delay (min):").pack(side=tk.LEFT)
-        
         delay_spinner = ttk.Spinbox(
             delay_frame,
             from_=5,
@@ -524,23 +582,15 @@ class ControlPanel(ttk.Frame):
             textvariable=self.alert_delay,
             command=self.update_alert_delay_func
         )
-        delay_spinner.pack(side=tk.LEFT, padx=2)
+        delay_spinner.pack(side=tk.LEFT, padx=5)
         
-        # Right column
-        col4 = ttk.Frame(row2)
-        col4.pack(side=tk.RIGHT, fill="x", expand=True)
+        # Create container for base images panel - will be populated when detection starts
+        self.images_container = ttk.Frame(self)
+        self.images_container.pack(fill="both", expand=True, padx=5, pady=5)
         
-        email_cb = ttk.Checkbutton(
-            col4,
-            text="Enable Email Alerts",
-            variable=self.email_alerts_enabled,
-            command=self.toggle_email_alerts_func
-        )
-        email_cb.pack(side=tk.LEFT, padx=2, pady=1, anchor="w")
-        
-        # Add base image viewer component
-        self.base_image_viewer = BaseImageViewer(self.scrollable_frame)
-        self.base_image_viewer.pack(padx=5, pady=10, fill="both", expand=True)
+        # Initialize empty base images panel
+        self.base_images_panel = BaseImagesPanel(self.images_container, logger=get_logger())
+        self.base_images_panel.pack(fill="both", expand=True)
     
     def show_logs(self):
         """Show the log window"""
@@ -555,6 +605,16 @@ class ControlPanel(ttk.Frame):
         else:
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
+    
+    def notify_detection_started(self):
+        """Notify base images panel that detection has started"""
+        if self.base_images_panel:
+            self.base_images_panel.detection_started()
+            
+    def notify_detection_stopped(self):
+        """Notify base images panel that detection has stopped"""
+        if self.base_images_panel:
+            self.base_images_panel.detection_stopped()
             
     def cleanup_saved_images(self):
         """Delete all saved image files"""
@@ -611,6 +671,22 @@ if __name__ == "__main__":
         log
     )
     panel.pack(fill="both", expand=True)
+    
+    # Add test buttons for simulating detection state changes
+    test_frame = ttk.Frame(root)
+    test_frame.pack(pady=10)
+    
+    ttk.Button(
+        test_frame,
+        text="Simulate Detection Start",
+        command=lambda: panel.notify_detection_started()
+    ).pack(side=tk.LEFT, padx=5)
+    
+    ttk.Button(
+        test_frame,
+        text="Simulate Detection Stop",
+        command=lambda: panel.notify_detection_stopped()
+    ).pack(side=tk.LEFT, padx=5)
     
     root.geometry("800x600")
     root.mainloop()

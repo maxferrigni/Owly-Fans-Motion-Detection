@@ -1,16 +1,18 @@
 # File: utilities/alert_manager.py
 # Purpose: Manage owl detection alerts with hierarchy, timing rules, and confidence-based decisions
 #
-# March 2025 Update - Version 1.3.0
-# - Simplified to focus only on email alerts
-# - Removed text alerts and email-to-text functionality
-# - Streamlined alert processing
+# March 2025 Update - Version 1.5.4
+# - Fixed test alert functionality to properly work with TEST buttons
+# - Improved error handling and logging
+# - Enhanced alert ID generation and tracking
+# - Fixed issue with alert processing logic not triggering for test alerts
 
 from datetime import datetime, timedelta
 import pytz
 import time
 import threading
 import os
+import traceback
 from utilities.logging_utils import get_logger
 from utilities.constants import ALERT_PRIORITIES, SUPABASE_STORAGE, get_detection_folder
 from alert_email import send_email_alert
@@ -158,7 +160,6 @@ class AlertManager:
     def _send_email_alert_async(self, camera_name, alert_type, alert_entry, alert_id, comparison_image_url=None, confidence_info=None, is_test=False):
         """
         Background thread function to send email alerts.
-        Simplified in v1.3.0 to focus only on email alerts.
         
         Args:
             camera_name (str): Name of the camera
@@ -185,7 +186,7 @@ class AlertManager:
                     # Get email subscribers
                     email_subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
                     email_count = len(email_subscribers) if email_subscribers else 0
-                    logger.info(f"Sending email alerts to {email_count} subscribers")
+                    logger.info(f"Sending {'test ' if is_test else ''}email alerts to {email_count} subscribers")
                     
                     # Send email alert with test prefix, image URL, and alert ID
                     send_email_alert(
@@ -198,6 +199,7 @@ class AlertManager:
                     )
                 except Exception as e:
                     logger.error(f"Error sending email alerts: {e}")
+                    logger.error(traceback.format_exc())
                     email_count = 0
             else:
                 logger.info("Email alerts are disabled, skipping")
@@ -238,24 +240,25 @@ class AlertManager:
                 )
             except Exception as e:
                 logger.error(f"Error updating alert status: {e}")
+                logger.error(traceback.format_exc())
             
             # Log completion
             if confidence_info:
                 logger.info(
-                    f"Alert notifications completed for {alert_type} from {camera_name} "
+                    f"{'Test ' if is_test else ''}Alert notifications completed for {alert_type} from {camera_name} "
                     f"with {confidence_info.get('owl_confidence', 0.0):.1f}% confidence "
                     f"(Alert ID: {alert_id})"
                 )
             else:
-                logger.info(f"Alert notifications completed for {alert_type} from {camera_name} (Alert ID: {alert_id})")
+                logger.info(f"{'Test ' if is_test else ''}Alert notifications completed for {alert_type} from {camera_name} (Alert ID: {alert_id})")
                 
         except Exception as e:
             logger.error(f"Error in background alert processing: {e}")
+            logger.error(traceback.format_exc())
 
     def _send_alert(self, camera_name, alert_type, activity_log_id=None, comparison_image_url=None, confidence_info=None, is_test=False, trigger_condition=None):
         """
         Send email alerts based on alert type and cooldown period.
-        Simplified in v1.3.0 to focus only on email alerts.
         
         Args:
             camera_name (str): Name of the camera that triggered the alert
@@ -270,7 +273,7 @@ class AlertManager:
             bool: True if alert was sent, False otherwise
         """
         # Check if email alerts are enabled
-        if not self.alerts_enabled['email']:
+        if not self.alerts_enabled['email'] and not is_test:
             logger.info("Email alerts are disabled, no alerts will be sent")
             return False
             
@@ -451,7 +454,7 @@ class AlertManager:
     def process_detection(self, camera_name, detection_result, activity_log_id=None, is_test=False):
         """
         Process detection results and send alerts based on hierarchy, cooldown, and confidence.
-        Simplified in v1.3.0 to focus only on email alerts.
+        Updated in v1.5.4 to handle test alerts properly.
         
         Args:
             camera_name (str): Name of the camera that triggered the detection
@@ -462,140 +465,151 @@ class AlertManager:
         Returns:
             bool: True if an alert was sent, False otherwise
         """
-        # Refresh alert settings from environment variables
-        self.alerts_enabled = {
-            'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true'
-        }
-        
-        # If email alerts are disabled, log and return early
-        if not self.alerts_enabled['email']:
-            logger.info("Email alerts are disabled, skipping alert processing")
-            return False
-        
-        # Determine alert type 
-        alert_type = self.determine_alert_type(camera_name, detection_result)
+        try:
+            # Refresh alert settings from environment variables
+            self.alerts_enabled = {
+                'email': os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() == 'true'
+            }
+            
+            # Log that we're processing a detection
+            logger.info(f"Processing {'test ' if is_test else ''}detection from {camera_name}")
+            
+            # If email alerts are disabled and this is not a test, log and return early
+            if not self.alerts_enabled['email'] and not is_test:
+                logger.info("Email alerts are disabled, skipping alert processing")
+                return False
+            
+            # Determine alert type 
+            alert_type = self.determine_alert_type(camera_name, detection_result)
 
-        # Check if the alert type is valid
-        if alert_type not in self.ALERT_HIERARCHY:
-            logger.warning(f"Invalid alert type: {alert_type}")
-            return False
+            # Check if the alert type is valid
+            if alert_type not in self.ALERT_HIERARCHY:
+                logger.warning(f"Invalid alert type: {alert_type}")
+                return False
 
-        # Check if owl is present (according to detection result)
-        # For test alerts, we always consider owl as present
-        is_owl_present = detection_result.get("is_owl_present", False) or is_test
-        
-        if not is_owl_present:
-            logger.debug(f"No owl detected for {alert_type}, skipping alert")
+            # Check if owl is present (according to detection result)
+            # For test alerts, we always consider owl as present
+            is_owl_present = detection_result.get("is_owl_present", False) or is_test
+            
+            if not is_owl_present:
+                logger.debug(f"No owl detected for {alert_type}, skipping alert")
+                return False
+                
+            # Get image URL if available
+            comparison_image_url = detection_result.get("comparison_image_url")
+                
+            # Extract confidence information
+            confidence_info = {
+                "owl_confidence": detection_result.get("owl_confidence", 0.0),
+                "consecutive_owl_frames": detection_result.get("consecutive_owl_frames", 0),
+                "confidence_factors": detection_result.get("confidence_factors", {})
+            }
+            
+            # Get priority for hierarchy checks
+            priority = self.ALERT_HIERARCHY.get(alert_type, 0)
+            
+            # Create trigger condition
+            if detection_result.get("threshold_used"):
+                trigger_condition = (f"{'TEST: ' if is_test else ''}Motion detection ({alert_type}): "
+                                   f"{confidence_info['owl_confidence']:.1f}% confidence "
+                                   f"(threshold: {detection_result['threshold_used']:.1f}%)")
+            else:
+                trigger_condition = f"{'TEST: ' if is_test else ''}Motion detection ({alert_type})"
+            
+            # For test alerts, always send regardless of confidence or hierarchy
+            if is_test:
+                logger.info(f"Processing test alert for {alert_type} from {camera_name}")
+                return self._send_alert(
+                    camera_name, 
+                    alert_type, 
+                    activity_log_id, 
+                    comparison_image_url, 
+                    confidence_info, 
+                    is_test=True,
+                    trigger_condition=trigger_condition
+                )
+            
+            # Check confidence requirements for real alerts
+            if not self._check_confidence_requirements(detection_result, camera_name):
+                logger.info(f"Alert blocked - Confidence requirements not met for {camera_name}")
+                return False
+
+            # Check alert hierarchy
+            if self._check_alert_hierarchy(alert_type, priority):
+                logger.info(f"Alert {alert_type} suppressed by higher priority alert")
+                return False
+
+            # Determine which alert to send based on hierarchy
+            if alert_type in ["Eggs Or Babies", "Two Owls In Box"]:
+                # Highest priority alerts - always send
+                return self._send_alert(
+                    camera_name, 
+                    alert_type, 
+                    activity_log_id, 
+                    comparison_image_url, 
+                    confidence_info,
+                    trigger_condition=trigger_condition
+                )
+            elif alert_type == "Two Owls":
+                # Only suppressed by eggs/babies or owls in box
+                if not self._is_higher_alert_active("Eggs Or Babies") and not self._is_higher_alert_active("Two Owls In Box"):
+                    return self._send_alert(
+                        camera_name, 
+                        alert_type, 
+                        activity_log_id, 
+                        comparison_image_url, 
+                        confidence_info,
+                        trigger_condition=trigger_condition
+                    )
+            elif alert_type == "Owl In Box":
+                # Suppressed by any multiple owl alert or eggs/babies
+                if (not self._is_higher_alert_active("Eggs Or Babies") and 
+                    not self._is_higher_alert_active("Two Owls In Box") and 
+                    not self._is_higher_alert_active("Two Owls")):
+                    return self._send_alert(
+                        camera_name, 
+                        alert_type, 
+                        activity_log_id, 
+                        comparison_image_url, 
+                        confidence_info,
+                        trigger_condition=trigger_condition
+                    )
+            elif alert_type == "Owl On Box":
+                # Suppressed by box, multiple owls, or eggs/babies 
+                if (not self._is_higher_alert_active("Eggs Or Babies") and 
+                    not self._is_higher_alert_active("Two Owls In Box") and 
+                    not self._is_higher_alert_active("Two Owls") and
+                    not self._is_higher_alert_active("Owl In Box")):
+                    return self._send_alert(
+                        camera_name, 
+                        alert_type, 
+                        activity_log_id, 
+                        comparison_image_url, 
+                        confidence_info,
+                        trigger_condition=trigger_condition
+                    )
+            elif alert_type == "Owl In Area":
+                # Lowest priority - suppressed by all others
+                if (not self._is_higher_alert_active("Eggs Or Babies") and 
+                    not self._is_higher_alert_active("Two Owls In Box") and 
+                    not self._is_higher_alert_active("Two Owls") and
+                    not self._is_higher_alert_active("Owl In Box") and
+                    not self._is_higher_alert_active("Owl On Box")):
+                    return self._send_alert(
+                        camera_name, 
+                        alert_type, 
+                        activity_log_id, 
+                        comparison_image_url, 
+                        confidence_info,
+                        trigger_condition=trigger_condition
+                    )
+
             return False
             
-        # Get image URL if available
-        comparison_image_url = detection_result.get("comparison_image_url")
-            
-        # Extract confidence information
-        confidence_info = {
-            "owl_confidence": detection_result.get("owl_confidence", 0.0),
-            "consecutive_owl_frames": detection_result.get("consecutive_owl_frames", 0),
-            "confidence_factors": detection_result.get("confidence_factors", {})
-        }
-        
-        # Get priority for hierarchy checks
-        priority = self.ALERT_HIERARCHY.get(alert_type, 0)
-        
-        # Create trigger condition
-        if detection_result.get("threshold_used"):
-            trigger_condition = (f"Motion detection ({alert_type}): "
-                               f"{confidence_info['owl_confidence']:.1f}% confidence "
-                               f"(threshold: {detection_result['threshold_used']:.1f}%)")
-        else:
-            trigger_condition = f"Motion detection ({alert_type})"
-        
-        # Check confidence requirements - bypass for test alerts
-        if not is_test and not self._check_confidence_requirements(detection_result, camera_name):
-            logger.info(f"Alert blocked - Confidence requirements not met for {camera_name}")
+        except Exception as e:
+            logger.error(f"Error processing detection: {e}")
+            logger.error(traceback.format_exc())
             return False
-
-        # Check alert hierarchy - bypass for test alerts
-        if not is_test and self._check_alert_hierarchy(alert_type, priority):
-            logger.info(f"Alert {alert_type} suppressed by higher priority alert")
-            return False
-
-        # Determine which alert to send based on hierarchy or if it's a test
-        if is_test:
-            # For tests, just send the alert directly
-            return self._send_alert(
-                camera_name, 
-                alert_type, 
-                activity_log_id, 
-                comparison_image_url, 
-                confidence_info, 
-                is_test=True,
-                trigger_condition=f"TEST: {trigger_condition}"
-            )
-        elif alert_type in ["Eggs Or Babies", "Two Owls In Box"]:
-            # Highest priority alerts - always send
-            return self._send_alert(
-                camera_name, 
-                alert_type, 
-                activity_log_id, 
-                comparison_image_url, 
-                confidence_info,
-                trigger_condition=trigger_condition
-            )
-        elif alert_type == "Two Owls":
-            # Only suppressed by eggs/babies or owls in box
-            if not self._is_higher_alert_active("Eggs Or Babies") and not self._is_higher_alert_active("Two Owls In Box"):
-                return self._send_alert(
-                    camera_name, 
-                    alert_type, 
-                    activity_log_id, 
-                    comparison_image_url, 
-                    confidence_info,
-                    trigger_condition=trigger_condition
-                )
-        elif alert_type == "Owl In Box":
-            # Suppressed by any multiple owl alert or eggs/babies
-            if (not self._is_higher_alert_active("Eggs Or Babies") and 
-                not self._is_higher_alert_active("Two Owls In Box") and 
-                not self._is_higher_alert_active("Two Owls")):
-                return self._send_alert(
-                    camera_name, 
-                    alert_type, 
-                    activity_log_id, 
-                    comparison_image_url, 
-                    confidence_info,
-                    trigger_condition=trigger_condition
-                )
-        elif alert_type == "Owl On Box":
-            # Suppressed by box, multiple owls, or eggs/babies 
-            if (not self._is_higher_alert_active("Eggs Or Babies") and 
-                not self._is_higher_alert_active("Two Owls In Box") and 
-                not self._is_higher_alert_active("Two Owls") and
-                not self._is_higher_alert_active("Owl In Box")):
-                return self._send_alert(
-                    camera_name, 
-                    alert_type, 
-                    activity_log_id, 
-                    comparison_image_url, 
-                    confidence_info,
-                    trigger_condition=trigger_condition
-                )
-        elif alert_type == "Owl In Area":
-            # Lowest priority - suppressed by all others
-            if (not self._is_higher_alert_active("Eggs Or Babies") and 
-                not self._is_higher_alert_active("Two Owls In Box") and 
-                not self._is_higher_alert_active("Two Owls") and
-                not self._is_higher_alert_active("Owl In Box") and
-                not self._is_higher_alert_active("Owl On Box")):
-                return self._send_alert(
-                    camera_name, 
-                    alert_type, 
-                    activity_log_id, 
-                    comparison_image_url, 
-                    confidence_info,
-                    trigger_condition=trigger_condition
-                )
-
-        return False
 
     def update_alert_durations(self):
         """

@@ -1,6 +1,6 @@
 # File: _front_end_app.py
-# Purpose: Main application window for the Owl Monitoring System - SIMPLIFIED FOR STABILITY
-# Version: 1.5.3
+# Purpose: Main application window for the Owl Monitoring System - IMPROVED STABILITY AND UI FIXES
+# Version: 1.5.4
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -134,7 +134,7 @@ try:
         traceback.print_exc()
         raise
     
-    # Import GUI panels - simplified for v1.5.3
+    # Import GUI panels - simplified for v1.5.4
     print("Importing frontend panels...")
     try:
         from _front_end_panels import (
@@ -157,7 +157,7 @@ try:
         traceback.print_exc()
         raise
     
-    # Import TestInterface - simplified for v1.5.3
+    # Import TestInterface - simplified for v1.5.4
     print("Importing test interface...")
     try:
         from test_interface import TestInterface
@@ -166,16 +166,6 @@ try:
         print(f"ERROR importing test_interface: {e}")
         traceback.print_exc()
         # Continue without TestInterface if it fails
-    
-    # Import base images display
-    print("Importing base images panel...")
-    try:
-        from camera_feed_panel import BaseImagesPanel
-        print("Imported base images panel successfully")
-    except Exception as e:
-        print(f"ERROR importing base_images_panel: {e}")
-        traceback.print_exc()
-        # Continue without BaseImagesPanel if it fails
     
     print("All imports completed successfully")
 except Exception as e:
@@ -225,7 +215,9 @@ class OwlApp:
         self.control_panel = None
         self.settings = None
         self.test_interface = None
-        self.base_images_panel = None
+        
+        # Detection state
+        self.detection_running = False
         
         self.main_script_path = os.path.join(SCRIPTS_DIR, "main.py")
 
@@ -316,7 +308,7 @@ class OwlApp:
             self.notebook = ttk.Notebook(self.main_container)
             self.notebook.pack(fill="both", expand=True)
 
-            # Create tabs - SIMPLIFIED FOR v1.5.3
+            # Create tabs - SIMPLIFIED FOR v1.5.4
             self.control_tab = ttk.Frame(self.notebook)
             self.settings_tab = ttk.Frame(self.notebook)
             self.test_tab = ttk.Frame(self.notebook)
@@ -382,7 +374,7 @@ class OwlApp:
             # Initialize log window
             self.log_window = LogWindow(self.root)
             
-            # Create control panel 
+            # Create control panel - UPDATED FOR v1.5.4 to fix base image display
             self.control_panel = ControlPanel(
                 self.control_tab,
                 self.local_saving_enabled,
@@ -398,26 +390,39 @@ class OwlApp:
                 self.toggle_email_alerts,
                 self.log_window
             )
-            self.control_panel.pack(fill="x", expand=False)
+            self.control_panel.pack(fill="both", expand=True)
             
-            # Add base images panel to control tab
-            try:
-                self.base_images_panel = BaseImagesPanel(self.control_tab, self.logger)
-                self.base_images_panel.pack(fill="both", expand=True, padx=5, pady=5)
-            except Exception as e:
-                self.log_message(f"Error initializing base images panel: {e}", "ERROR")
-                
-            # Create motion detection settings in settings tab
-            settings_scroll = ttk.Frame(self.settings_tab)
-            settings_scroll.pack(fill="both", expand=True)
-            self.settings = MotionDetectionSettings(settings_scroll, self.logger)
+            # Create motion detection settings in settings tab (simplified in v1.5.4)
+            self.settings_frame = ttk.Frame(self.settings_tab)
+            self.settings_frame.pack(fill="both", expand=True)
             
-            # Initialize simplified test interface
+            # Create scrollable container for settings
+            self.settings_canvas = tk.Canvas(self.settings_frame)
+            self.settings_scrollbar = ttk.Scrollbar(self.settings_frame, orient="vertical", command=self.settings_canvas.yview)
+            self.settings_scrollable_frame = ttk.Frame(self.settings_canvas)
+            
+            self.settings_scrollable_frame.bind(
+                "<Configure>",
+                lambda e: self.settings_canvas.configure(scrollregion=self.settings_canvas.bbox("all"))
+            )
+            
+            self.settings_canvas.create_window((0, 0), window=self.settings_scrollable_frame, anchor="nw")
+            self.settings_canvas.configure(yscrollcommand=self.settings_scrollbar.set)
+            
+            self.settings_canvas.pack(side="left", fill="both", expand=True)
+            self.settings_scrollbar.pack(side="right", fill="y")
+            
+            self.settings = MotionDetectionSettings(self.settings_scrollable_frame, self.logger)
+            
+            # Initialize test interface with improved error handling for v1.5.4
             try:
                 test_scroll = ttk.Frame(self.test_tab)
                 test_scroll.pack(fill="both", expand=True)
                 
                 self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
+                # Connect the log_message function to the test interface
+                if hasattr(self.test_interface, 'set_log_callback'):
+                    self.test_interface.set_log_callback(self.log_message)
             except Exception as e:
                 print(f"Error initializing test interface: {e}")
                 traceback.print_exc()
@@ -645,13 +650,18 @@ class OwlApp:
                 )
 
                 # Update UI state
+                self.detection_running = True
                 self.control_panel.update_run_state(True)
                 
                 # Start log monitoring
                 threading.Thread(target=self.refresh_logs, daemon=True).start()
+                
+                # Notify base images panel that detection has started (new in v1.5.4)
+                self.control_panel.notify_detection_started()
 
             except Exception as e:
                 self.log_message(f"Error starting script: {e}", "ERROR")
+                self.detection_running = False
 
     def stop_script(self):
         """Stop the motion detection script"""
@@ -661,7 +671,12 @@ class OwlApp:
                 self.script_process.terminate()
                 self.script_process.wait(timeout=5)
                 self.script_process = None
+                self.detection_running = False
                 self.control_panel.update_run_state(False)
+                
+                # Notify base images panel that detection has stopped (new in v1.5.4)
+                self.control_panel.notify_detection_stopped()
+                
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}", "ERROR")
 
@@ -684,10 +699,6 @@ class OwlApp:
             # Stop any running scripts
             if self.script_process:
                 self.stop_script()
-            
-            # Clean up component resources
-            if self.base_images_panel:
-                self.base_images_panel.destroy()
             
             # Release the lock file
             release_lock()
