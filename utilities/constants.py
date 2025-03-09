@@ -1,8 +1,8 @@
 # File: utilities/constants.py
 # Purpose: Centralized path management and validation for the Owl Monitoring System
 # 
-# March 8, 2025 Update - Version 1.5.0
-# - Updated version number to 1.5.0
+# March 8, 2025 Update - Version 1.5.2
+# - Updated version number to 1.5.2
 
 import os
 import json
@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Version information
-VERSION = "1.5.0"
+VERSION = "1.5.2"  # Updated from 1.5.0 to 1.5.2
 
 # Base directory path from environment variables with fallback
 BASE_DIR = os.getenv("BASE_DIR", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection")

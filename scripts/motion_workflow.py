@@ -1,5 +1,9 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
+# Version: 1.5.2
+#
+# Update in v1.5.2:
+# - Fixed redundant base image captures on startup
 
 import os
 import time
@@ -38,6 +42,9 @@ alert_manager = AlertManager()
 
 # Set timezone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
+
+# Added in v1.5.2: Flag to track initial base image capture to avoid redundant captures
+_initial_base_images_captured = False
 
 def initialize_system(camera_configs, is_test=False):
     """Initialize the motion detection system."""
@@ -243,6 +250,9 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
 
 def process_cameras(camera_configs, test_images=None):
     """Process all cameras in batch for efficient motion detection"""
+    # Modified in v1.5.2 to avoid redundant base image captures on startup
+    global _initial_base_images_captured
+    
     try:
         # Get lighting information once for all cameras
         lighting_condition = get_current_lighting_condition()
@@ -257,9 +267,18 @@ def process_cameras(camera_configs, test_images=None):
         
         # Only verify base images in real-time mode
         if not test_images:
-            if should_capture_base_image():
-                logger.info("Time to capture new base images")
+            # Skip capture if we've already done the initial capture
+            # Only capture images on subsequent calls if should_capture_base_image indicates it's time
+            if _initial_base_images_captured:
+                if should_capture_base_image():
+                    logger.info("Time to capture new base images")
+                    capture_base_images(lighting_condition, force_capture=True)
+                    time.sleep(3)  # Allow system to stabilize after capture
+            else:
+                logger.info("Performing initial base image capture")
                 capture_base_images(lighting_condition, force_capture=True)
+                # Mark that we've done the initial capture
+                _initial_base_images_captured = True
                 time.sleep(3)  # Allow system to stabilize after capture
         
         # Process each camera with shared lighting info

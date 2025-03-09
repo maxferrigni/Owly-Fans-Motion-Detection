@@ -1,19 +1,22 @@
 # File: _front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 8, 2025 Update - Version 1.5.1
-# - Re-enabled LightingInfoPanel for improved visibility
-# - Fixed timer shutdown in LightingInfoPanel's destroy method
+# March 8, 2025 Update - Version 1.5.2
+# - Fixed LightingInfoPanel blank fields issue
+# - Added Local Image Cleanup button to ControlPanel
 # - Enhanced error handling in LightingInfoPanel
 
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import scrolledtext, ttk, messagebox
 from datetime import datetime, timedelta
 import threading
 import time
 import traceback
+import os
+import glob
 from utilities.logging_utils import get_logger
 from utilities.time_utils import get_lighting_info, format_time_until, get_current_lighting_condition
+from utilities.constants import SAVED_IMAGES_DIR
 
 class LogWindow(tk.Toplevel):
     """Enhanced logging window with filtering and search"""
@@ -238,6 +241,17 @@ class ControlPanel(ttk.Frame):
         )
         self.view_logs_button.pack(side=tk.RIGHT, padx=5)
         
+        # Add image cleanup button (New in v1.5.2)
+        cleanup_frame = ttk.Frame(main_controls)
+        cleanup_frame.pack(pady=5, fill="x")
+        
+        self.cleanup_button = ttk.Button(
+            cleanup_frame,
+            text="Clear Saved Images",
+            command=self.cleanup_saved_images
+        )
+        self.cleanup_button.pack(side=tk.LEFT, padx=5)
+        
         # Combined Settings section (merged settings and alert settings)
         settings_frame = ttk.LabelFrame(self, text="Settings")
         settings_frame.pack(padx=5, pady=5, fill="x")
@@ -309,11 +323,33 @@ class ControlPanel(ttk.Frame):
         else:
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
+            
+    def cleanup_saved_images(self):
+        """Delete all saved image files"""
+        try:
+            # Confirm with user
+            if messagebox.askyesno("Confirm Delete",
+                                  "Are you sure you want to delete all saved images?\nThis cannot be undone."):
+                # Count files before deletion
+                image_files = glob.glob(os.path.join(SAVED_IMAGES_DIR, "*.jpg"))
+                file_count = len(image_files)
+                
+                # Delete all jpg files
+                for file_path in image_files:
+                    os.remove(file_path)
+                
+                # Log success
+                self.log_window.log_message(f"Deleted {file_count} saved image files", "INFO")
+                messagebox.showinfo("Success", f"Deleted {file_count} saved image files")
+        except Exception as e:
+            self.log_window.log_message(f"Error cleaning up images: {e}", "ERROR")
+            messagebox.showerror("Error", f"Failed to delete images: {e}")
 
 class LightingInfoPanel(ttk.LabelFrame):
     """
     Panel showing lighting information, sunrise/sunset times, and countdown timers.
     Re-enabled in v1.5.1 with enhanced error handling.
+    Fixed blank fields issue in v1.5.2.
     """
     def __init__(self, parent):
         super().__init__(parent, text="Lighting Information")
@@ -508,6 +544,14 @@ class LightingInfoPanel(ttk.LabelFrame):
         try:
             # Get current lighting information
             lighting_info = get_lighting_info()
+            
+            # Add debug message to see what we're getting
+            self.logger.debug(f"Lighting info: {lighting_info}")
+            
+            # Check if we have valid data before trying to update UI
+            if not lighting_info or 'condition' not in lighting_info:
+                self.logger.warning("Invalid lighting info received")
+                return
             
             # Update condition variables
             condition = lighting_info.get('condition', 'unknown')

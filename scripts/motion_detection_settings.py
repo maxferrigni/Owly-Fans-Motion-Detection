@@ -1,5 +1,8 @@
 # File: motion_detection_settings.py
 # Purpose: GUI controls for motion detection parameters
+# 
+# March 8, 2025 Update - Version 1.5.2
+# - Enhanced logging when saving settings to ensure visibility in UI
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -46,7 +49,16 @@ class MotionDetectionSettings:
             config_path = os.path.join(CONFIGS_DIR, "config.json")
             with open(config_path, 'w') as f:
                 json.dump(self.config, f, indent=4)
+                
+            # Enhanced logging for v1.5.2 - add explicit logging to both log file and UI
             self.logger.info("Configuration saved successfully")
+            
+            # Make sure to log to the UI as well
+            if hasattr(self, 'parent_frame') and hasattr(self.parent_frame, 'master'):
+                root = self.parent_frame.master
+                if hasattr(root, 'log_message'):
+                    root.log_message("Settings saved successfully", "INFO")
+                    
             messagebox.showinfo("Success", "Settings saved successfully")
         except Exception as e:
             self.logger.error(f"Error saving config: {e}")
@@ -344,6 +356,13 @@ class MotionDetectionSettings:
                 
                 if result:
                     self.logger.info("Settings applied to running system")
+                    
+                    # Log to UI as well for v1.5.2
+                    if hasattr(self, 'parent_frame') and hasattr(self.parent_frame, 'master'):
+                        root = self.parent_frame.master
+                        if hasattr(root, 'log_message'):
+                            root.log_message("Settings applied to running system", "INFO")
+                            
                     messagebox.showinfo("Success", "Settings applied to running system")
                 else:
                     messagebox.showwarning("Warning", "Could not apply all settings to running system")

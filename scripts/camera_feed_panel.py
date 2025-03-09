@@ -1,6 +1,9 @@
 # File: camera_feed_panel.py
 # Purpose: Organize and display camera feeds and comparison images
-# Version: 1.5.1
+# Version: 1.5.2
+# 
+# Update in v1.5.2:
+# - Fixed grid layout error (changed "-col" to "-column")
 
 import tkinter as tk
 from tkinter import ttk
@@ -51,7 +54,8 @@ class CameraFeedPanel(ttk.LabelFrame):
                 
                 # Create frame for this camera
                 camera_frame = ttk.LabelFrame(main_frame, text=camera_name)
-                camera_frame.grid(row=row, col=col, padx=5, pady=5, sticky="nsew")
+                # Fixed in v1.5.2: Changed 'col' to 'column' to avoid ambiguous option error
+                camera_frame.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
                 
                 # Add image viewer
                 viewer = SimpleImageViewer(camera_frame, f"{CAMERA_MAPPINGS[camera_name]} Camera")
