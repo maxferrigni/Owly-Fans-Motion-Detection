@@ -1,10 +1,10 @@
 # File: front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 15, 2025 Update - Version 1.3.1
-# - Renamed from _front_end_app.py to front_end_app.py
-# - Updated version number to 1.3.1
-# - Updated import references to use new filenames without underscores
+# March 16, 2025 Update - Version 1.3.2
+# - Added "Images" tab for viewing comparison images
+# - Added "Sys Monitor" tab placeholder for future monitoring features
+# - Compacted the Lighting Information panel for better space utilization
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -31,7 +31,9 @@ from utilities.time_utils import get_current_lighting_condition
 from front_end_panels import (
     LogWindow, 
     LightingInfoPanel,
-    ControlPanel
+    ControlPanel,
+    ImageViewerPanel,
+    SysMonitorPanel
 )
 
 # Import remaining components
@@ -95,7 +97,7 @@ class OwlApp:
         
         # Add lighting information panel
         self.lighting_info_panel = LightingInfoPanel(self.root)
-        self.lighting_info_panel.pack(side="top", pady=3, fill="x")
+        self.lighting_info_panel.pack(side="top", pady=2, fill="x")
 
         # Create main container
         self.main_container = ttk.Frame(self.root)
@@ -109,11 +111,15 @@ class OwlApp:
         self.control_tab = ttk.Frame(self.notebook)
         self.settings_tab = ttk.Frame(self.notebook)
         self.test_tab = ttk.Frame(self.notebook)
+        self.images_tab = ttk.Frame(self.notebook)  # New tab for images in v1.3.2
+        self.sys_monitor_tab = ttk.Frame(self.notebook)  # New tab for system monitoring in v1.3.2
 
         # Add tabs to notebook
         self.notebook.add(self.control_tab, text="Control")
         self.notebook.add(self.settings_tab, text="Settings")
         self.notebook.add(self.test_tab, text="Test")
+        self.notebook.add(self.images_tab, text="Images")  # Add new tab for images
+        self.notebook.add(self.sys_monitor_tab, text="Sys Monitor")  # Add new tab for system monitoring
 
         # Initialize components
         self.initialize_components()
@@ -162,6 +168,14 @@ class OwlApp:
         # Import test interface here to avoid circular import issues
         from test_interface import TestInterface
         self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
+        
+        # Create image viewer panel in images tab - New in v1.3.2
+        self.image_viewer = ImageViewerPanel(self.images_tab)
+        self.image_viewer.pack(fill="both", expand=True)
+        
+        # Create system monitor panel in sys monitor tab - New in v1.3.2
+        self.sys_monitor = SysMonitorPanel(self.sys_monitor_tab)
+        self.sys_monitor.pack(fill="both", expand=True)
 
     def log_message(self, message, level="INFO"):
         """Log message to log window"""

@@ -1,17 +1,21 @@
 # File: front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 15, 2025 Update - Version 1.3.1
-# - Renamed from _front_end_panels.py to front_end_panels.py
-# - Updated version number to 1.3.1
+# March 16, 2025 Update - Version 1.3.2
+# - Compacted Lighting Information panel for better space utilization
+# - Added ImageViewerPanel for displaying comparison images
+# - Added SysMonitorPanel as placeholder for future system monitoring
 
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 from datetime import datetime, timedelta
 import threading
 import time
+import os
+from PIL import Image, ImageTk
 from utilities.logging_utils import get_logger
 from utilities.time_utils import get_lighting_info, format_time_until, get_current_lighting_condition
+from utilities.constants import IMAGE_COMPARISONS_DIR, CAMERA_MAPPINGS, get_comparison_image_path
 
 class LogWindow(tk.Toplevel):
     """Enhanced logging window with filtering and search"""
@@ -321,6 +325,7 @@ class ControlPanel(ttk.Frame):
 class LightingInfoPanel(ttk.LabelFrame):
     """
     Panel showing lighting information, sunrise/sunset times, and countdown timers.
+    Made more compact in v1.3.2 for better space utilization.
     """
     def __init__(self, parent):
         super().__init__(parent, text="Lighting Information")
@@ -334,11 +339,12 @@ class LightingInfoPanel(ttk.LabelFrame):
         )
         
         # Create styles for different lighting conditions
-        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 10, 'bold'))
-        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 10, 'bold'))
-        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 10, 'bold'))
-        self.style.configure('DuskDawn.TLabel', foreground='#FF6600', font=('Arial', 9))
-        self.style.configure('CountdownTime.TLabel', foreground='green', font=('Arial', 10, 'bold'))
+        self.style.configure('Day.TLabel', foreground='blue', font=('Arial', 9, 'bold'))
+        self.style.configure('Night.TLabel', foreground='purple', font=('Arial', 9, 'bold'))
+        self.style.configure('Transition.TLabel', foreground='orange', font=('Arial', 9, 'bold'))
+        self.style.configure('DuskDawn.TLabel', foreground='#FF6600', font=('Arial', 8))
+        self.style.configure('CountdownTime.TLabel', foreground='green', font=('Arial', 9, 'bold'))
+        self.style.configure('InfoLabel.TLabel', font=('Arial', 8))
         
         # Initialize variables
         self.lighting_condition = tk.StringVar(value="Unknown")
@@ -354,135 +360,104 @@ class LightingInfoPanel(ttk.LabelFrame):
         self.transition_percentage = tk.DoubleVar(value=0)
         self.is_transition = False
         
-        # Create panel components
-        self.create_lighting_display()
-        self.create_sun_times_display()
-        self.create_countdown_display()
-        self.create_transition_progress()
+        # Create compact layout
+        self.create_compact_layout()
         
         # Start update thread
         self.update_thread = None
         self.running = True
         self.start_update_thread()
         
-    def create_lighting_display(self):
-        """Create the current lighting condition display"""
-        lighting_frame = ttk.Frame(self)
-        lighting_frame.pack(fill="x", padx=5, pady=5)
+    def create_compact_layout(self):
+        """Create more compact layout for lighting information"""
+        # Main grid with 3 columns
+        main_frame = ttk.Frame(self)
+        main_frame.pack(fill="x", padx=3, pady=3)
         
-        # Current lighting condition
-        ttk.Label(lighting_frame, text="Current Condition:").grid(row=0, column=0, sticky="w", padx=5)
+        # Current condition (Row 0)
+        ttk.Label(main_frame, text="Current:").grid(row=0, column=0, sticky="w", padx=2)
         self.condition_label = ttk.Label(
-            lighting_frame,
+            main_frame,
             textvariable=self.lighting_condition,
-            style="Day.TLabel"  # Default style, will be updated
+            style="Day.TLabel"
         )
-        self.condition_label.grid(row=0, column=1, sticky="w", padx=5)
-        
-        # Detailed condition (dawn/dusk/etc)
+        self.condition_label.grid(row=0, column=1, sticky="w", padx=2)
         self.detailed_label = ttk.Label(
-            lighting_frame,
+            main_frame,
             textvariable=self.detailed_condition,
             style="DuskDawn.TLabel"
         )
-        self.detailed_label.grid(row=0, column=2, sticky="w", padx=5)
+        self.detailed_label.grid(row=0, column=2, sticky="w", padx=2)
         
-        # Configure grid
-        lighting_frame.columnconfigure(0, weight=0)
-        lighting_frame.columnconfigure(1, weight=0)
-        lighting_frame.columnconfigure(2, weight=1)
+        # Sun times with countdowns (Row 1-2) - More compact grid layout
+        times_frame = ttk.Frame(main_frame)
+        times_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=1)
         
-    def create_sun_times_display(self):
-        """Create the sunrise/sunset times display"""
-        times_frame = ttk.Frame(self)
-        times_frame.pack(fill="x", padx=5, pady=5)
+        # Grid layout for times
+        # Column 0-1: Sunrise info, Column 2-3: Sunset info
+        # Column 4-5: True Day info, Column 6-7: True Night info
         
-        # Create a 2x4 grid for the times
-        ttk.Label(times_frame, text="Sunrise:").grid(row=0, column=0, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.sunrise_time).grid(row=0, column=1, sticky="w", padx=5)
+        # Labels - Row 0
+        ttk.Label(times_frame, text="Sunrise:", style="InfoLabel.TLabel").grid(row=0, column=0, sticky="w", padx=2)
+        ttk.Label(times_frame, text="Sunset:", style="InfoLabel.TLabel").grid(row=0, column=2, sticky="w", padx=2)
+        ttk.Label(times_frame, text="True Day:", style="InfoLabel.TLabel").grid(row=0, column=4, sticky="w", padx=2)
+        ttk.Label(times_frame, text="True Night:", style="InfoLabel.TLabel").grid(row=0, column=6, sticky="w", padx=2)
         
-        ttk.Label(times_frame, text="Sunset:").grid(row=0, column=2, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.sunset_time).grid(row=0, column=3, sticky="w", padx=5)
+        # Time values - Row 0
+        ttk.Label(times_frame, textvariable=self.sunrise_time, style="InfoLabel.TLabel").grid(row=0, column=1, sticky="w", padx=2)
+        ttk.Label(times_frame, textvariable=self.sunset_time, style="InfoLabel.TLabel").grid(row=0, column=3, sticky="w", padx=2)
+        ttk.Label(times_frame, textvariable=self.true_day_time, style="InfoLabel.TLabel").grid(row=0, column=5, sticky="w", padx=2)
+        ttk.Label(times_frame, textvariable=self.true_night_time, style="InfoLabel.TLabel").grid(row=0, column=7, sticky="w", padx=2)
         
-        ttk.Label(times_frame, text="True Day:").grid(row=1, column=0, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.true_day_time).grid(row=1, column=1, sticky="w", padx=5)
+        # Countdown labels - Row 1
+        ttk.Label(times_frame, text="Until:", style="InfoLabel.TLabel").grid(row=1, column=0, sticky="w", padx=2)
+        ttk.Label(times_frame, textvariable=self.to_sunrise, style="CountdownTime.TLabel").grid(row=1, column=1, sticky="w", padx=2)
         
-        ttk.Label(times_frame, text="True Night:").grid(row=1, column=2, sticky="w", padx=5)
-        ttk.Label(times_frame, textvariable=self.true_night_time).grid(row=1, column=3, sticky="w", padx=5)
+        ttk.Label(times_frame, text="Until:", style="InfoLabel.TLabel").grid(row=1, column=2, sticky="w", padx=2)
+        ttk.Label(times_frame, textvariable=self.to_sunset, style="CountdownTime.TLabel").grid(row=1, column=3, sticky="w", padx=2)
         
-        # Configure grid
-        for i in range(4):
+        ttk.Label(times_frame, text="Until:", style="InfoLabel.TLabel").grid(row=1, column=4, sticky="w", padx=2)
+        ttk.Label(times_frame, textvariable=self.to_true_day, style="CountdownTime.TLabel").grid(row=1, column=5, sticky="w", padx=2)
+        
+        ttk.Label(times_frame, text="Until:", style="InfoLabel.TLabel").grid(row=1, column=6, sticky="w", padx=2)
+        ttk.Label(times_frame, textvariable=self.to_true_night, style="CountdownTime.TLabel").grid(row=1, column=7, sticky="w", padx=2)
+        
+        # Configure columns to expand proportionally
+        for i in range(8):
             times_frame.columnconfigure(i, weight=1)
-            
-    def create_countdown_display(self):
-        """Create the countdown/countup display"""
-        countdown_frame = ttk.Frame(self)
-        countdown_frame.pack(fill="x", padx=5, pady=5)
         
-        # Create a 2x4 grid for the countdowns
-        ttk.Label(countdown_frame, text="Until Sunrise:").grid(row=0, column=0, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_sunrise,
-            style="CountdownTime.TLabel"
-        ).grid(row=0, column=1, sticky="w", padx=5)
+        # Transition progress (hidden initially)
+        self.transition_frame = ttk.Frame(main_frame)
+        self.transition_frame.grid(row=2, column=0, columnspan=3, sticky="ew", pady=1)
         
-        ttk.Label(countdown_frame, text="Until Sunset:").grid(row=0, column=2, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_sunset,
-            style="CountdownTime.TLabel"
-        ).grid(row=0, column=3, sticky="w", padx=5)
-        
-        ttk.Label(countdown_frame, text="Until True Day:").grid(row=1, column=0, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_true_day,
-            style="CountdownTime.TLabel"
-        ).grid(row=1, column=1, sticky="w", padx=5)
-        
-        ttk.Label(countdown_frame, text="Until True Night:").grid(row=1, column=2, sticky="w", padx=5)
-        ttk.Label(
-            countdown_frame, 
-            textvariable=self.to_true_night,
-            style="CountdownTime.TLabel"
-        ).grid(row=1, column=3, sticky="w", padx=5)
-        
-        # Configure grid
-        for i in range(4):
-            countdown_frame.columnconfigure(i, weight=1)
-            
-    def create_transition_progress(self):
-        """Create the transition progress display"""
-        self.transition_frame = ttk.Frame(self)
-        self.transition_frame.pack(fill="x", padx=5, pady=5)
-        
-        # Transition progress bar label
         self.progress_label = ttk.Label(
             self.transition_frame, 
-            text="Transition Progress:"
+            text="Transition:",
+            style="InfoLabel.TLabel"
         )
-        self.progress_label.pack(side=tk.LEFT, padx=5)
+        self.progress_label.pack(side=tk.LEFT, padx=2)
         
-        # Progress bar
         self.progress_bar = ttk.Progressbar(
             self.transition_frame,
             variable=self.transition_percentage,
             style="Transition.Horizontal.TProgressbar",
-            length=200,
+            length=150,
             mode='determinate'
         )
-        self.progress_bar.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
+        self.progress_bar.pack(side=tk.LEFT, fill="x", expand=True, padx=2)
         
-        # Percentage label
         self.percentage_label = ttk.Label(
             self.transition_frame,
-            text="0%"
+            text="0%",
+            style="InfoLabel.TLabel"
         )
-        self.percentage_label.pack(side=tk.LEFT, padx=5)
+        self.percentage_label.pack(side=tk.LEFT, padx=2)
         
         # Initially hide the transition progress
-        self.transition_frame.pack_forget()
+        self.transition_frame.grid_remove()
+        
+        # Configure grid
+        main_frame.columnconfigure(2, weight=1)
         
     def update_lighting_info(self):
         """Update all lighting information"""
@@ -507,7 +482,6 @@ class LightingInfoPanel(ttk.LabelFrame):
             # Update detailed condition if in transition
             if condition == 'transition':
                 self.detailed_condition.set(f"({detailed.upper()})")
-                # Use grid here instead of pack since that's how it was created
                 self.detailed_label.grid()
             else:
                 self.detailed_condition.set("")
@@ -543,12 +517,12 @@ class LightingInfoPanel(ttk.LabelFrame):
                 
                 # Show transition progress
                 if not self.is_transition:
-                    self.transition_frame.pack(fill="x", padx=5, pady=5)
+                    self.transition_frame.grid()
                     self.is_transition = True
             else:
                 # Hide transition progress
                 if self.is_transition:
-                    self.transition_frame.pack_forget()
+                    self.transition_frame.grid_remove()
                     self.is_transition = False
                     
         except Exception as e:
@@ -585,3 +559,198 @@ class LightingInfoPanel(ttk.LabelFrame):
         """Clean up resources when panel is destroyed"""
         self.stop_update_thread()
         super().destroy()
+
+class ImageViewerPanel(ttk.Frame):
+    """
+    Simple panel for displaying camera comparison images.
+    Added in v1.3.2.
+    """
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.logger = get_logger()
+        
+        # Store image references to prevent garbage collection
+        self.image_refs = {
+            "Wyze Internal Camera": None,
+            "Bindy Patio Camera": None,
+            "Upper Patio Camera": None
+        }
+        
+        # Last modification times to detect changes
+        self.last_modified = {
+            "Wyze Internal Camera": 0,
+            "Bindy Patio Camera": 0,
+            "Upper Patio Camera": 0
+        }
+        
+        # Create UI components
+        self.create_layout()
+        
+        # Start refresh timer
+        self.refresh_images()
+        
+    def create_layout(self):
+        """Create simple layout with three image displays in vertical column"""
+        main_frame = ttk.Frame(self)
+        main_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Create scrollable canvas for images
+        self.canvas_frame = ttk.Frame(main_frame)
+        self.canvas_frame.pack(fill="both", expand=True)
+        
+        # Create image frames - one for each camera (vertically stacked)
+        self.camera_frames = {}
+        self.image_labels = {}
+        self.status_labels = {}
+        
+        # Set camera order: Wyze (top), Bindy (middle), Upper (bottom)
+        camera_order = ["Wyze Internal Camera", "Bindy Patio Camera", "Upper Patio Camera"]
+        
+        for i, camera in enumerate(camera_order):
+            # Create frame for this camera
+            camera_frame = ttk.LabelFrame(self.canvas_frame, text=camera)
+            camera_frame.pack(fill="x", pady=5)
+            self.camera_frames[camera] = camera_frame
+            
+            # Add image label
+            image_label = ttk.Label(camera_frame)
+            image_label.pack(pady=2)
+            self.image_labels[camera] = image_label
+            
+            # Add status label
+            status_label = ttk.Label(
+                camera_frame, 
+                text="No image available", 
+                font=("Arial", 8, "italic")
+            )
+            status_label.pack(pady=2)
+            self.status_labels[camera] = status_label
+    
+    def load_image(self, camera):
+        """
+        Load comparison image for a specific camera.
+        Returns True if image was updated.
+        """
+        try:
+            # Get image path based on camera type
+            image_path = get_comparison_image_path(camera)
+            
+            # Check if file exists
+            if not os.path.exists(image_path):
+                self.status_labels[camera].config(
+                    text="No comparison image available"
+                )
+                return False
+            
+            # Check if file was modified since last load
+            mod_time = os.path.getmtime(image_path)
+            if mod_time <= self.last_modified[camera]:
+                return False  # No update needed
+            
+            # Load and resize image
+            image = Image.open(image_path)
+            
+            # Calculate new size to fit in frame
+            # Target width around 850px (to fit in 900px window with margins)
+            # Maintain aspect ratio
+            width, height = image.size
+            target_width = 850
+            ratio = target_width / width
+            new_size = (target_width, int(height * ratio))
+            
+            # Resize image
+            resized = image.resize(new_size, Image.LANCZOS)
+            
+            # Convert to PhotoImage
+            photo = ImageTk.PhotoImage(resized)
+            
+            # Update image label
+            self.image_labels[camera].config(image=photo)
+            
+            # Store reference to prevent garbage collection
+            self.image_refs[camera] = photo
+            
+            # Update last modified time
+            self.last_modified[camera] = mod_time
+            
+            # Update status label with timestamp
+            timestamp = datetime.fromtimestamp(mod_time).strftime("%Y-%m-%d %H:%M:%S")
+            self.status_labels[camera].config(
+                text=f"Last updated: {timestamp}"
+            )
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error loading image for {camera}: {e}")
+            self.status_labels[camera].config(
+                text=f"Error loading image: {str(e)[:50]}..."
+            )
+            return False
+    
+    def refresh_images(self):
+        """Refresh all camera images"""
+        try:
+            # Load images for all cameras
+            updates = 0
+            for camera in self.image_labels.keys():
+                if self.load_image(camera):
+                    updates += 1
+                    
+            # Schedule next refresh
+            # Every 5 seconds if no updates, more frequently if updates found
+            refresh_time = 1000 if updates > 0 else 5000
+            self.after(refresh_time, self.refresh_images)
+            
+        except Exception as e:
+            self.logger.error(f"Error refreshing images: {e}")
+            # On error, retry after longer delay
+            self.after(10000, self.refresh_images)
+
+class SysMonitorPanel(ttk.Frame):
+    """
+    Placeholder panel for system monitoring.
+    Added in v1.3.2.
+    """
+    def __init__(self, parent):
+        super().__init__(parent)
+        
+        # Create simple placeholder content
+        self.create_placeholder()
+        
+    def create_placeholder(self):
+        """Create placeholder content"""
+        # Center content
+        main_frame = ttk.Frame(self)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Add placeholder text
+        placeholder_label = ttk.Label(
+            main_frame,
+            text="System Monitoring Coming Soon",
+            font=("Arial", 14, "bold")
+        )
+        placeholder_label.pack(pady=20)
+        
+        details_label = ttk.Label(
+            main_frame,
+            text="This tab will contain system monitoring features in a future update.",
+            wraplength=600
+        )
+        details_label.pack(pady=10)
+        
+        # Add some placeholder stats
+        stats_frame = ttk.LabelFrame(main_frame, text="Future Monitoring Features")
+        stats_frame.pack(fill="x", pady=20, padx=10)
+        
+        features = [
+            "Camera Feed Status",
+            "System Resource Usage",
+            "Network Connectivity",
+            "Storage Space",
+            "Alert History"
+        ]
+        
+        for feature in features:
+            ttk.Label(stats_frame, text=f"• {feature}").pack(anchor="w", padx=10, pady=2)
