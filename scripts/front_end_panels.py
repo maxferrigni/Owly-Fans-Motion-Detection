@@ -1,12 +1,9 @@
-# File: _front_end_panels.py
+# File: front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.3.0
-# - Removed StatusPanel class
-# - Removed ReportsPanel class
-# - Simplified ControlPanel by merging settings panes
-# - Removed manual base image capture and report generation buttons
-# - Removed text alerts and email-to-text alert settings
+# March 15, 2025 Update - Version 1.3.1
+# - Renamed from _front_end_panels.py to front_end_panels.py
+# - Updated version number to 1.3.1
 
 import tkinter as tk
 from tkinter import scrolledtext, ttk
@@ -314,7 +311,6 @@ class ControlPanel(ttk.Frame):
 class LightingInfoPanel(ttk.LabelFrame):
     """
     Panel showing lighting information, sunrise/sunset times, and countdown timers.
-    Retained from v1.2.1.
     """
     def __init__(self, parent):
         super().__init__(parent, text="Lighting Information")

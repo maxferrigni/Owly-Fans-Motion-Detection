@@ -1,12 +1,10 @@
-# File: _front_end_app.py
+# File: front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 6, 2025 Update - Version 1.3.0
-# - Removed status panel and all references
-# - Removed text alerts and email-to-text functionality
-# - Removed manual base image capture functionality
-# - Removed after action report functionality and Reports tab
-# - Simplified UI and reduced code complexity
+# March 15, 2025 Update - Version 1.3.1
+# - Renamed from _front_end_app.py to front_end_app.py
+# - Updated version number to 1.3.1
+# - Updated import references to use new filenames without underscores
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -30,7 +28,7 @@ from utilities.alert_manager import AlertManager
 from utilities.time_utils import get_current_lighting_condition
 
 # Import GUI panels - now including all panel components
-from _front_end_panels import (
+from front_end_panels import (
     LogWindow, 
     LightingInfoPanel,
     ControlPanel
@@ -323,7 +321,7 @@ class OwlApp:
         """Restart the entire application"""
         self.root.destroy()
         python_executable = sys.executable
-        script_path = os.path.join(SCRIPTS_DIR, "_front_end.py")
+        script_path = os.path.join(SCRIPTS_DIR, "front_end.py")
         os.execv(python_executable, [python_executable, script_path])
 
     def start_script(self):
