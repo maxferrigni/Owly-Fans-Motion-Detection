@@ -381,3 +381,20 @@ class OwlApp:
                     self.log_message(line.strip())
         except Exception as e:
             self.log_message(f"Error reading logs: {e}", "ERROR")
+
+# In front_end_app.py, add this method:
+def clear_local_images(self):
+    """Clear all local images from storage directories"""
+    try:
+        from utilities.constants import BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR
+        
+        for directory in [BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR]:
+            if os.path.exists(directory):
+                for filename in os.listdir(directory):
+                    file_path = os.path.join(directory, filename)
+                    if os.path.isfile(file_path):
+                        os.unlink(file_path)
+                        
+        self.log_message("All local images deleted", "INFO")
+    except Exception as e:
+        self.log_message(f"Error clearing images: {e}", "ERROR")

@@ -227,6 +227,13 @@ class ControlPanel(ttk.Frame):
             command=self.update_system_func
         )
         self.update_button.pack(side=tk.LEFT, padx=5)
+
+        self.clear_images_button = ttk.Button(
+            button_frame,
+            text="Clear Images",
+            command=self.log_window.root.master.clear_local_images
+        )
+        self.clear_images_button.pack(side=tk.LEFT, padx=5)
         
         # View logs button
         self.view_logs_button = ttk.Button(
