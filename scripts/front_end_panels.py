@@ -1,4 +1,4 @@
-# File: front_end_panels.py test
+# File: front_end_panels.py
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
 # March 15, 2025 Update - Version 1.3.1
@@ -175,7 +175,8 @@ class ControlPanel(ttk.Frame):
     def __init__(self, parent, local_saving_enabled, capture_interval, alert_delay,
                  email_alerts_enabled, update_system_func, start_script_func,
                  stop_script_func, toggle_local_saving_func, update_capture_interval_func,
-                 update_alert_delay_func, toggle_email_alerts_func, log_window):
+                 update_alert_delay_func, toggle_email_alerts_func, log_window,
+                 clear_local_images_func):  # Added new parameter
         super().__init__(parent)
         
         self.local_saving_enabled = local_saving_enabled
@@ -192,6 +193,7 @@ class ControlPanel(ttk.Frame):
         self.update_alert_delay_func = update_alert_delay_func
         self.toggle_email_alerts_func = toggle_email_alerts_func
         self.log_window = log_window
+        self.clear_local_images_func = clear_local_images_func  # Store the new callback
         
         # Create UI components
         self.create_control_interface()
@@ -227,12 +229,12 @@ class ControlPanel(ttk.Frame):
             command=self.update_system_func
         )
         self.update_button.pack(side=tk.LEFT, padx=5)
-
-        # In front_end_panels.py, add after the update_button:
+        
+        # Update to use the dedicated callback function
         self.clear_images_button = ttk.Button(
             button_frame,
             text="Clear Images",
-            command=self.log_window.root.master.clear_local_images
+            command=self.clear_local_images_func
         )
         self.clear_images_button.pack(side=tk.LEFT, padx=5)
         
@@ -505,7 +507,8 @@ class LightingInfoPanel(ttk.LabelFrame):
             # Update detailed condition if in transition
             if condition == 'transition':
                 self.detailed_condition.set(f"({detailed.upper()})")
-                self.detailed_label.pack()
+                # Use grid here instead of pack since that's how it was created
+                self.detailed_label.grid()
             else:
                 self.detailed_condition.set("")
                 

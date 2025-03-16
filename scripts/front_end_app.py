@@ -1,4 +1,4 @@
-# File: front_end_app.py fest
+# File: front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
 # March 15, 2025 Update - Version 1.3.1
@@ -145,7 +145,8 @@ class OwlApp:
             self.update_capture_interval,
             self.update_alert_delay,
             self.toggle_email_alerts,
-            self.log_window
+            self.log_window,
+            self.clear_local_images  # Add the clear_local_images method as a parameter
         )
         self.control_panel.pack(fill="both", expand=True)
         
@@ -382,19 +383,18 @@ class OwlApp:
         except Exception as e:
             self.log_message(f"Error reading logs: {e}", "ERROR")
             
-    # In front_end_app.py, add this method:
-def clear_local_images(self):
-    """Clear all local images from storage directories"""
-    try:
-        from utilities.constants import BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR
-        
-        for directory in [BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR]:
-            if os.path.exists(directory):
-                for filename in os.listdir(directory):
-                    file_path = os.path.join(directory, filename)
-                    if os.path.isfile(file_path):
-                        os.unlink(file_path)
-                        
-        self.log_message("All local images deleted", "INFO")
-    except Exception as e:
-        self.log_message(f"Error clearing images: {e}", "ERROR")
+    def clear_local_images(self):
+        """Clear all local images from storage directories"""
+        try:
+            from utilities.constants import BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR
+            
+            for directory in [BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR]:
+                if os.path.exists(directory):
+                    for filename in os.listdir(directory):
+                        file_path = os.path.join(directory, filename)
+                        if os.path.isfile(file_path):
+                            os.unlink(file_path)
+                            
+            self.log_message("All local images deleted", "INFO")
+        except Exception as e:
+            self.log_message(f"Error clearing images: {e}", "ERROR")
