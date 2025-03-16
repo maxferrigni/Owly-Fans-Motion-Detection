@@ -1,4 +1,4 @@
-# File: front_end_panels.py
+# File: front_end_panels.py test
 # Purpose: Reusable GUI components for the Owl Monitoring System
 #
 # March 15, 2025 Update - Version 1.3.1
