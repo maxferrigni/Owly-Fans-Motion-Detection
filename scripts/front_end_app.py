@@ -1,4 +1,4 @@
-# File: front_end_app.py
+# File: front_end_app.py fest
 # Purpose: Main application window for the Owl Monitoring System
 #
 # March 15, 2025 Update - Version 1.3.1
