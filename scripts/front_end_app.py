@@ -1,10 +1,10 @@
-# File: front_end_app.py
+# File: scripts/front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 16, 2025 Update - Version 1.3.2
-# - Added "Images" tab for viewing comparison images
-# - Added "Sys Monitor" tab placeholder for future monitoring features
-# - Compacted the Lighting Information panel for better space utilization
+# March 17, 2025 Update - Version 1.4.1
+# - Refactored tab components into separate files
+# - Improved code organization
+# - Maintained original functionality
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -27,17 +27,15 @@ from utilities.logging_utils import get_logger
 from utilities.alert_manager import AlertManager
 from utilities.time_utils import get_current_lighting_condition
 
-# Import GUI panels - now including all panel components
-from front_end_panels import (
-    LogWindow, 
-    LightingInfoPanel,
-    ControlPanel,
-    ImageViewerPanel,
-    SysMonitorPanel
-)
+# Import GUI panels (shared components)
+from front_end_panels import LogWindow, LightingInfoPanel
 
-# Import remaining components
-from motion_detection_settings import MotionDetectionSettings
+# Import tab components from front_end_components
+from front_end_components.control_tab import ControlTab
+from front_end_components.settings_tab import SettingsTab
+from front_end_components.test_tab import TestTab
+from front_end_components.images_tab import ImagesTab
+from front_end_components.monitor_tab import MonitorTab
 
 class OwlApp:
     def __init__(self, root):
@@ -111,15 +109,15 @@ class OwlApp:
         self.control_tab = ttk.Frame(self.notebook)
         self.settings_tab = ttk.Frame(self.notebook)
         self.test_tab = ttk.Frame(self.notebook)
-        self.images_tab = ttk.Frame(self.notebook)  # New tab for images in v1.3.2
-        self.sys_monitor_tab = ttk.Frame(self.notebook)  # New tab for system monitoring in v1.3.2
+        self.images_tab = ttk.Frame(self.notebook)
+        self.sys_monitor_tab = ttk.Frame(self.notebook)
 
         # Add tabs to notebook
         self.notebook.add(self.control_tab, text="Control")
         self.notebook.add(self.settings_tab, text="Settings")
         self.notebook.add(self.test_tab, text="Test")
-        self.notebook.add(self.images_tab, text="Images")  # Add new tab for images
-        self.notebook.add(self.sys_monitor_tab, text="Sys Monitor")  # Add new tab for system monitoring
+        self.notebook.add(self.images_tab, text="Images")
+        self.notebook.add(self.sys_monitor_tab, text="Sys Monitor")
 
         # Initialize components
         self.initialize_components()
@@ -137,45 +135,31 @@ class OwlApp:
         # Initialize log window
         self.log_window = LogWindow(self.root)
         
-        # Create control panel - Now uses the panel class with simplified parameters
-        self.control_panel = ControlPanel(
-            self.control_tab,
-            self.local_saving_enabled,
-            self.capture_interval,
-            self.alert_delay,
-            self.email_alerts_enabled,
-            self.update_system,
-            self.start_script,
-            self.stop_script,
-            self.toggle_local_saving,
-            self.update_capture_interval,
-            self.update_alert_delay,
-            self.toggle_email_alerts,
-            self.log_window,
-            self.clear_local_images  # Add the clear_local_images method as a parameter
+        # Initialize tab components
+        self.control_tab_component = ControlTab(
+            self.control_tab, 
+            self
         )
-        self.control_panel.pack(fill="both", expand=True)
         
-        # Create motion detection settings in settings tab
-        settings_scroll = ttk.Frame(self.settings_tab)
-        settings_scroll.pack(fill="both", expand=True)
-        self.settings = MotionDetectionSettings(settings_scroll, self.logger)
+        self.settings_tab_component = SettingsTab(
+            self.settings_tab, 
+            self
+        )
         
-        # Create test interface in test tab
-        test_scroll = ttk.Frame(self.test_tab)
-        test_scroll.pack(fill="both", expand=True)
+        self.test_tab_component = TestTab(
+            self.test_tab, 
+            self
+        )
         
-        # Import test interface here to avoid circular import issues
-        from test_interface import TestInterface
-        self.test_interface = TestInterface(test_scroll, self.logger, self.alert_manager)
+        self.images_tab_component = ImagesTab(
+            self.images_tab, 
+            self
+        )
         
-        # Create image viewer panel in images tab - New in v1.3.2
-        self.image_viewer = ImageViewerPanel(self.images_tab)
-        self.image_viewer.pack(fill="both", expand=True)
-        
-        # Create system monitor panel in sys monitor tab - New in v1.3.2
-        self.sys_monitor = SysMonitorPanel(self.sys_monitor_tab)
-        self.sys_monitor.pack(fill="both", expand=True)
+        self.sys_monitor_tab_component = MonitorTab(
+            self.sys_monitor_tab, 
+            self
+        )
 
     def log_message(self, message, level="INFO"):
         """Log message to log window"""
@@ -367,7 +351,7 @@ class OwlApp:
                 )
 
                 # Update UI state
-                self.control_panel.update_run_state(True)
+                self.control_tab_component.update_run_state(True)
                 
                 # Start log monitoring
                 threading.Thread(target=self.refresh_logs, daemon=True).start()
@@ -383,7 +367,7 @@ class OwlApp:
                 self.script_process.terminate()
                 self.script_process.wait(timeout=5)
                 self.script_process = None
-                self.control_panel.update_run_state(False)
+                self.control_tab_component.update_run_state(False)
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}", "ERROR")
 
