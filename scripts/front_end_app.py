@@ -1,10 +1,9 @@
 # File: scripts/front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 17, 2025 Update - Version 1.4.1
-# - Refactored tab components into separate files
-# - Improved code organization
-# - Maintained original functionality
+# March 18, 2025 Update - Version 1.4.3
+# - Improved image deletion logging with clear count reporting
+# - Enhanced Images Tab visualization
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -382,17 +381,22 @@ class OwlApp:
             self.log_message(f"Error reading logs: {e}", "ERROR")
             
     def clear_local_images(self):
-        """Clear all local images from storage directories"""
+        """
+        Clear all local images from storage directories.
+        Updated in v1.4.3 to provide simple count of deleted files.
+        """
         try:
             from utilities.constants import BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR
             
+            total_deleted = 0
             for directory in [BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR]:
                 if os.path.exists(directory):
                     for filename in os.listdir(directory):
                         file_path = os.path.join(directory, filename)
                         if os.path.isfile(file_path):
                             os.unlink(file_path)
+                            total_deleted += 1
                             
-            self.log_message("All local images deleted", "INFO")
+            self.log_message(f"{total_deleted:,} images deleted", "INFO")
         except Exception as e:
             self.log_message(f"Error clearing images: {e}", "ERROR")

@@ -1,5 +1,11 @@
 # File: utilities/image_comparison_utils.py
-# Purpose: Generate and handle three-panel comparison images with enhanced metrics and confidence display
+# Purpose: Generate and handle three-panel comparison images with enhanced visualization
+#
+# March 18, 2025 Update - Version 1.4.3
+# - Removed text overlays from images
+# - Changed owl shape highlighting to red outlines
+# - Optimized for cleaner visualization
+# - Removed status information from images (moved to UI)
 
 import os
 import cv2
@@ -139,7 +145,10 @@ def analyze_motion_characteristics(binary_mask, config):
         raise
 
 def create_difference_visualization(base_image, new_image, threshold, config):
-    """Create enhanced difference visualization with focus on owl shapes."""
+    """
+    Create enhanced difference visualization with red outlines around owl shapes.
+    Updated in v1.4.3 to remove text overlays and use red outlines.
+    """
     try:
         # Convert to OpenCV format
         base_cv = cv2.cvtColor(np.array(base_image), cv2.COLOR_RGB2GRAY)
@@ -198,137 +207,37 @@ def create_difference_visualization(base_image, new_image, threshold, config):
                 area_ratio >= min_area_ratio):
                 owl_contours.append((contour, (x, y, w, h), circularity, area_ratio))
         
-        # Draw only contours that resemble owls 
+        # Draw only contours that resemble owls with RED outlines
         for i, (contour, (x, y, w, h), circularity, area_ratio) in enumerate(owl_contours):
+            # Use red color for owl shape highlighting
+            owl_highlight_color = (0, 0, 255)  # RED in BGR
+            
             # Draw ellipse instead of irregular contour for cleaner visualization
             if len(contour) >= 5:  # Minimum 5 points required for ellipse fitting
                 ellipse = cv2.fitEllipse(contour)
-                cv2.ellipse(diff_color, ellipse, (0, 255, 0), 2)
+                cv2.ellipse(diff_color, ellipse, owl_highlight_color, 2)
                 
-                # Add "OWL" label near the detected shape
-                label_x = int(x + w/2)
-                label_y = int(y - 10) if y > 20 else int(y + h + 20)
-                cv2.putText(
-                    diff_color,
-                    "OWL",
-                    (label_x, label_y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 255, 0),
-                    2
-                )
+                # Draw a simple "X" mark in the center to indicate owl detection point
+                center_x = int(x + w/2)
+                center_y = int(y + h/2)
+                marker_size = 10
+                cv2.line(diff_color, 
+                         (center_x - marker_size, center_y - marker_size),
+                         (center_x + marker_size, center_y + marker_size),
+                         owl_highlight_color, 2)
+                cv2.line(diff_color, 
+                         (center_x + marker_size, center_y - marker_size),
+                         (center_x - marker_size, center_y + marker_size),
+                         owl_highlight_color, 2)
             else:
-                # Fallback to drawing a simple oval if we can't fit an ellipse
-                cv2.ellipse(
-                    diff_color,
-                    (x + w//2, y + h//2),  # center point
-                    (w//2, h//2),          # axes lengths
-                    0,                     # rotation angle
-                    0, 360,                # start and end angles
-                    (0, 255, 0),           # color (green)
-                    2                      # thickness
-                )
+                # Fallback to drawing a simple rectangle
+                cv2.rectangle(diff_color, (x, y), (x+w, y+h), owl_highlight_color, 2)
         
         return Image.fromarray(diff_color), binary_mask, len(owl_contours) > 0
         
     except Exception as e:
         logger.error(f"Error creating difference visualization: {e}")
         raise
-
-def add_status_overlay(image, metrics, threshold, detection_info=None, is_test=False):
-    """
-    Add enhanced status and metrics overlay with owl confidence.
-    
-    Args:
-        image (PIL.Image): Image to add overlay to
-        metrics (dict): Metrics dictionary
-        threshold (int): Threshold value used
-        detection_info (dict): Detection info including owl confidence
-        is_test (bool): Whether this is a test image
-        
-    Returns:
-        PIL.Image: Image with overlay added
-    """
-    try:
-        # Create copy to avoid modifying original
-        img_with_text = image.copy()
-        draw = ImageDraw.Draw(img_with_text)
-        
-        # Get confidence from detection info
-        owl_confidence = 0.0
-        consecutive_frames = 0
-        confidence_factors = {}
-        
-        if detection_info:
-            owl_confidence = detection_info.get("owl_confidence", 0.0)
-            consecutive_frames = detection_info.get("consecutive_owl_frames", 0)
-            confidence_factors = detection_info.get("confidence_factors", {})
-            is_owl_detected = detection_info.get("is_owl_present", False)
-        else:
-            is_owl_detected = False
-        
-        # Determine detection status with confidence
-        if is_owl_detected:
-            status_text = f"OWL DETECTED ({owl_confidence:.1f}%)"
-            status_color = "red"
-        else:
-            status_text = f"NO OWL DETECTED ({owl_confidence:.1f}%)"
-            status_color = "green"
-            
-        if is_test:
-            status_text = f"TEST MODE - {status_text}"
-        
-        # Position text
-        x, y = 10, 10
-        line_height = 20
-        
-        # Draw status with appropriate color
-        draw.text((x, y), status_text, fill=status_color)
-        y += line_height * 2
-        
-        # Draw detailed metrics
-        metrics_text = [
-            f"Pixel Change: {metrics['pixel_change_ratio']*100:.1f}%",
-            f"Mean Luminance: {metrics['mean_luminance']:.1f}",
-            f"Max Luminance: {metrics['max_luminance']:.1f}",
-            f"Threshold: {metrics['threshold_used']}"
-        ]
-        
-        for text in metrics_text:
-            draw.text((x, y), text, fill="yellow")
-            y += line_height
-        
-        # Add empty line
-        y += line_height
-        
-        # Draw region analysis
-        draw.text((x, y), "Region Analysis:", fill="yellow")
-        y += line_height
-        
-        for region, values in metrics['region_metrics'].items():
-            draw.text((x, y), f"{region.capitalize()}: {values['mean_luminance']:.1f}", fill="yellow")
-            y += line_height
-            
-        # Add confidence breakdown if available
-        if confidence_factors:
-            # Add empty line
-            y += line_height
-            
-            draw.text((x, y), "Confidence Breakdown:", fill="yellow")
-            y += line_height
-            
-            for factor, value in confidence_factors.items():
-                draw.text((x, y), f"{factor.replace('_', ' ').capitalize()}: {value:.1f}%", fill="yellow")
-                y += line_height
-                
-            # Add consecutive frames info
-            draw.text((x, y), f"Consecutive Frames: {consecutive_frames}", fill="yellow")
-            
-        return img_with_text
-        
-    except Exception as e:
-        logger.error(f"Error adding status overlay: {e}")
-        return image  # Return original if overlay fails
 
 def save_local_image_set(base_image, new_image, comparison_image, camera_name, timestamp):
     """
@@ -380,7 +289,8 @@ def save_local_image_set(base_image, new_image, comparison_image, camera_name, t
 
 def create_comparison_image(base_image, new_image, camera_name, threshold, config, detection_info=None, is_test=False, timestamp=None):
     """
-    Create enhanced three-panel comparison image with owl-specific detection and confidence display.
+    Create clean three-panel comparison image without text overlays.
+    Updated in v1.4.3 to remove status overlays and simplify visualization.
     
     Args:
         base_image (PIL.Image): Base reference image
@@ -404,7 +314,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         # Get image dimensions
         width, height = base_image.size
         
-        # Create visualization
+        # Create visualization with red owl shape highlighting
         diff_image, binary_mask, contains_owl_shapes = create_difference_visualization(
             base_image,
             new_image,
@@ -416,27 +326,18 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         change_metrics = analyze_change_metrics(diff_image, threshold, config)
         motion_chars = analyze_motion_characteristics(binary_mask, config)
         
-        # Add metrics to change_metrics
+        # Add metrics to change_metrics (for logging/storage)
         change_metrics.update({
             'motion_characteristics': motion_chars,
             'camera_name': camera_name,
             'is_test': is_test
         })
         
-        # Add overlay with confidence information
-        diff_with_overlay = add_status_overlay(
-            diff_image,
-            change_metrics,
-            threshold,
-            detection_info=detection_info,
-            is_test=is_test
-        )
-        
-        # Create comparison image
+        # Create comparison image without text overlays
         comparison = Image.new('RGB', (width * 3, height))
         comparison.paste(base_image, (0, 0))
         comparison.paste(new_image, (width, 0))
-        comparison.paste(diff_with_overlay, (width * 2, 0))
+        comparison.paste(diff_image, (width * 2, 0))
         
         # Ensure timestamp is set
         if not timestamp:
