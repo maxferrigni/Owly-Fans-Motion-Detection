@@ -37,6 +37,9 @@ class ImagesTab(ttk.Frame):
         self.image_viewer = ImageViewerPanel(self)
         self.image_viewer.pack(fill="both", expand=True)
 
+        # Pack self into parent container
+        self.pack(fill="both", expand=True)
+
 
 class ImageViewerPanel(ttk.Frame):
     """

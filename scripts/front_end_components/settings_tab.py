@@ -33,6 +33,9 @@ class SettingsTab(ttk.Frame):
         
         # Initialize the motion detection settings component
         self.settings = MotionDetectionSettings(settings_scroll, self.logger)
+
+        # Pack self into parent container
+        self.pack(fill="both", expand=True)
         
     def get_confidence_thresholds(self):
         """Proxy method to access confidence thresholds from settings"""

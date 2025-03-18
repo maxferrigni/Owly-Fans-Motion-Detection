@@ -33,6 +33,9 @@ class TestTab(ttk.Frame):
         
         # Initialize the test interface
         self.test_interface = TestInterface(test_scroll, self.logger, self.app.alert_manager)
+
+        # Pack self into parent container
+        self.pack(fill="both", expand=True)
         
     def reset_frame_history(self):
         """Reset detection frame history"""

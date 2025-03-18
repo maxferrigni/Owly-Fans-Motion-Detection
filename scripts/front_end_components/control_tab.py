@@ -48,6 +48,9 @@ class ControlTab(ttk.Frame):
         )
         self.control_panel.pack(fill="both", expand=True)
         
+        # Pack self into parent container
+        self.pack(fill="both", expand=True)
+        
     def update_run_state(self, is_running):
         """Update run state in the control panel"""
         self.control_panel.update_run_state(is_running)

@@ -30,6 +30,9 @@ class MonitorTab(ttk.Frame):
         self.sys_monitor = SysMonitorPanel(self)
         self.sys_monitor.pack(fill="both", expand=True)
 
+        # Pack self into parent container
+        self.pack(fill="both", expand=True)
+
 
 class SysMonitorPanel(ttk.Frame):
     """
