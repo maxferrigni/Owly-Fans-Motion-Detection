@@ -6,6 +6,7 @@
 # - Added uniform image containers
 # - Separated images from detection information
 # - Improved label clarity and result presentation
+# - Fixed image display to show individual images in each panel
 
 import tkinter as tk
 from tkinter import ttk
@@ -16,7 +17,7 @@ import threading
 import time
 
 from utilities.logging_utils import get_logger
-from utilities.constants import CAMERA_MAPPINGS, get_comparison_image_path
+from utilities.constants import CAMERA_MAPPINGS, get_comparison_image_path, get_base_image_path
 
 
 class ImagesTab(ttk.Frame):
@@ -71,7 +72,7 @@ class ImageViewerPanel(ttk.Frame):
             self.image_refs[camera] = {
                 "base": None,
                 "current": None,
-                "comparison": None
+                "analysis": None  # Changed from "comparison" to "analysis"
             }
             self.last_modified[camera] = 0
         
@@ -118,6 +119,7 @@ class ImageViewerPanel(ttk.Frame):
         self.camera_frames = {}
         self.image_containers = {}
         self.image_labels = {}
+        self.image_text_labels = {}  # Added to store text labels
         self.result_labels = {}
         self.detail_labels = {}
         
@@ -134,29 +136,41 @@ class ImageViewerPanel(ttk.Frame):
             # Create containers for three image types
             self.image_containers[camera] = {}
             self.image_labels[camera] = {}
+            self.image_text_labels[camera] = {}
             
-            for j, img_type in enumerate(["base", "current", "comparison"]):
+            image_types = [
+                ("base", "Base Image"), 
+                ("current", "Current Image"), 
+                ("analysis", "Analysis Image")  # Changed from "comparison" to "analysis"
+            ]
+            
+            for img_type, display_name in image_types:
+                # Create column frame to hold image and label vertically
+                column_frame = ttk.Frame(image_row)
+                column_frame.pack(side="left", padx=10, fill="y")
+                
                 # Create container frame with fixed size
-                container = ttk.Frame(image_row, width=self.image_width, height=self.image_height)
-                container.pack(side="left", padx=10)
+                container = ttk.Frame(column_frame, width=self.image_width, height=self.image_height)
+                container.pack(side="top", fill="both")
                 container.pack_propagate(False)  # Prevent container from resizing to fit content
                 
                 # Create image label within container
                 img_label = ttk.Label(container)
                 img_label.pack(fill="both", expand=True)
                 
+                # Add text label UNDER each image
+                text_label = ttk.Label(
+                    column_frame, 
+                    text=f"{display_name} - {camera}",
+                    anchor="center",
+                    justify="center"
+                )
+                text_label.pack(side="bottom", fill="x", pady=(5, 0))
+                
                 # Store references
                 self.image_containers[camera][img_type] = container
                 self.image_labels[camera][img_type] = img_label
-                
-                # Add text label under each image
-                label_names = {
-                    "base": f"Base Image - {camera}",
-                    "current": f"Current Image - {camera}",
-                    "comparison": f"Comparison Image - {camera}"
-                }
-                
-                ttk.Label(image_row, text=label_names[img_type]).pack(side="left", padx=10)
+                self.image_text_labels[camera][img_type] = text_label
             
             # Create detection result area beneath images
             result_frame = ttk.Frame(camera_frame)
@@ -183,46 +197,110 @@ class ImageViewerPanel(ttk.Frame):
             if i < len(self.camera_order) - 1:
                 ttk.Separator(self.main_frame, orient="horizontal").pack(fill="x", pady=5)
     
+    def get_image_path(self, camera, image_type):
+        """
+        Get the appropriate path for each image type.
+        
+        Args:
+            camera (str): Camera name
+            image_type (str): "base", "current", or "analysis"
+            
+        Returns:
+            str: Path to the image
+        """
+        try:
+            # For a real implementation, we need to access the individual images
+            # For now, we're using a workaround to extract from the 3-panel image
+            
+            # Get the path to the 3-panel comparison image
+            comparison_path = get_comparison_image_path(camera)
+            
+            # In a real implementation, you would have separate paths for each image type
+            # TODO: Implement proper paths for base, current, and analysis images
+            
+            if os.path.exists(comparison_path):
+                return comparison_path
+            else:
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error getting image path for {camera} {image_type}: {e}")
+            return None
+    
+    def extract_panel_from_comparison(self, comparison_image, panel_index):
+        """
+        Extract an individual panel from the 3-panel comparison image.
+        
+        Args:
+            comparison_image (PIL.Image): The 3-panel comparison image
+            panel_index (int): 0 for base, 1 for current, 2 for analysis
+            
+        Returns:
+            PIL.Image: The extracted panel
+        """
+        try:
+            if not comparison_image:
+                return None
+                
+            width, height = comparison_image.size
+            panel_width = width // 3
+            
+            # Crop the relevant panel
+            left = panel_index * panel_width
+            right = left + panel_width
+            
+            panel = comparison_image.crop((left, 0, right, height))
+            return panel
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting panel {panel_index}: {e}")
+            return None
+    
     def load_and_display_image(self, camera, image_type):
         """
         Load and display an image for a specific camera and type.
         
         Args:
             camera (str): Camera name
-            image_type (str): "base", "current", or "comparison"
+            image_type (str): "base", "current", or "analysis"
             
         Returns:
             bool: True if image was updated
         """
         try:
-            # Get the appropriate image path
-            if image_type == "comparison":
-                image_path = get_comparison_image_path(camera)
-            else:
-                # For testing, we'll use the comparison path for all images
-                # In production, you'd use the correct paths for base and current images
-                image_path = get_comparison_image_path(camera)
+            # Get the path to the 3-panel comparison image
+            comparison_path = get_comparison_image_path(camera)
             
             # Check if file exists
-            if not os.path.exists(image_path):
+            if not os.path.exists(comparison_path):
                 # Display placeholder for missing image
                 self.display_placeholder(camera, image_type)
                 return False
             
             # Check if file was modified since last load
-            mod_time = os.path.getmtime(image_path)
+            mod_time = os.path.getmtime(comparison_path)
             if mod_time <= self.last_modified.get(camera, 0) and self.image_refs[camera][image_type]:
                 return False  # No update needed
             
-            # Load and resize image
-            image = Image.open(image_path)
+            # Load the 3-panel comparison image
+            comparison_image = Image.open(comparison_path)
             
+            # Determine which panel to extract based on image_type
+            panel_index = {"base": 0, "current": 1, "analysis": 2}[image_type]
+            
+            # Extract the specific panel
+            panel = self.extract_panel_from_comparison(comparison_image, panel_index)
+            
+            if not panel:
+                self.display_placeholder(camera, image_type)
+                return False
+                
             # Resize image to fit container while maintaining aspect ratio
-            width, height = image.size
+            width, height = panel.size
             ratio = min(self.image_width/width, self.image_height/height)
             new_size = (int(width * ratio), int(height * ratio))
             
-            resized = image.resize(new_size, Image.LANCZOS)
+            resized = panel.resize(new_size, Image.LANCZOS)
             
             # Convert to PhotoImage
             photo = ImageTk.PhotoImage(resized)
@@ -233,12 +311,13 @@ class ImageViewerPanel(ttk.Frame):
             # Store reference to prevent garbage collection
             self.image_refs[camera][image_type] = photo
             
-            # Update last modified time
-            if image_type == "comparison":
+            # Update last modified time if this is the analysis image
+            # (we use this as the marker for when all images should be updated)
+            if image_type == "analysis":
                 self.last_modified[camera] = mod_time
                 
-                # Update detection information based on comparison image
-                self.update_detection_info(camera, image_path)
+                # Update detection information based on analysis image
+                self.update_detection_info(camera, comparison_path)
             
             return True
             
@@ -319,7 +398,7 @@ class ImageViewerPanel(ttk.Frame):
             
             # Load images for all cameras
             for camera in self.camera_order:
-                for img_type in ["base", "current", "comparison"]:
+                for img_type in ["base", "current", "analysis"]:  # Changed to analysis
                     if self.load_and_display_image(camera, img_type):
                         updates += 1
                         

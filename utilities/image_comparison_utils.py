@@ -1,11 +1,11 @@
 # File: utilities/image_comparison_utils.py
-# Purpose: Generate and handle three-panel comparison images with enhanced visualization
+# Purpose: Generate and handle image analysis for owl detection
 #
 # March 18, 2025 Update - Version 1.4.3
-# - Removed text overlays from images
-# - Changed owl shape highlighting to red outlines
-# - Optimized for cleaner visualization
-# - Removed status information from images (moved to UI)
+# - Added support for individual image components (base, current, analysis)
+# - Updated terminology: "comparison image" → "3-panel composite"
+# - "Analysis image" used for the difference visualization component
+# - Removed text overlays, added red outlines for owl shapes
 
 import os
 import cv2
@@ -144,10 +144,18 @@ def analyze_motion_characteristics(binary_mask, config):
         logger.error(f"Error analyzing motion characteristics: {e}")
         raise
 
-def create_difference_visualization(base_image, new_image, threshold, config):
+def create_analysis_image(base_image, new_image, threshold, config):
     """
-    Create enhanced difference visualization with red outlines around owl shapes.
-    Updated in v1.4.3 to remove text overlays and use red outlines.
+    Create analysis image that highlights changes with red outlines around owl shapes.
+    
+    Args:
+        base_image (PIL.Image): Base reference image
+        new_image (PIL.Image): New current image
+        threshold (int): Threshold value
+        config (dict): Camera configuration
+        
+    Returns:
+        tuple: (analysis_image, binary_mask, contains_owl_shapes)
     """
     try:
         # Convert to OpenCV format
@@ -233,22 +241,85 @@ def create_difference_visualization(base_image, new_image, threshold, config):
                 # Fallback to drawing a simple rectangle
                 cv2.rectangle(diff_color, (x, y), (x+w, y+h), owl_highlight_color, 2)
         
-        return Image.fromarray(diff_color), binary_mask, len(owl_contours) > 0
+        # Convert back to PIL image
+        analysis_image = Image.fromarray(diff_color)
+        
+        return analysis_image, binary_mask, len(owl_contours) > 0
         
     except Exception as e:
-        logger.error(f"Error creating difference visualization: {e}")
+        logger.error(f"Error creating analysis image: {e}")
         raise
 
-def save_local_image_set(base_image, new_image, comparison_image, camera_name, timestamp):
+def get_component_image_path(camera_name, image_type):
     """
-    Save a complete set of images (base, new, comparison) locally with matching timestamps.
+    Get the path for saving/loading individual image components.
+    
+    Args:
+        camera_name (str): Name of the camera
+        image_type (str): Type of image ("base", "current", or "analysis")
+        
+    Returns:
+        str: Path to the image file
+    """
+    # Create camera-specific directory if it doesn't exist
+    camera_dir = os.path.join(IMAGE_COMPARISONS_DIR, camera_name.replace(" ", "_"))
+    os.makedirs(camera_dir, exist_ok=True)
+    
+    # Create filenames for each component
+    component_filenames = {
+        "base": f"{camera_name.replace(' ', '_')}_base.jpg",
+        "current": f"{camera_name.replace(' ', '_')}_current.jpg",
+        "analysis": f"{camera_name.replace(' ', '_')}_analysis.jpg"
+    }
+    
+    return os.path.join(camera_dir, component_filenames.get(image_type, "unknown.jpg"))
+
+def save_component_images(base_image, current_image, analysis_image, camera_name):
+    """
+    Save the individual image components for display.
+    
+    Args:
+        base_image (PIL.Image): Base reference image
+        current_image (PIL.Image): Current/new image
+        analysis_image (PIL.Image): Analysis image with highlighting
+        camera_name (str): Name of the camera
+        
+    Returns:
+        dict: Paths to the saved component images
+    """
+    try:
+        components = {
+            "base": base_image,
+            "current": current_image, 
+            "analysis": analysis_image
+        }
+        
+        paths = {}
+        
+        # Save each component
+        for component_type, img in components.items():
+            path = get_component_image_path(camera_name, component_type)
+            img.save(path, quality=95)
+            paths[component_type] = path
+            
+        logger.debug(f"Saved individual component images for {camera_name}")
+        return paths
+        
+    except Exception as e:
+        logger.error(f"Error saving component images: {e}")
+        return {}
+
+def save_local_image_set(base_image, new_image, analysis_image, three_panel_image, camera_name, timestamp):
+    """
+    Save a complete set of images locally with matching timestamps.
     
     Args:
         base_image (PIL.Image): The base reference image
         new_image (PIL.Image): The newly captured image
-        comparison_image (PIL.Image): The 3-panel comparison image
+        analysis_image (PIL.Image): The analysis image with highlighting
+        three_panel_image (PIL.Image): The 3-panel composite image
         camera_name (str): Name of the camera
-        timestamp (datetime): Timestamp to use for all three images
+        timestamp (datetime): Timestamp to use for all images
     """
     try:
         from utilities.constants import SAVED_IMAGES_DIR
@@ -260,27 +331,31 @@ def save_local_image_set(base_image, new_image, comparison_image, camera_name, t
         camera_name_clean = camera_name.lower().replace(' ', '_')
         ts_str = timestamp.strftime('%Y%m%d_%H%M%S')
         
-        # Create filenames for all three images with matching timestamps
+        # Create filenames for all images with matching timestamps
         base_filename = f"{camera_name_clean}_base_{ts_str}.jpg"
-        new_filename = f"{camera_name_clean}_new_{ts_str}.jpg"
-        comparison_filename = f"{camera_name_clean}_comparison_{ts_str}.jpg"
+        current_filename = f"{camera_name_clean}_current_{ts_str}.jpg"
+        analysis_filename = f"{camera_name_clean}_analysis_{ts_str}.jpg"
+        composite_filename = f"{camera_name_clean}_composite_{ts_str}.jpg"
         
         # Create full paths
         base_path = os.path.join(SAVED_IMAGES_DIR, base_filename)
-        new_path = os.path.join(SAVED_IMAGES_DIR, new_filename)
-        comparison_path = os.path.join(SAVED_IMAGES_DIR, comparison_filename)
+        current_path = os.path.join(SAVED_IMAGES_DIR, current_filename)
+        analysis_path = os.path.join(SAVED_IMAGES_DIR, analysis_filename)
+        composite_path = os.path.join(SAVED_IMAGES_DIR, composite_filename)
         
-        # Save all three images
+        # Save all images
         base_image.save(base_path, quality=95)
-        new_image.save(new_path, quality=95)
-        comparison_image.save(comparison_path, quality=95)
+        new_image.save(current_path, quality=95)
+        analysis_image.save(analysis_path, quality=95)
+        three_panel_image.save(composite_path, quality=95)
         
         logger.info(f"Saved complete image set for {camera_name} with timestamp {ts_str}")
         
         return {
             "base_path": base_path,
-            "new_path": new_path,
-            "comparison_path": comparison_path
+            "current_path": current_path,
+            "analysis_path": analysis_path,
+            "composite_path": composite_path
         }
         
     except Exception as e:
@@ -289,8 +364,8 @@ def save_local_image_set(base_image, new_image, comparison_image, camera_name, t
 
 def create_comparison_image(base_image, new_image, camera_name, threshold, config, detection_info=None, is_test=False, timestamp=None):
     """
-    Create clean three-panel comparison image without text overlays.
-    Updated in v1.4.3 to remove status overlays and simplify visualization.
+    Create 3-panel composite image and save individual components.
+    The three panels are: base image, current image, and analysis image.
     
     Args:
         base_image (PIL.Image): Base reference image
@@ -303,7 +378,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         timestamp (datetime): Timestamp for image
         
     Returns:
-        str: Path to saved comparison image
+        str: Path to saved 3-panel composite image
     """
     try:
         # Validate images
@@ -314,8 +389,8 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         # Get image dimensions
         width, height = base_image.size
         
-        # Create visualization with red owl shape highlighting
-        diff_image, binary_mask, contains_owl_shapes = create_difference_visualization(
+        # Create analysis image with red owl shape highlighting
+        analysis_image, binary_mask, contains_owl_shapes = create_analysis_image(
             base_image,
             new_image,
             threshold,
@@ -323,7 +398,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         )
         
         # Analyze metrics
-        change_metrics = analyze_change_metrics(diff_image, threshold, config)
+        change_metrics = analyze_change_metrics(analysis_image, threshold, config)
         motion_chars = analyze_motion_characteristics(binary_mask, config)
         
         # Add metrics to change_metrics (for logging/storage)
@@ -333,35 +408,43 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
             'is_test': is_test
         })
         
-        # Create comparison image without text overlays
-        comparison = Image.new('RGB', (width * 3, height))
-        comparison.paste(base_image, (0, 0))
-        comparison.paste(new_image, (width, 0))
-        comparison.paste(diff_image, (width * 2, 0))
+        # Create 3-panel composite image
+        three_panel_image = Image.new('RGB', (width * 3, height))
+        three_panel_image.paste(base_image, (0, 0))
+        three_panel_image.paste(new_image, (width, 0))
+        three_panel_image.paste(analysis_image, (width * 2, 0))
         
         # Ensure timestamp is set
         if not timestamp:
             timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
             
-        # Get the fixed path for this type of comparison
-        comparison_path = get_comparison_image_path(camera_name)
+        # Save the individual component images for the UI
+        component_paths = save_component_images(
+            base_image,
+            new_image,
+            analysis_image,
+            camera_name
+        )
+        
+        # Get the fixed path for the 3-panel composite image
+        composite_path = get_comparison_image_path(camera_name)
         
         # Ensure the directory exists
-        os.makedirs(os.path.dirname(comparison_path), exist_ok=True)
+        os.makedirs(os.path.dirname(composite_path), exist_ok=True)
         
-        # Save the comparison image to the fixed location
-        comparison.save(comparison_path, quality=95)
+        # Save the 3-panel composite image to the fixed location
+        three_panel_image.save(composite_path, quality=95)
         
         # Check if local saving is enabled
         local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
         
-        # If local saving is enabled, save a complete set of images 
-        # (base, new, comparison) with the same timestamp
+        # If local saving is enabled, save a complete set of images with the same timestamp
         if local_saving:
             saved_paths = save_local_image_set(
                 base_image, 
                 new_image, 
-                comparison,
+                analysis_image,
+                three_panel_image,
                 camera_name,
                 timestamp
             )
@@ -370,17 +453,21 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         confidence = detection_info.get("owl_confidence", 0.0) if detection_info else 0.0
         
         logger.info(
-            f"Created comparison image for {camera_name}. "
+            f"Created images for {camera_name}. "
             f"Owl detected: {is_owl_detected}, "
             f"Confidence: {confidence:.1f}% "
             f"{'(Test Mode)' if is_test else ''}"
         )
         
-        # Return the fixed path - this is what the rest of the code expects
-        return comparison_path
+        # Return both the composite path and component paths
+        return {
+            "composite_path": composite_path,
+            "component_paths": component_paths,
+            "contains_owl_shapes": contains_owl_shapes
+        }
         
     except Exception as e:
-        logger.error(f"Error creating comparison image: {e}")
+        logger.error(f"Error creating images: {e}")
         raise
 
 if __name__ == "__main__":
@@ -418,7 +505,7 @@ if __name__ == "__main__":
         new = pyautogui.screenshot(region=test_roi)
         
         # Test comparison
-        comparison_path = create_comparison_image(
+        result = create_comparison_image(
             base,
             new,
             "Test Camera",
@@ -428,7 +515,7 @@ if __name__ == "__main__":
             is_test=True
         )
         
-        print(f"Test comparison created: {comparison_path}")
+        print(f"Test results: {result}")
         
     except Exception as e:
         logger.error(f"Test failed: {e}")
