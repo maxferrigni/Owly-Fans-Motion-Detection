@@ -1,7 +1,7 @@
 # File: scripts/front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 19, 2025 Update - Version 1.4.4.1
+# March 19, 2025 Update - Version 1.4.4
 # - Added global is_running flag to prevent background image saving
 # - Enhanced image clearing to remove all images from all directories
 # - Added version tagging support for image filenames
@@ -293,63 +293,52 @@ class OwlApp:
         def flush(self):
             pass
 
-def update_system(self):
-    """Update the system from git repository"""
-    if self.script_process:
-        messagebox.showwarning(
-            "Warning",
-            "Please stop motion detection before updating."
-        )
-        return
-
-    try:
-        # Determine branch based on environment
-        is_dev = "Dev" in BASE_DIR
-        target_branch = "dev" if is_dev else "main"
-        
-        self.log_message(f"Resetting local repository and pulling latest updates from {target_branch}...")
-        original_dir = os.getcwd()
-        os.chdir(os.path.dirname(SCRIPTS_DIR))
+    def update_system(self):
+        """Update the system from git repository"""
+        if self.script_process:
+            messagebox.showwarning(
+                "Warning",
+                "Please stop motion detection before updating."
+            )
+            return
 
         try:
-            # Fetch latest from remote
-            result_fetch = subprocess.run(
-                ["git", "fetch", "origin"],
-                capture_output=True,
-                text=True
-            )
-            
-            # Checkout the correct branch
-            result_checkout = subprocess.run(
-                ["git", "checkout", target_branch],
-                capture_output=True,
-                text=True
-            )
-            
-            # Hard reset to remote branch
-            result_reset = subprocess.run(
-                ["git", "reset", "--hard", f"origin/{target_branch}"],
-                capture_output=True,
-                text=True
-            )
-            self.log_message(result_reset.stdout)
+            self.log_message("Resetting local repository and pulling latest updates...")
+            original_dir = os.getcwd()
+            os.chdir(os.path.dirname(SCRIPTS_DIR))
 
-            # Clean untracked files (respects .gitignore)
-            result_clean = subprocess.run(
-                ["git", "clean", "-fd"],
-                capture_output=True,
-                text=True
-            )
-            self.log_message(result_clean.stdout)
+            try:
+                result_reset = subprocess.run(
+                    ["git", "reset", "--hard"],
+                    capture_output=True,
+                    text=True
+                )
+                self.log_message(result_reset.stdout)
 
-            self.log_message("Git update successful. Restarting application...")
-            self.restart_application()
-            
-        finally:
-            os.chdir(original_dir)
-    except Exception as e:
-        self.log_message(f"Error during update: {e}", "ERROR")
-        messagebox.showerror("Update Error", f"An error occurred: {e}")
+                result_clean = subprocess.run(
+                    ["git", "clean", "-fd"],
+                    capture_output=True,
+                    text=True
+                )
+                self.log_message(result_clean.stdout)
+
+                result_pull = subprocess.run(
+                    ["git", "pull"],
+                    capture_output=True,
+                    text=True
+                )
+
+                if result_pull.returncode == 0:
+                    self.log_message("Git pull successful. Restarting application...")
+                    self.restart_application()
+                else:
+                    self.log_message(f"Git pull failed: {result_pull.stderr}", "ERROR")
+                    messagebox.showerror("Update Failed", "Git pull failed. Check logs for details.")
+            finally:
+                os.chdir(original_dir)
+        except Exception as e:
+            self.log_message(f"Error during update: {e}", "ERROR")
+            messagebox.showerror("Update Error", f"An error occurred: {e}")
 
     def restart_application(self):
         """Restart the entire application"""
