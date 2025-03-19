@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Version information
-VERSION = "1.4.4.2"
+VERSION = "1.4.5"
 
 # Base directory path from environment variables with fallback
 BASE_DIR = os.getenv("BASE_DIR", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection")
