@@ -27,11 +27,14 @@ from utilities.constants import (
     VERSION
 )
 
-# Import global running flag if available, otherwise default to True for backward compatibility
+# Import function to check running state, otherwise default to True for backward compatibility
 try:
-    from scripts.front_end_app import IS_RUNNING
+    from scripts.front_end_app import get_running_state
+    def is_app_running():
+        return get_running_state()
 except ImportError:
-    IS_RUNNING = True
+    def is_app_running():
+        return True
 
 # Initialize logger
 logger = get_logger()
@@ -318,8 +321,7 @@ def save_component_images(base_image, current_image, analysis_image, camera_name
     """
     try:
         # Check if the application is running before saving any images
-        global IS_RUNNING
-        if not IS_RUNNING:
+        if not is_app_running():
             logger.debug(f"Not saving component images for {camera_name}: Application not running")
             return {}
             
@@ -361,8 +363,7 @@ def save_local_image_set(base_image, new_image, analysis_image, three_panel_imag
         from utilities.constants import SAVED_IMAGES_DIR
         
         # Check if the application is running before saving any images
-        global IS_RUNNING
-        if not IS_RUNNING:
+        if not is_app_running():
             logger.debug(f"Not saving local image set for {camera_name}: Application not running")
             return None
             
@@ -428,8 +429,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
     """
     try:
         # Check if the application is running before saving any images
-        global IS_RUNNING
-        if not IS_RUNNING and not is_test:
+        if not is_app_running() and not is_test:
             logger.debug(f"Not creating comparison image for {camera_name}: Application not running")
             return {"composite_path": None, "component_paths": {}, "contains_owl_shapes": False}
             

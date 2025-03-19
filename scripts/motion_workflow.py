@@ -36,14 +36,14 @@ from utilities.alert_manager import AlertManager
 from utilities.confidence_utils import reset_frame_history
 from capture_base_images import capture_base_images, get_latest_base_image
 
-# Import from push_to_supabase
-from push_to_supabase import push_log_to_supabase, format_detection_results
-
-# Import global running flag if available, otherwise default to True for backward compatibility
+# Import function to check running state, otherwise default to True for backward compatibility
 try:
-    from scripts.front_end_app import IS_RUNNING
+    from scripts.front_end_app import get_running_state
+    def is_app_running():
+        return get_running_state()
 except ImportError:
-    IS_RUNNING = True
+    def is_app_running():
+        return True
 
 # Initialize logger and alert manager
 logger = get_logger()
@@ -135,8 +135,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
     """Process motion detection for a specific camera with confidence-based detection"""
     try:
         # Check if app is running
-        global IS_RUNNING
-        if not IS_RUNNING and not test_images:
+        if not is_app_running() and not test_images:
             logger.info(f"Skipping camera processing for {camera_name}: Application not running")
             return {
                 "camera": camera_name,
@@ -212,7 +211,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             
             # Only create comparison image if either test mode or app is running
             comparison_path = None
-            if is_test or IS_RUNNING:
+            if is_test or is_app_running():
                 # Create comparison image with confidence data but NO TEXT OVERLAYS
                 comparison_result = create_comparison_image(
                     base_image, 
@@ -251,7 +250,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             formatted_results = format_detection_results(detection_results)
             
             # Only push to Supabase if motion was detected or in test mode, and app is running or test mode
-            if (is_owl_present or is_test) and (IS_RUNNING or is_test):
+            if (is_owl_present or is_test) and (is_app_running() or is_test):
                 log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
                 
                 # Process alert only if we have a successful log entry and owl was detected
@@ -294,8 +293,7 @@ def process_cameras(camera_configs, test_images=None):
     """Process all cameras in batch for efficient motion detection"""
     try:
         # Check if app is running
-        global IS_RUNNING
-        if not IS_RUNNING and not test_images:
+        if not is_app_running() and not test_images:
             logger.info("Skipping camera processing: Application not running")
             return []
             
@@ -311,7 +309,7 @@ def process_cameras(camera_configs, test_images=None):
         logger.info(f"Processing cameras under {lighting_condition} condition")
         
         # Only verify base images in real-time mode and if app is running
-        if not test_images and IS_RUNNING:
+        if not test_images and is_app_running():
             if should_capture_base_image():
                 logger.info("Time to capture new base images")
                 capture_base_images(lighting_condition, force_capture=True)
@@ -385,8 +383,9 @@ def update_thresholds(camera_configs, new_thresholds):
         return False
 
 if __name__ == "__main__":
-    # Set IS_RUNNING to True when running this file directly
-    IS_RUNNING = True
+    # Set is_app_running() to return True when running this file directly
+    def is_app_running():
+        return True
     
     # Test the motion detection
     try:
@@ -403,3 +402,6 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Motion detection test failed: {e}")
         raise
+
+# Import at the end to avoid circular import
+from push_to_supabase import push_log_to_supabase, format_detection_results

@@ -39,11 +39,14 @@ from utilities.time_utils import (
 )
 from upload_images_to_supabase import upload_base_image
 
-# Import global running flag if available, otherwise default to True for backward compatibility
+# Import function to check running state, otherwise default to True for backward compatibility
 try:
-    from scripts.front_end_app import IS_RUNNING
+    from scripts.front_end_app import get_running_state
+    def is_app_running():
+        return get_running_state()
 except ImportError:
-    IS_RUNNING = True
+    def is_app_running():
+        return True
 
 # Initialize logger
 logger = get_logger()
@@ -179,8 +182,7 @@ def save_base_image(image, camera_name, lighting_condition):
     """
     try:
         # Check if the application is running
-        global IS_RUNNING
-        if not IS_RUNNING:
+        if not is_app_running():
             logger.warning(f"Not saving base image for {camera_name}: Application not running")
             return None, None
             
@@ -262,8 +264,7 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
 
     try:
         # Check if application is running
-        global IS_RUNNING
-        if not IS_RUNNING and not force_capture:
+        if not is_app_running() and not force_capture:
             logger.warning("Not capturing base images: Application not running")
             return []
             
@@ -395,8 +396,7 @@ def handle_lighting_transition(old_condition, new_condition):
         logger.info(f"Handling lighting transition: {old_condition} -> {new_condition}")
         
         # Check if application is running
-        global IS_RUNNING
-        if not IS_RUNNING:
+        if not is_app_running():
             logger.warning("Not handling lighting transition: Application not running")
             return
             
@@ -442,8 +442,7 @@ def should_capture_startup_base_images():
     """
     try:
         # Check if application is running
-        global IS_RUNNING
-        if not IS_RUNNING:
+        if not is_app_running():
             logger.warning("Not capturing startup base images: Application not running")
             return False
             
@@ -454,7 +453,7 @@ def should_capture_startup_base_images():
         logger.info(f"Current lighting condition on startup: {condition}")
         
         # Only capture startup images if running
-        return IS_RUNNING
+        return is_app_running()
             
     except Exception as e:
         logger.error(f"Error checking startup base image capture: {e}")

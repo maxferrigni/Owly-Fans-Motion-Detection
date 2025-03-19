@@ -43,6 +43,11 @@ from front_end_components.monitor_tab import MonitorTab
 # This is a sentinel to prevent image saving when the app isn't running
 IS_RUNNING = False
 
+def get_running_state():
+    """Get the current running state of the application"""
+    global IS_RUNNING
+    return IS_RUNNING
+
 class OwlApp:
     def __init__(self, root):
         # Initialize window
