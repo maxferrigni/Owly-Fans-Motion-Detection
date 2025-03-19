@@ -3,7 +3,8 @@
 # 
 # March 25, 2025 Update - Version 1.4.5
 # - Fixed issue with images not refreshing during detection
-# - Added timestamp verification for real-time image updates
+# - Synchronized refresh rate with capture interval setting
+# - Added timestamps under images showing capture time
 # - Implemented proper component path tracking and refresh
 # - Added visual indicator during image refresh
 # - Improved reset behavior when detection is stopped
@@ -15,6 +16,7 @@ import os
 from datetime import datetime
 import threading
 import time
+import pytz
 
 from utilities.logging_utils import get_logger
 from utilities.constants import CAMERA_MAPPINGS, get_comparison_image_path, get_base_image_path
@@ -58,7 +60,7 @@ class ImagesTab(ttk.Frame):
 class ImageViewerPanel(ttk.Frame):
     """
     Panel for displaying camera images in a grid with detection information.
-    Updated in v1.4.5 for proper image refreshing.
+    Updated in v1.4.5 for proper image refreshing synchronized with capture interval.
     """
     def __init__(self, parent, app_reference, is_running=False):
         super().__init__(parent)
@@ -77,14 +79,17 @@ class ImageViewerPanel(ttk.Frame):
         # Last modification times to detect changes
         self.last_modified = {}
         
+        # Image timestamps for displaying when images were captured
+        self.image_timestamps = {}
+        
         # Last successful refresh time
         self.last_refresh_time = None
         
         # Flag to track when a refresh is in progress
         self.is_refreshing = False
         
-        # Refresh interval in milliseconds (2 seconds)
-        self.refresh_interval = 2000
+        # Get capture interval from app reference (default to 60 seconds if not available)
+        self.capture_interval = self.get_capture_interval()
         
         # Camera order for consistent display
         self.camera_order = ["Wyze Internal Camera", "Bindy Patio Camera", "Upper Patio Camera"]
@@ -97,6 +102,11 @@ class ImageViewerPanel(ttk.Frame):
                 "analysis": None
             }
             self.last_modified[camera] = 0
+            self.image_timestamps[camera] = {
+                "base": None,
+                "current": None,
+                "analysis": None
+            }
         
         # Create scrollable container
         self.create_scrollable_container()
@@ -109,7 +119,22 @@ class ImageViewerPanel(ttk.Frame):
             self.start_refresh_timer()
         else:
             self.display_placeholders()
-        
+    
+    def get_capture_interval(self):
+        """Get the capture interval from the app reference (in milliseconds)"""
+        try:
+            # Try to get interval from app (in seconds)
+            if hasattr(self.app_reference, 'capture_interval'):
+                interval_seconds = self.app_reference.capture_interval.get()
+                # Convert to milliseconds for tkinter after() and ensure minimum value
+                return max(interval_seconds, 10) * 1000
+            else:
+                # Default to 60 seconds if not available
+                return 60000
+        except Exception as e:
+            self.logger.error(f"Error getting capture interval: {e}")
+            return 60000  # Default to 60 seconds
+    
     def create_scrollable_container(self):
         """Create a scrollable container for the image grid"""
         # Create a canvas with scrollbar for handling many images
@@ -145,6 +170,7 @@ class ImageViewerPanel(ttk.Frame):
         self.image_containers = {}
         self.image_labels = {}
         self.image_text_labels = {}
+        self.timestamp_labels = {}  # New timestamp labels under each image
         self.result_labels = {}
         self.detail_labels = {}
         
@@ -168,14 +194,23 @@ class ImageViewerPanel(ttk.Frame):
         self.refresh_indicator.pack(pady=5)
         self.refresh_indicator.place_forget()  # Initially hide it
         
-        # Create last refresh timestamp label
-        self.refresh_timestamp = ttk.Label(
+        # Create last refresh timestamp and interval info label
+        interval_seconds = self.capture_interval // 1000
+        self.refresh_info = ttk.Label(
             self.main_frame,
-            text="Last refreshed: Never",
+            text=f"Last refreshed: Never | Refresh interval: {interval_seconds} seconds",
             font=("Arial", 8),
             foreground="gray"
         )
-        self.refresh_timestamp.pack(pady=2)
+        self.refresh_info.pack(pady=2)
+        
+        # Create manual refresh button
+        self.refresh_button = ttk.Button(
+            self.main_frame,
+            text="Refresh Now",
+            command=lambda: self.refresh_images(force_refresh=True)
+        )
+        self.refresh_button.pack(pady=5)
         
         for i, camera in enumerate(self.camera_order):
             # Create frame for this camera
@@ -191,6 +226,7 @@ class ImageViewerPanel(ttk.Frame):
             self.image_containers[camera] = {}
             self.image_labels[camera] = {}
             self.image_text_labels[camera] = {}
+            self.timestamp_labels[camera] = {}  # Initialize timestamp labels dictionary
             
             image_types = [
                 ("base", "Base Image"), 
@@ -199,7 +235,7 @@ class ImageViewerPanel(ttk.Frame):
             ]
             
             for img_type, display_name in image_types:
-                # Create column frame to hold image and label vertically
+                # Create column frame to hold image and labels vertically
                 column_frame = ttk.Frame(image_row)
                 column_frame.pack(side="left", padx=10, fill="y")
                 
@@ -215,16 +251,28 @@ class ImageViewerPanel(ttk.Frame):
                 # Add text label UNDER each image
                 text_label = ttk.Label(
                     column_frame, 
-                    text=f"{display_name} - {camera}",
+                    text=f"{display_name}",
                     anchor="center",
                     justify="center"
                 )
                 text_label.pack(side="bottom", fill="x", pady=(5, 0))
                 
+                # Add timestamp label under the text label
+                timestamp_label = ttk.Label(
+                    column_frame,
+                    text="Captured: --",
+                    font=("Arial", 7),
+                    foreground="gray",
+                    anchor="center",
+                    justify="center"
+                )
+                timestamp_label.pack(side="bottom", fill="x")
+                
                 # Store references
                 self.image_containers[camera][img_type] = container
                 self.image_labels[camera][img_type] = img_label
                 self.image_text_labels[camera][img_type] = text_label
+                self.timestamp_labels[camera][img_type] = timestamp_label
             
             # Create detection result area beneath images
             result_frame = ttk.Frame(camera_frame)
@@ -256,30 +304,53 @@ class ImageViewerPanel(ttk.Frame):
             self.display_placeholders()
     
     def start_refresh_timer(self):
-        """Start the timer to periodically refresh images"""
+        """Start the timer to periodically refresh images based on capture interval"""
         if self.is_running:
-            self.refresh_images(force_refresh=True)
-            # Schedule next refresh using tkinter's after method
-            self.after(self.refresh_interval, self.start_refresh_timer)
+            # Update the capture interval (it might have changed)
+            self.capture_interval = self.get_capture_interval()
+            
+            # Update the refresh info label
+            interval_seconds = self.capture_interval // 1000
+            if self.last_refresh_time:
+                refresh_time = self.last_refresh_time.strftime('%H:%M:%S')
+                self.refresh_info.config(
+                    text=f"Last refreshed: {refresh_time} | Refresh interval: {interval_seconds} seconds"
+                )
+            else:
+                self.refresh_info.config(
+                    text=f"Last refreshed: Never | Refresh interval: {interval_seconds} seconds"
+                )
+            
+            # Refresh images immediately
+            self.refresh_images(force_refresh=False)
+            
+            # Schedule next refresh using tkinter's after method and the capture interval
+            self.after_id = self.after(self.capture_interval, self.start_refresh_timer)
     
     def set_running_state(self, is_running):
         """Update running state and manage image display"""
+        old_running_state = self.is_running
         self.is_running = is_running
         
         if is_running:
-            # Hide placeholder and show camera frames
-            self.placeholder_message.place_forget()
-            for camera, frame in self.camera_frames.items():
-                frame.pack(fill="x", pady=10, padx=5)
-            
-            # Start image refresh timer
-            self.start_refresh_timer()
+            # Only start refresh timer if transitioning from not running
+            if not old_running_state:
+                # Hide placeholder and show camera frames
+                self.placeholder_message.place_forget()
+                for camera, frame in self.camera_frames.items():
+                    frame.pack(fill="x", pady=10, padx=5)
+                
+                # Start image refresh timer
+                self.start_refresh_timer()
         else:
-            # Stop image refreshing and reset state
-            self.after_cancel(self.start_refresh_timer)
-            
-            # Display placeholders
-            self.display_placeholders()
+            # Only stop refresh timer if transitioning from running
+            if old_running_state:
+                # Cancel any pending refresh
+                if hasattr(self, 'after_id'):
+                    self.after_cancel(self.after_id)
+                
+                # Display placeholders
+                self.display_placeholders()
     
     def display_placeholders(self):
         """Show placeholder message when detection is not running"""
@@ -291,7 +362,8 @@ class ImageViewerPanel(ttk.Frame):
         self.refresh_indicator.place_forget()
         
         # Update refresh timestamp
-        self.refresh_timestamp.config(text="Last refreshed: Never")
+        interval_seconds = self.capture_interval // 1000
+        self.refresh_info.config(text=f"Last refreshed: Never | Refresh interval: {interval_seconds} seconds")
         
         # Show placeholder message
         self.placeholder_message.place(relx=0.5, rely=0.5, anchor="center")
@@ -302,11 +374,14 @@ class ImageViewerPanel(ttk.Frame):
         for camera in self.camera_order:
             for img_type in ["base", "current", "analysis"]:
                 self.image_refs[camera][img_type] = None
+                self.image_timestamps[camera][img_type] = None
+                self.timestamp_labels[camera][img_type].config(text="Captured: --")
             self.last_modified[camera] = 0
         
         # Reset refresh time
         self.last_refresh_time = None
-        self.refresh_timestamp.config(text="Last refreshed: Never")
+        interval_seconds = self.capture_interval // 1000
+        self.refresh_info.config(text=f"Last refreshed: Never | Refresh interval: {interval_seconds} seconds")
         
         # Display empty placeholders in all image labels if running
         if self.is_running:
@@ -326,8 +401,12 @@ class ImageViewerPanel(ttk.Frame):
         # Update image label
         self.image_labels[camera][image_type].config(image=photo)
         
+        # Reset timestamp label
+        self.timestamp_labels[camera][image_type].config(text="Captured: --")
+        
         # Store reference
         self.image_refs[camera][image_type] = photo
+        self.image_timestamps[camera][image_type] = None
     
     def get_image_path(self, camera, image_type):
         """
@@ -345,12 +424,12 @@ class ImageViewerPanel(ttk.Frame):
             if not self.is_running:
                 return None
             
-            # Get the path to the 3-panel comparison image
-            comparison_path = get_comparison_image_path(camera)
-            
             # For component images (new in v1.4.5)
             from utilities.image_comparison_utils import get_component_image_path
             component_path = get_component_image_path(camera, image_type)
+            
+            # Get the path to the 3-panel comparison image as fallback
+            comparison_path = get_comparison_image_path(camera)
             
             # First try the component path
             if os.path.exists(component_path):
@@ -411,7 +490,7 @@ class ImageViewerPanel(ttk.Frame):
             if not self.is_running:
                 return False
             
-            # First try direct component path (new in v1.4.5)
+            # First try direct component path
             from utilities.image_comparison_utils import get_component_image_path
             component_path = get_component_image_path(camera, image_type)
             
@@ -421,33 +500,36 @@ class ImageViewerPanel(ttk.Frame):
             # Determine which path to use
             image_path = None
             use_component = False
+            capture_time = None
             
             if os.path.exists(component_path):
                 image_path = component_path
                 use_component = True
-                # Check if file has been modified since last check
-                comp_mod_time = os.path.getmtime(component_path)
+                # Get file modification time for timestamp
+                mod_time = os.path.getmtime(component_path)
+                capture_time = datetime.fromtimestamp(mod_time)
                 
-                # Skip if not modified and we already have this image
+                # Check if file has been modified since last check
                 camera_key = f"{camera}_{image_type}"
-                if camera_key in self.last_modified and comp_mod_time <= self.last_modified[camera_key] and self.image_refs[camera][image_type]:
+                if camera_key in self.last_modified and mod_time <= self.last_modified[camera_key] and self.image_refs[camera][image_type]:
                     return False
                     
                 # Store modification time
-                self.last_modified[camera_key] = comp_mod_time
+                self.last_modified[camera_key] = mod_time
                 
             elif os.path.exists(comparison_path):
                 image_path = comparison_path
-                # Check if file has been modified since last check
-                comp_mod_time = os.path.getmtime(comparison_path)
+                # Get file modification time for timestamp
+                mod_time = os.path.getmtime(comparison_path)
+                capture_time = datetime.fromtimestamp(mod_time)
                 
-                # Skip if not modified and we already have this image
-                if comp_mod_time <= self.last_modified.get(camera, 0) and self.image_refs[camera][image_type]:
+                # Check if file has been modified since last check
+                if mod_time <= self.last_modified.get(camera, 0) and self.image_refs[camera][image_type]:
                     return False
                     
                 # Store modification time if this is the analysis image (use as marker for all images)
                 if image_type == "analysis":
-                    self.last_modified[camera] = comp_mod_time
+                    self.last_modified[camera] = mod_time
             else:
                 # No image available
                 self.display_empty_placeholder(camera, image_type)
@@ -479,6 +561,15 @@ class ImageViewerPanel(ttk.Frame):
             
             # Update image label
             self.image_labels[camera][image_type].config(image=photo)
+            
+            # Update timestamp label with capture time
+            if capture_time:
+                # Convert to local timezone
+                local_time = capture_time.astimezone(pytz.timezone('America/Los_Angeles'))
+                time_str = local_time.strftime('%H:%M:%S')
+                self.timestamp_labels[camera][image_type].config(text=f"Captured: {time_str}")
+                # Store timestamp
+                self.image_timestamps[camera][image_type] = capture_time
             
             # Store reference to prevent garbage collection
             self.image_refs[camera][image_type] = photo
@@ -517,12 +608,13 @@ class ImageViewerPanel(ttk.Frame):
                 confidence = detection_info.get("owl_confidence", 0.0)
                 criteria_text = detection_info.get("detection_details", "No details available")
             else:
-                # Fallback to simulated detection result based on filename
-                is_detected = "detected" in image_path.lower() or camera == "Bindy Patio Camera"
-                confidence = 75.5 if is_detected else 45.2
+                # Fallback to information from logs or simulated data
+                from utilities.owl_detection_utils import detect_owl_in_box
                 
-                # Example detection criteria
-                if is_detected:
+                # Try to extract detection info from filename or image properties
+                if "detected" in image_path.lower():
+                    is_detected = True
+                    confidence = 75.5
                     criteria_text = (
                         "Detection criteria: Confidence score: 75.5% (threshold: 60.0%), "
                         "Consecutive frames: 3 (required: 2), "
@@ -531,6 +623,8 @@ class ImageViewerPanel(ttk.Frame):
                         "Owl shape detected in center-right region with high circularity (0.78) and good aspect ratio (1.2)."
                     )
                 else:
+                    is_detected = False
+                    confidence = 45.2
                     criteria_text = (
                         "Detection criteria not met: Confidence score: 45.2% (threshold: 60.0%), "
                         "Consecutive frames: 1 (required: 2), "
@@ -567,8 +661,8 @@ class ImageViewerPanel(ttk.Frame):
             force_refresh (bool): Force refresh regardless of timestamps
         """
         try:
-            if not self.is_running:
-                return  # Don't refresh if not running
+            if not self.is_running and not force_refresh:
+                return  # Don't refresh if not running and not forced
             
             # Show refresh indicator
             self.is_refreshing = True
@@ -587,9 +681,12 @@ class ImageViewerPanel(ttk.Frame):
             self.is_refreshing = False
             
             # Update refresh timestamp
-            current_time = datetime.now().strftime('%H:%M:%S')
-            self.refresh_timestamp.config(text=f"Last refreshed: {current_time}")
             self.last_refresh_time = datetime.now()
+            current_time = self.last_refresh_time.strftime('%H:%M:%S')
+            interval_seconds = self.capture_interval // 1000
+            self.refresh_info.config(
+                text=f"Last refreshed: {current_time} | Refresh interval: {interval_seconds} seconds"
+            )
             
             self.logger.debug(f"Image refresh completed with {updates} updates")
             
