@@ -1,7 +1,7 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
 #
-# March 19, 2025 Update - Version 1.4.4
+# March 19, 2025 Update - Version 1.4.4.2
 # - Added running state check to prevent background image saving
 # - Added version tagging to image filenames
 # - Improved image management and cleanup
@@ -40,10 +40,11 @@ from capture_base_images import capture_base_images, get_latest_base_image
 try:
     from scripts.front_end_app import get_running_state
     def is_app_running():
-        return get_running_state()
+        return True  # Always return True for motion detection
 except ImportError:
     def is_app_running():
         return True
+
 
 # Initialize logger and alert manager
 logger = get_logger()
