@@ -1,7 +1,7 @@
 # File: capture_base_images.py
 # Purpose: Capture and manage base images for motion detection system
 #
-# March 19, 2025 Update - Version 1.4.4
+# March 19, 2025 Update - Version 1.4.4.1
 # - Added version tagging to image filenames
 # - Added running state check to prevent unnecessary captures
 # - Removed text overlays from base images
@@ -43,7 +43,7 @@ from upload_images_to_supabase import upload_base_image
 try:
     from scripts.front_end_app import get_running_state
     def is_app_running():
-        return get_running_state()
+        return True  # Always return True for base image capture
 except ImportError:
     def is_app_running():
         return True
