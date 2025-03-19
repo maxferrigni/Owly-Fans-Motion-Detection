@@ -1,9 +1,11 @@
 # File: scripts/front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 18, 2025 Update - Version 1.4.3
-# - Improved image deletion logging with clear count reporting
-# - Enhanced Images Tab visualization
+# March 19, 2025 Update - Version 1.4.4
+# - Added global is_running flag to prevent background image saving
+# - Enhanced image clearing to remove all images from all directories
+# - Added version tagging support for image filenames
+# - Fixed issues with Images tab behavior and initialization
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -14,6 +16,7 @@ import sys
 import json
 from datetime import datetime, timedelta
 import pytz
+import glob
 
 # Add parent directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -35,6 +38,10 @@ from front_end_components.settings_tab import SettingsTab
 from front_end_components.test_tab import TestTab
 from front_end_components.images_tab import ImagesTab
 from front_end_components.monitor_tab import MonitorTab
+
+# Global running flag that can be accessed by other modules
+# This is a sentinel to prevent image saving when the app isn't running
+IS_RUNNING = False
 
 class OwlApp:
     def __init__(self, root):
@@ -128,6 +135,9 @@ class OwlApp:
         # Verify directories
         self.verify_directories()
         self.log_message("GUI initialized and ready", "INFO")
+        
+        # Clear any leftover "empty" directories to ensure clean state
+        self.clear_empty_image_directories()
 
     def initialize_components(self):
         """Initialize all GUI components"""
@@ -152,7 +162,8 @@ class OwlApp:
         
         self.images_tab_component = ImagesTab(
             self.images_tab, 
-            self
+            self,
+            is_running=self.is_running  # Pass the running state to Images tab
         )
         
         self.sys_monitor_tab_component = MonitorTab(
@@ -251,6 +262,15 @@ class OwlApp:
             # Reset to default on error
             self.alert_delay.set(30)
 
+    @property
+    def is_running(self):
+        """Get the current running state of the application"""
+        return self.script_process is not None
+    
+    def get_version(self):
+        """Get the current version of the application"""
+        return VERSION
+
     class LogRedirector:
         """Redirects stdout/stderr to log window"""
         def __init__(self, app):
@@ -330,14 +350,18 @@ class OwlApp:
                 # Pass configuration through environment variables
                 env = os.environ.copy()
                 env['OWL_LOCAL_SAVING'] = str(self.local_saving_enabled.get())
-                # Use the capture interval from the UI control
                 env['OWL_CAPTURE_INTERVAL'] = str(self.capture_interval.get())
-                
-                # Add the alert setting environment variables
                 env['OWL_EMAIL_ALERTS'] = str(self.email_alerts_enabled.get())
+                
+                # NEW - Set the app version for image naming
+                env['OWL_APP_VERSION'] = VERSION
                 
                 # Set alert delay
                 self.alert_manager.set_alert_delay(self.alert_delay.get())
+                
+                # Set the global running flag to True
+                global IS_RUNNING
+                IS_RUNNING = True
                 
                 cmd = [sys.executable, self.main_script_path]
                 self.script_process = subprocess.Popen(
@@ -352,11 +376,17 @@ class OwlApp:
                 # Update UI state
                 self.control_tab_component.update_run_state(True)
                 
+                # Update Images tab with running state
+                if hasattr(self.images_tab_component, 'set_running_state'):
+                    self.images_tab_component.set_running_state(True)
+                
                 # Start log monitoring
                 threading.Thread(target=self.refresh_logs, daemon=True).start()
 
             except Exception as e:
                 self.log_message(f"Error starting script: {e}", "ERROR")
+                # Reset running flag if startup fails
+                IS_RUNNING = False
 
     def stop_script(self):
         """Stop the motion detection script"""
@@ -366,7 +396,18 @@ class OwlApp:
                 self.script_process.terminate()
                 self.script_process.wait(timeout=5)
                 self.script_process = None
+                
+                # Set the global running flag to False
+                global IS_RUNNING
+                IS_RUNNING = False
+                
+                # Update UI state
                 self.control_tab_component.update_run_state(False)
+                
+                # Update Images tab with running state
+                if hasattr(self.images_tab_component, 'set_running_state'):
+                    self.images_tab_component.set_running_state(False)
+                
             except Exception as e:
                 self.log_message(f"Error stopping script: {e}", "ERROR")
 
@@ -379,23 +420,69 @@ class OwlApp:
                     self.log_message(line.strip())
         except Exception as e:
             self.log_message(f"Error reading logs: {e}", "ERROR")
+    
+    def clear_empty_image_directories(self):
+        """Clear any empty image directories on startup"""
+        try:
+            from utilities.constants import BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR
+            
+            # Create list of directories to check
+            image_dirs = [
+                BASE_IMAGES_DIR,
+                IMAGE_COMPARISONS_DIR,
+                SAVED_IMAGES_DIR
+            ]
+            
+            # Check each directory
+            for directory in image_dirs:
+                if not os.path.exists(directory):
+                    os.makedirs(directory, exist_ok=True)
+        except Exception as e:
+            self.log_message(f"Error checking image directories: {e}", "ERROR")
             
     def clear_local_images(self):
         """
         Clear all local images from storage directories.
-        Updated in v1.4.3 to provide simple count of deleted files.
+        Updated in v1.4.4 to ensure all image directories are completely cleared.
         """
         try:
-            from utilities.constants import BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR
+            from utilities.constants import (
+                BASE_IMAGES_DIR, 
+                IMAGE_COMPARISONS_DIR, 
+                SAVED_IMAGES_DIR
+            )
             
+            # Create list of all directories to clear
+            image_dirs = [
+                BASE_IMAGES_DIR,
+                IMAGE_COMPARISONS_DIR,
+                SAVED_IMAGES_DIR
+            ]
+            
+            # Also check for subdirectories in IMAGE_COMPARISONS_DIR
+            # (for component images organized by camera)
+            if os.path.exists(IMAGE_COMPARISONS_DIR):
+                for item in os.listdir(IMAGE_COMPARISONS_DIR):
+                    subdir_path = os.path.join(IMAGE_COMPARISONS_DIR, item)
+                    if os.path.isdir(subdir_path):
+                        image_dirs.append(subdir_path)
+            
+            # Clear all images
             total_deleted = 0
-            for directory in [BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR]:
+            for directory in image_dirs:
                 if os.path.exists(directory):
-                    for filename in os.listdir(directory):
-                        file_path = os.path.join(directory, filename)
+                    # Use glob to find all files including those in subdirectories
+                    for file_path in glob.glob(os.path.join(directory, "**/*.*"), recursive=True):
                         if os.path.isfile(file_path):
-                            os.unlink(file_path)
-                            total_deleted += 1
+                            try:
+                                os.unlink(file_path)
+                                total_deleted += 1
+                            except Exception as e:
+                                self.log_message(f"Error deleting {file_path}: {e}", "WARNING")
+            
+            # Update Images tab to display blank placeholders
+            if hasattr(self.images_tab_component, 'clear_images'):
+                self.images_tab_component.clear_images()
                             
             self.log_message(f"{total_deleted:,} images deleted", "INFO")
         except Exception as e:

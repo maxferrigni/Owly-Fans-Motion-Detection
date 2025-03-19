@@ -1,11 +1,12 @@
 # File: capture_base_images.py
 # Purpose: Capture and manage base images for motion detection system
 #
-# March 6, 2025 Update - Version 1.2.1
-# - Modified to allow base image captures during transition periods
-# - Added separation between "pure" condition base images and transition images
-# - Updated messaging to reflect transition window of 30 minutes
-# - Added additional image annotation for transition period captures
+# March 19, 2025 Update - Version 1.4.4
+# - Added version tagging to image filenames
+# - Added running state check to prevent unnecessary captures
+# - Removed text overlays from base images
+# - Improved image naming for better tracking
+# - Added safeguards against excessive image saving
 
 import os
 import pyautogui
@@ -24,6 +25,7 @@ from utilities.constants import (
     CONFIGS_DIR,
     get_base_image_path,
     get_saved_image_path,
+    VERSION
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -32,10 +34,16 @@ from utilities.time_utils import (
     record_base_image_capture,
     is_transition_period,
     get_lighting_info,
-    is_pure_lighting_condition,  # New in v1.2.1
-    format_time_until,  # New in v1.2.1
+    is_pure_lighting_condition,
+    format_time_until,
 )
 from upload_images_to_supabase import upload_base_image
+
+# Import global running flag if available, otherwise default to True for backward compatibility
+try:
+    from scripts.front_end_app import IS_RUNNING
+except ImportError:
+    IS_RUNNING = True
 
 # Initialize logger
 logger = get_logger()
@@ -47,6 +55,22 @@ def load_config():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
     with open(config_path, 'r') as f:
         return json.load(f)
+
+def get_version_tag():
+    """
+    Get version tag for image filenames.
+    First checks environment variable, then falls back to constants.
+    
+    Returns:
+        str: Version tag for image filenames
+    """
+    # Try to get from environment variable (set by front_end_app.py)
+    env_version = os.environ.get('OWL_APP_VERSION')
+    if env_version:
+        return env_version
+    
+    # Fall back to VERSION constant
+    return VERSION
 
 def capture_real_image(roi):
     """
@@ -70,7 +94,6 @@ def get_latest_base_image(camera_name, lighting_condition):
     """
     Get the base image path for a camera and lighting condition.
     Always returns the fixed path for consistency.
-    Updated in v1.2.1 to handle pure and transition condition images.
     
     Args:
         camera_name (str): Name of the camera
@@ -88,7 +111,7 @@ def get_latest_base_image(camera_name, lighting_condition):
         
         # Check if the file exists
         if not os.path.exists(image_path):
-            # In v1.2.1, if transition image doesn't exist, fall back to the closest pure condition
+            # If transition image doesn't exist, fall back to the closest pure condition
             if lighting_condition == 'transition':
                 # Try to determine if it's closer to day or night based on lighting info
                 lighting_info = get_lighting_info()
@@ -140,80 +163,11 @@ def get_latest_base_image(camera_name, lighting_condition):
         logger.error(f"Error getting base image: {e}")
         raise
 
-def add_lighting_annotation(image, lighting_condition, is_transition=False):
-    """
-    Add an annotation to the image indicating its lighting condition.
-    New in v1.2.1 to differentiate pure vs. transition conditions.
-    
-    Args:
-        image (PIL.Image): The image to annotate
-        lighting_condition (str): The lighting condition
-        is_transition (bool): Whether this is a transition period image
-        
-    Returns:
-        PIL.Image: The annotated image
-    """
-    try:
-        # Create a copy to avoid modifying the original
-        annotated = image.copy()
-        draw = ImageDraw.Draw(annotated)
-        
-        # Get image dimensions
-        width, height = image.size
-        
-        # Try to load a font, fall back to default if not available
-        try:
-            font = ImageFont.truetype("Arial.ttf", 16)
-        except:
-            font = ImageFont.load_default()
-        
-        # Format timestamp with timezone
-        timestamp = datetime.now(pytz.timezone('America/Los_Angeles')).strftime("%Y-%m-%d %H:%M:%S %Z")
-        
-        # Different annotations for pure vs transition conditions
-        if is_transition:
-            # Get more detailed lighting information
-            lighting_info = get_lighting_info()
-            detailed = lighting_info.get('detailed_condition', 'unknown')
-            progress = lighting_info.get('transition_percentage', 0)
-            
-            # Draw background for better visibility
-            draw.rectangle([0, 0, width, 40], fill=(0, 0, 0, 128))
-            
-            # Draw condition text
-            condition_text = f"TRANSITION ({detailed.upper()}) - {progress:.1f}% complete"
-            draw.text((10, 5), condition_text, fill=(255, 200, 0), font=font)
-            
-            # Draw timestamp
-            draw.text((10, 22), timestamp, fill=(255, 255, 255), font=font)
-            
-            # Add countdown info if available
-            if detailed == 'dawn':
-                if lighting_info['countdown']['to_true_day'] is not None:
-                    countdown = format_time_until(lighting_info['countdown']['to_true_day'])
-                    draw.text((width - 150, 5), f"True Day in: {countdown}", fill=(255, 200, 0), font=font)
-            elif detailed == 'dusk':
-                if lighting_info['countdown']['to_true_night'] is not None:
-                    countdown = format_time_until(lighting_info['countdown']['to_true_night'])
-                    draw.text((width - 160, 5), f"True Night in: {countdown}", fill=(255, 200, 0), font=font)
-                    
-        else:
-            # Pure condition - simpler annotation
-            draw.rectangle([0, 0, width, 25], fill=(0, 0, 0, 128))
-            condition_text = f"{lighting_condition.upper()} - PURE CONDITION"
-            draw.text((10, 5), condition_text, fill=(0, 255, 0), font=font)
-            
-        return annotated
-        
-    except Exception as e:
-        logger.warning(f"Error adding annotation: {e}")
-        return image  # Return original if annotation fails
-
 def save_base_image(image, camera_name, lighting_condition):
     """
     Save base image to fixed location and upload to Supabase.
     If local saving is enabled, also save a copy to the saved_images directory.
-    Updated in v1.2.1 to handle transition images and add annotations.
+    Updated in v1.4.4 to check running state and add version to filenames.
     
     Args:
         image (PIL.Image): The base image to save
@@ -224,8 +178,17 @@ def save_base_image(image, camera_name, lighting_condition):
         tuple: (local_path, supabase_url)
     """
     try:
+        # Check if the application is running
+        global IS_RUNNING
+        if not IS_RUNNING:
+            logger.warning(f"Not saving base image for {camera_name}: Application not running")
+            return None, None
+            
         # Generate timestamp in consistent format
         timestamp = datetime.now(pytz.timezone('America/Los_Angeles'))
+        
+        # Get version tag for filenames
+        version_tag = get_version_tag()
         
         # Get the fixed path for this base image
         base_path = get_base_image_path(camera_name, lighting_condition)
@@ -239,22 +202,26 @@ def save_base_image(image, camera_name, lighting_condition):
         # Check if we're in a transition period
         is_transition = lighting_condition == 'transition'
         
-        # Add annotation based on lighting condition
-        annotated_image = add_lighting_annotation(image, lighting_condition, is_transition)
-        
-        # Save to the fixed location
-        if annotated_image.mode == "RGBA":
-            annotated_image = annotated_image.convert("RGB")
+        # Save to the fixed location - NO TEXT ANNOTATIONS
+        if image.mode == "RGBA":
+            image = image.convert("RGB")
             
-        annotated_image.save(base_path)
+        image.save(base_path)
         logger.info(f"Saved base image: {base_path}")
         
         # Check if local saving is enabled to save a copy to logs
         local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
         if local_saving:
-            # Save a copy with timestamp to the saved_images folder
+            # Save a copy with timestamp and version to the saved_images folder
             saved_path = get_saved_image_path(camera_name, "base", timestamp)
-            annotated_image.save(saved_path)
+            
+            # Replace the filename to include version
+            filename_parts = os.path.basename(saved_path).split('.')
+            if len(filename_parts) > 1:
+                new_filename = f"{filename_parts[0]}_v{version_tag}.{filename_parts[1]}"
+                saved_path = os.path.join(os.path.dirname(saved_path), new_filename)
+            
+            image.save(saved_path)
             logger.info(f"Saved copy to logs: {saved_path}")
         
         # Upload to Supabase with consistent timestamp format
@@ -265,7 +232,8 @@ def save_base_image(image, camera_name, lighting_condition):
             detailed = lighting_info.get('detailed_condition', '')
             condition_label = f"transition_{detailed}"
             
-        supabase_filename = f"{camera_name.lower().replace(' ', '_')}_{condition_label}_base_{timestamp.strftime('%Y%m%d%H%M%S')}.jpg"
+        # Include version in the filename for better tracking
+        supabase_filename = f"{camera_name.lower().replace(' ', '_')}_{condition_label}_base_{timestamp.strftime('%Y%m%d%H%M%S')}_v{version_tag}.jpg"
         supabase_url = upload_base_image(base_path, supabase_filename, camera_name, lighting_condition)
         
         # Record that we captured a base image
@@ -280,7 +248,7 @@ def save_base_image(image, camera_name, lighting_condition):
 def capture_base_images(lighting_condition=None, force_capture=False, show_ui_message=False):
     """
     Capture new base images for all cameras.
-    Updated in v1.2.1 to handle transition periods and pure condition tracking.
+    Updated in v1.4.4 to check running state before capturing.
     
     Args:
         lighting_condition (str, optional): Override current lighting condition
@@ -293,6 +261,12 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
     logger.info("Starting base image capture process...")
 
     try:
+        # Check if application is running
+        global IS_RUNNING
+        if not IS_RUNNING and not force_capture:
+            logger.warning("Not capturing base images: Application not running")
+            return []
+            
         # Get current lighting condition if not provided
         if not lighting_condition:
             lighting_condition = get_current_lighting_condition()
@@ -300,7 +274,7 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
         logger.info(f"Using lighting condition: {lighting_condition}")
         
         # Check if lighting condition is stable and it's a good time to capture
-        # In v1.2.1, we can still capture during transitions if timing is right
+        # In v1.1.0, we can still capture during transitions if timing is right
         if not force_capture:
             should_capture, condition = should_capture_base_image()
             if not should_capture:
@@ -369,7 +343,7 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
                 # Capture new image
                 new_image = capture_real_image(config["roi"])
                 
-                # Save and upload
+                # Save and upload - no annotations in v1.4.4
                 local_path, supabase_url = save_base_image(
                     new_image,
                     camera_name,
@@ -389,7 +363,8 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
                     'is_transition': is_transition,
                     'is_pure': is_pure,
                     'timestamp': datetime.now(pytz.timezone('America/Los_Angeles')).isoformat(),
-                    'status': 'success'
+                    'status': 'success',
+                    'version': get_version_tag()
                 })
                 
             except Exception as e:
@@ -410,7 +385,7 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
 def handle_lighting_transition(old_condition, new_condition):
     """
     Handle transition between lighting conditions.
-    Updated in v1.2.1 to handle new transition logic.
+    Updated in v1.4.4 to check running state before capturing.
     
     Args:
         old_condition (str): Previous lighting condition
@@ -419,6 +394,12 @@ def handle_lighting_transition(old_condition, new_condition):
     try:
         logger.info(f"Handling lighting transition: {old_condition} -> {new_condition}")
         
+        # Check if application is running
+        global IS_RUNNING
+        if not IS_RUNNING:
+            logger.warning("Not handling lighting transition: Application not running")
+            return
+            
         # Handle entering a transition period
         if new_condition == 'transition':
             logger.info("Entered transition period - will capture transition-specific base images")
@@ -454,20 +435,26 @@ def handle_lighting_transition(old_condition, new_condition):
 def should_capture_startup_base_images():
     """
     Determine if base images should be captured on startup.
-    Updated in v1.2.1: Always capture startup images.
+    Updated in v1.4.4 to check running state.
     
     Returns:
         bool: True if base images should be captured on startup
     """
     try:
+        # Check if application is running
+        global IS_RUNNING
+        if not IS_RUNNING:
+            logger.warning("Not capturing startup base images: Application not running")
+            return False
+            
         # Get detailed lighting info
         lighting_info = get_lighting_info()
         condition = lighting_info['condition']
         
         logger.info(f"Current lighting condition on startup: {condition}")
         
-        # In v1.2.1, we always want to capture startup images
-        return True
+        # Only capture startup images if running
+        return IS_RUNNING
             
     except Exception as e:
         logger.error(f"Error checking startup base image capture: {e}")
@@ -476,7 +463,6 @@ def should_capture_startup_base_images():
 def notify_transition_period(root=None):
     """
     Display a notification that we're in a transition period.
-    Updated in v1.2.1 to show more detailed information.
     
     Args:
         root (tk.Tk, optional): Tkinter root window to attach notification to
@@ -557,8 +543,7 @@ if __name__ == "__main__":
             logger.info("Currently in transition period - capturing transition base images")
             notify_transition_period()
         
-        # In v1.2.1, we capture base images regardless of transition period
-        # But we log differently and annotate the images
+        # Capture base images
         results = capture_base_images(current_condition, force_capture=True, show_ui_message=True)
         
         if results:

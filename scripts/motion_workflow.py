@@ -1,5 +1,11 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
+#
+# March 19, 2025 Update - Version 1.4.4
+# - Added running state check to prevent background image saving
+# - Added version tagging to image filenames
+# - Improved image management and cleanup
+# - Fixed issues with text overlays on images
 
 import os
 import time
@@ -15,7 +21,8 @@ from utilities.constants import (
     BASE_IMAGES_DIR,
     get_comparison_image_path,
     CAMERA_MAPPINGS,
-    get_base_image_path
+    get_base_image_path,
+    VERSION
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -32,12 +39,34 @@ from capture_base_images import capture_base_images, get_latest_base_image
 # Import from push_to_supabase
 from push_to_supabase import push_log_to_supabase, format_detection_results
 
+# Import global running flag if available, otherwise default to True for backward compatibility
+try:
+    from scripts.front_end_app import IS_RUNNING
+except ImportError:
+    IS_RUNNING = True
+
 # Initialize logger and alert manager
 logger = get_logger()
 alert_manager = AlertManager()
 
 # Set timezone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
+
+def get_version_tag():
+    """
+    Get version tag for image filenames.
+    First checks environment variable, then falls back to constants.
+    
+    Returns:
+        str: Version tag for image filenames
+    """
+    # Try to get from environment variable (set by front_end_app.py)
+    env_version = os.environ.get('OWL_APP_VERSION')
+    if env_version:
+        return env_version
+    
+    # Fall back to VERSION constant
+    return VERSION
 
 def initialize_system(camera_configs, is_test=False):
     """Initialize the motion detection system."""
@@ -105,6 +134,19 @@ def capture_real_image(roi):
 def process_camera(camera_name, config, lighting_info=None, test_images=None):
     """Process motion detection for a specific camera with confidence-based detection"""
     try:
+        # Check if app is running
+        global IS_RUNNING
+        if not IS_RUNNING and not test_images:
+            logger.info(f"Skipping camera processing for {camera_name}: Application not running")
+            return {
+                "camera": camera_name,
+                "status": "Skipped",
+                "is_owl_present": False,
+                "owl_confidence": 0.0,
+                "consecutive_owl_frames": 0,
+                "timestamp": datetime.now(PACIFIC_TIME).isoformat()
+            }
+            
         logger.info(f"Processing camera: {camera_name} {'(Test Mode)' if test_images else ''}")
         base_image = None
         new_image = None
@@ -153,7 +195,8 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 "timestamp": timestamp.isoformat(),
                 "owl_confidence": 0.0,
                 "consecutive_owl_frames": 0,
-                "threshold_used": config.get("owl_confidence_threshold", 60.0)
+                "threshold_used": config.get("owl_confidence_threshold", 60.0),
+                "version": get_version_tag()  # Add version tag to results
             }
             
             logger.debug(f"Processing as {alert_type} type camera")
@@ -167,17 +210,22 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 camera_name=camera_name
             )
             
-            # Always create comparison image with confidence data
-            comparison_path = create_comparison_image(
-                base_image, 
-                new_image,
-                camera_name,
-                threshold=config["luminance_threshold"] * threshold_multiplier,
-                config=config,
-                detection_info=detection_info,
-                is_test=is_test,
-                timestamp=timestamp
-            )
+            # Only create comparison image if either test mode or app is running
+            comparison_path = None
+            if is_test or IS_RUNNING:
+                # Create comparison image with confidence data but NO TEXT OVERLAYS
+                comparison_result = create_comparison_image(
+                    base_image, 
+                    new_image,
+                    camera_name,
+                    threshold=config["luminance_threshold"] * threshold_multiplier,
+                    config=config,
+                    detection_info=detection_info,
+                    is_test=is_test,
+                    timestamp=timestamp
+                )
+                
+                comparison_path = comparison_result.get("composite_path")
             
             # Update detection results with detection info
             detection_results.update({
@@ -202,8 +250,8 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             # Format the results for database
             formatted_results = format_detection_results(detection_results)
             
-            # Only push to Supabase if motion was detected or in test mode
-            if is_owl_present or is_test:
+            # Only push to Supabase if motion was detected or in test mode, and app is running or test mode
+            if (is_owl_present or is_test) and (IS_RUNNING or is_test):
                 log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
                 
                 # Process alert only if we have a successful log entry and owl was detected
@@ -238,12 +286,19 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             "confidence_factors": {},
             "pixel_change": 0.0,
             "luminance_change": 0.0,
-            "timestamp": datetime.now(PACIFIC_TIME).isoformat()
+            "timestamp": datetime.now(PACIFIC_TIME).isoformat(),
+            "version": get_version_tag()
         }
 
 def process_cameras(camera_configs, test_images=None):
     """Process all cameras in batch for efficient motion detection"""
     try:
+        # Check if app is running
+        global IS_RUNNING
+        if not IS_RUNNING and not test_images:
+            logger.info("Skipping camera processing: Application not running")
+            return []
+            
         # Get lighting information once for all cameras
         lighting_condition = get_current_lighting_condition()
         threshold_multiplier = get_luminance_threshold_multiplier()
@@ -255,8 +310,8 @@ def process_cameras(camera_configs, test_images=None):
         
         logger.info(f"Processing cameras under {lighting_condition} condition")
         
-        # Only verify base images in real-time mode
-        if not test_images:
+        # Only verify base images in real-time mode and if app is running
+        if not test_images and IS_RUNNING:
             if should_capture_base_image():
                 logger.info("Time to capture new base images")
                 capture_base_images(lighting_condition, force_capture=True)
@@ -284,7 +339,8 @@ def process_cameras(camera_configs, test_images=None):
                     "owl_confidence": 0.0,
                     "consecutive_owl_frames": 0,
                     "confidence_factors": {},
-                    "timestamp": datetime.now(PACIFIC_TIME).isoformat()
+                    "timestamp": datetime.now(PACIFIC_TIME).isoformat(),
+                    "version": get_version_tag()
                 })
         
         return results
@@ -329,6 +385,9 @@ def update_thresholds(camera_configs, new_thresholds):
         return False
 
 if __name__ == "__main__":
+    # Set IS_RUNNING to True when running this file directly
+    IS_RUNNING = True
+    
     # Test the motion detection
     try:
         from utilities.configs_loader import load_camera_config

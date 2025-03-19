@@ -1,19 +1,21 @@
 # File: utilities/image_comparison_utils.py
 # Purpose: Generate and handle image analysis for owl detection
 #
-# March 18, 2025 Update - Version 1.4.3
-# - Added support for individual image components (base, current, analysis)
-# - Updated terminology: "comparison image" → "3-panel composite"
-# - "Analysis image" used for the difference visualization component
-# - Removed text overlays, added red outlines for owl shapes
+# March 19, 2025 Update - Version 1.4.4
+# - Removed text overlays from base and analysis images
+# - Ensured analysis images only contain red outlines for owl shapes
+# - Added version tracking in image filenames
+# - Added running state check to prevent saving when app isn't running
 
 import os
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import logging
+import glob
 from datetime import datetime
 import pytz
+
 from utilities.logging_utils import get_logger
 from utilities.constants import (
     BASE_IMAGES_DIR, 
@@ -21,8 +23,15 @@ from utilities.constants import (
     CAMERA_MAPPINGS, 
     get_comparison_image_path, 
     get_saved_image_path,
-    COMPARISON_IMAGE_FILENAMES
+    COMPARISON_IMAGE_FILENAMES,
+    VERSION
 )
+
+# Import global running flag if available, otherwise default to True for backward compatibility
+try:
+    from scripts.front_end_app import IS_RUNNING
+except ImportError:
+    IS_RUNNING = True
 
 # Initialize logger
 logger = get_logger()
@@ -146,7 +155,8 @@ def analyze_motion_characteristics(binary_mask, config):
 
 def create_analysis_image(base_image, new_image, threshold, config):
     """
-    Create analysis image that highlights changes with red outlines around owl shapes.
+    Create analysis image that ONLY highlights changes with red outlines around owl shapes.
+    Updated in v1.4.4 to remove all text overlays.
     
     Args:
         base_image (PIL.Image): Base reference image
@@ -244,6 +254,8 @@ def create_analysis_image(base_image, new_image, threshold, config):
         # Convert back to PIL image
         analysis_image = Image.fromarray(diff_color)
         
+        # NO TEXT OVERLAYS - leave the image with just the red outlines
+        
         return analysis_image, binary_mask, len(owl_contours) > 0
         
     except Exception as e:
@@ -274,9 +286,26 @@ def get_component_image_path(camera_name, image_type):
     
     return os.path.join(camera_dir, component_filenames.get(image_type, "unknown.jpg"))
 
+def get_version_tag():
+    """
+    Get version tag for image filenames.
+    First checks environment variable, then falls back to constants.
+    
+    Returns:
+        str: Version tag for image filenames
+    """
+    # Try to get from environment variable (set by front_end_app.py)
+    env_version = os.environ.get('OWL_APP_VERSION')
+    if env_version:
+        return env_version
+    
+    # Fall back to VERSION constant
+    return VERSION
+
 def save_component_images(base_image, current_image, analysis_image, camera_name):
     """
     Save the individual image components for display.
+    Updated in v1.4.4 to check running state before saving.
     
     Args:
         base_image (PIL.Image): Base reference image
@@ -288,6 +317,12 @@ def save_component_images(base_image, current_image, analysis_image, camera_name
         dict: Paths to the saved component images
     """
     try:
+        # Check if the application is running before saving any images
+        global IS_RUNNING
+        if not IS_RUNNING:
+            logger.debug(f"Not saving component images for {camera_name}: Application not running")
+            return {}
+            
         components = {
             "base": base_image,
             "current": current_image, 
@@ -312,6 +347,7 @@ def save_component_images(base_image, current_image, analysis_image, camera_name
 def save_local_image_set(base_image, new_image, analysis_image, three_panel_image, camera_name, timestamp):
     """
     Save a complete set of images locally with matching timestamps.
+    Updated in v1.4.4 to include version in filenames and check running state.
     
     Args:
         base_image (PIL.Image): The base reference image
@@ -324,6 +360,15 @@ def save_local_image_set(base_image, new_image, analysis_image, three_panel_imag
     try:
         from utilities.constants import SAVED_IMAGES_DIR
         
+        # Check if the application is running before saving any images
+        global IS_RUNNING
+        if not IS_RUNNING:
+            logger.debug(f"Not saving local image set for {camera_name}: Application not running")
+            return None
+            
+        # Get version tag for filenames
+        version_tag = get_version_tag()
+        
         # Ensure the directory exists
         os.makedirs(SAVED_IMAGES_DIR, exist_ok=True)
         
@@ -331,11 +376,11 @@ def save_local_image_set(base_image, new_image, analysis_image, three_panel_imag
         camera_name_clean = camera_name.lower().replace(' ', '_')
         ts_str = timestamp.strftime('%Y%m%d_%H%M%S')
         
-        # Create filenames for all images with matching timestamps
-        base_filename = f"{camera_name_clean}_base_{ts_str}.jpg"
-        current_filename = f"{camera_name_clean}_current_{ts_str}.jpg"
-        analysis_filename = f"{camera_name_clean}_analysis_{ts_str}.jpg"
-        composite_filename = f"{camera_name_clean}_composite_{ts_str}.jpg"
+        # Create filenames with version for all images with matching timestamps
+        base_filename = f"{camera_name_clean}_base_{ts_str}_v{version_tag}.jpg"
+        current_filename = f"{camera_name_clean}_current_{ts_str}_v{version_tag}.jpg"
+        analysis_filename = f"{camera_name_clean}_analysis_{ts_str}_v{version_tag}.jpg"
+        composite_filename = f"{camera_name_clean}_composite_{ts_str}_v{version_tag}.jpg"
         
         # Create full paths
         base_path = os.path.join(SAVED_IMAGES_DIR, base_filename)
@@ -366,6 +411,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
     """
     Create 3-panel composite image and save individual components.
     The three panels are: base image, current image, and analysis image.
+    Updated in v1.4.4 to check running state and include version in filenames.
     
     Args:
         base_image (PIL.Image): Base reference image
@@ -381,6 +427,12 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         str: Path to saved 3-panel composite image
     """
     try:
+        # Check if the application is running before saving any images
+        global IS_RUNNING
+        if not IS_RUNNING and not is_test:
+            logger.debug(f"Not creating comparison image for {camera_name}: Application not running")
+            return {"composite_path": None, "component_paths": {}, "contains_owl_shapes": False}
+            
         # Validate images
         is_valid, message = validate_comparison_images(base_image, new_image)
         if not is_valid:
@@ -389,7 +441,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         # Get image dimensions
         width, height = base_image.size
         
-        # Create analysis image with red owl shape highlighting
+        # Create analysis image with red owl shape highlighting but NO TEXT OVERLAYS
         analysis_image, binary_mask, contains_owl_shapes = create_analysis_image(
             base_image,
             new_image,
@@ -469,6 +521,44 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
     except Exception as e:
         logger.error(f"Error creating images: {e}")
         raise
+
+# Function to clean up all old images - can be called during application startup
+def clean_all_images():
+    """
+    Clean up all images from all image directories.
+    
+    Returns:
+        int: Number of files deleted
+    """
+    try:
+        from utilities.constants import BASE_IMAGES_DIR, IMAGE_COMPARISONS_DIR, SAVED_IMAGES_DIR
+        
+        image_dirs = [
+            BASE_IMAGES_DIR,
+            IMAGE_COMPARISONS_DIR,
+            SAVED_IMAGES_DIR
+        ]
+        
+        total_deleted = 0
+        
+        # Find and delete all image files
+        for directory in image_dirs:
+            if os.path.exists(directory):
+                # Use glob to find all files including those in subdirectories
+                for file_path in glob.glob(os.path.join(directory, "**/*.*"), recursive=True):
+                    if os.path.isfile(file_path):
+                        try:
+                            os.unlink(file_path)
+                            total_deleted += 1
+                        except Exception as e:
+                            logger.warning(f"Error deleting {file_path}: {e}")
+        
+        logger.info(f"Cleaned up {total_deleted} image files")
+        return total_deleted
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up images: {e}")
+        return 0
 
 if __name__ == "__main__":
     # Test the comparison functionality
