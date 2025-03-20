@@ -101,13 +101,14 @@ def check_column_exists(table_name, column_name):
     
     return exists
 
-def get_subscribers(notification_type=None, owl_location=None):
+def get_subscribers(notification_type=None, owl_location=None, admin_only=False):
     """
     Get subscribers based on notification type and preferences.
     
     Args:
         notification_type (str, optional): Type of notification ("email", "sms", or "email_to_text")
-        owl_location (str, optional): Type of owl detection for filtering
+        owl_location (str, optional): Type of owl detection for filtering (IGNORED FOR NOW)
+        admin_only (bool, optional): Whether to only return admin subscribers
         
     Returns:
         list: List of subscriber records
@@ -116,20 +117,16 @@ def get_subscribers(notification_type=None, owl_location=None):
         # Start with base query
         query = supabase_client.table("subscribers").select("*")
         
-        # Only filter by notification_type if the column exists
-        if notification_type and check_column_exists("subscribers", "notification_type"):
-            query = query.eq("notification_type", notification_type)
+        # Filter by admin status if requested
+        if admin_only and check_column_exists("subscribers", "is_admin"):
+            query = query.eq("is_admin", True)
         
-        # Only filter by owl_locations if the column exists
-        if owl_location and check_column_exists("subscribers", "owl_locations"):
-            # For backward compatibility, also check old owl location types
-            if owl_location in ["Two Owls", "Two Owls In Box", "Eggs Or Babies"]:
-                # For new alert types, include subscribers who have the base type
-                base_location = "Owl In Box" if "In Box" in owl_location else "Owl In Area"
-                query = query.or_(f"owl_locations.ilike.%{owl_location}%,owl_locations.ilike.%{base_location}%")
-            else:
-                # Original behavior for standard alert types
-                query = query.ilike("owl_locations", f"%{owl_location}%")
+        # For email notifications, use both notification_type and email_alerts
+        if notification_type == "email":
+            if check_column_exists("subscribers", "email_alerts"):
+                query = query.eq("email_alerts", True)
+            elif check_column_exists("subscribers", "notification_type"):
+                query = query.eq("notification_type", "email")
         
         # Execute the query
         response = query.execute()
