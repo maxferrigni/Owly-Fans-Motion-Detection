@@ -54,7 +54,7 @@ class ConfigurationManager:
 
     def _validate_config(self, config):
         """Validate configuration structure and values"""
-        required_fields = ["roi", "threshold_percentage", "luminance_threshold", "alert_type"]
+        required_fields = ["roi", "alert_type"]  # Remove 'threshold_percentage' and 'luminance_threshold'
         required_motion_fields = [
             "min_circularity", "min_aspect_ratio", 
             "max_aspect_ratio", "min_area_ratio",
@@ -67,20 +67,72 @@ class ConfigurationManager:
             if missing_fields:
                 raise ValueError(f"Missing required fields {missing_fields} for camera {camera}")
                 
-            # Check motion detection fields
-            if "motion_detection" not in settings:
-                raise ValueError(f"Missing motion_detection settings for camera {camera}")
-                
-            motion_settings = settings["motion_detection"]
-            missing_motion_fields = [
-                field for field in required_motion_fields 
-                if field not in motion_settings
-            ]
-            if missing_motion_fields:
-                raise ValueError(
-                    f"Missing motion detection fields {missing_motion_fields} "
-                    f"for camera {camera}"
-                )
+            # Check for day or night settings
+            if not ("day_settings" in settings or "night_settings" in settings):
+                # For backward compatibility, check for fields at the root level
+                legacy_fields = ["threshold_percentage", "luminance_threshold"]
+                missing_legacy_fields = [field for field in legacy_fields if field not in settings]
+                if missing_legacy_fields:
+                    raise ValueError(f"Missing required fields {missing_legacy_fields} at root level and no day/night settings found for camera {camera}")
+            
+            # Check day settings if present
+            if "day_settings" in settings:
+                day_settings = settings["day_settings"]
+                missing_day_fields = ["threshold_percentage", "luminance_threshold"]
+                missing_day_fields = [field for field in missing_day_fields if field not in day_settings]
+                if missing_day_fields:
+                    raise ValueError(f"Missing required fields {missing_day_fields} in day_settings for camera {camera}")
+                    
+                # Check day motion detection fields
+                if "motion_detection" not in day_settings:
+                    raise ValueError(f"Missing motion_detection in day_settings for camera {camera}")
+                    
+                motion_settings = day_settings["motion_detection"]
+                missing_motion_fields = [
+                    field for field in required_motion_fields 
+                    if field not in motion_settings
+                ]
+                if missing_motion_fields:
+                    raise ValueError(
+                        f"Missing motion detection fields {missing_motion_fields} "
+                        f"in day_settings for camera {camera}"
+                    )
+
+            # Check night settings if present
+            if "night_settings" in settings:
+                night_settings = settings["night_settings"]
+                missing_night_fields = ["threshold_percentage", "luminance_threshold"]
+                missing_night_fields = [field for field in missing_night_fields if field not in night_settings]
+                if missing_night_fields:
+                    raise ValueError(f"Missing required fields {missing_night_fields} in night_settings for camera {camera}")
+                    
+                # Check night motion detection fields
+                if "motion_detection" not in night_settings:
+                    raise ValueError(f"Missing motion_detection in night_settings for camera {camera}")
+                    
+                motion_settings = night_settings["motion_detection"]
+                missing_motion_fields = [
+                    field for field in required_motion_fields 
+                    if field not in motion_settings
+                ]
+                if missing_motion_fields:
+                    raise ValueError(
+                        f"Missing motion detection fields {missing_motion_fields} "
+                        f"in night_settings for camera {camera}"
+                    )
+            
+            # If legacy structure is still being used, check motion detection
+            if "motion_detection" in settings:
+                motion_settings = settings["motion_detection"]
+                missing_motion_fields = [
+                    field for field in required_motion_fields 
+                    if field not in motion_settings
+                ]
+                if missing_motion_fields:
+                    raise ValueError(
+                        f"Missing motion detection fields {missing_motion_fields} "
+                        f"for camera {camera}"
+                    )
 
     def create_backup(self):
         """Create a backup of current configuration"""
