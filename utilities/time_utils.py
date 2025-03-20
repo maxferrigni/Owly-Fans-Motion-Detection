@@ -1,11 +1,11 @@
 # File: utilities/time_utils.py
 # Purpose: Determine optimal lighting conditions for base image capture and motion detection
 #
-# March 6, 2025 Update - Version 1.2.1
-# - Reduced transition window from 90 to 30 minutes on either side of sunrise/sunset
-# - Added time tracking for sunrise/sunset countdowns
-# - Modified base image capture logic to allow during transitions
-# - Added transition period percentage calculation
+# March 28, 2025 Update - Version 1.4.6
+# - Improved lighting condition determination for day/night settings
+# - Enhanced transition period detection
+# - Simplified cached data tracking
+# - Added clear documentation of lighting state boundaries
 
 from datetime import datetime, timedelta, date
 import pytz
@@ -31,7 +31,7 @@ _sun_data_cache = {
 _lighting_condition_cache = {
     'timestamp': None,
     'condition': None,
-    'previous_condition': None,  # Added in v1.1.0 to track transitions
+    'previous_condition': None,
     'cache_duration': timedelta(minutes=5)  # Cache lighting condition for 5 minutes
 }
 
@@ -41,10 +41,10 @@ _base_image_timing_cache = {
     'stable_period_start': {},  # When the current lighting condition started
     'min_capture_interval': timedelta(hours=3),  # Minimum time between captures for same condition
     'min_stable_period': timedelta(minutes=20),  # Minimum time in same lighting condition before capturing
-    'last_transition_time': None  # New in v1.1.0 - Track when last transition occurred
+    'last_transition_time': None
 }
 
-# Track detailed lighting conditions for after action reports - Added in v1.1.0
+# Track detailed lighting conditions for after action reports
 _detailed_lighting_info = {
     'last_day_period': None,
     'last_night_period': None,
@@ -53,7 +53,7 @@ _detailed_lighting_info = {
     'last_after_action_report': None
 }
 
-# New in v1.2.1 - Track sunrise/sunset times for countdown display
+# Track sunrise/sunset times for countdown display
 _time_tracking = {
     'next_sunrise': None,
     'next_sunset': None,
@@ -85,7 +85,6 @@ def _get_detailed_lighting_condition():
     """
     Get more detailed lighting condition for internal use.
     Used to determine true day/night vs transition periods.
-    Updated in v1.2.1 to use 30-minute transition window.
     
     Returns:
         str: Detailed lighting condition
@@ -109,7 +108,7 @@ def _get_detailed_lighting_condition():
         sunrise = datetime.strptime(today_data.iloc[0]['Sunrise'], '%H:%M').time()
         sunset = datetime.strptime(today_data.iloc[0]['Sunset'], '%H:%M').time()
         
-        # Calculate transition periods with 30-minute window (v1.2.1)
+        # Calculate transition periods with 30-minute window
         sunrise_dt = datetime.combine(current_time.date(), sunrise)
         sunset_dt = datetime.combine(current_time.date(), sunset)
         
@@ -118,7 +117,7 @@ def _get_detailed_lighting_condition():
         sunrise_dt = pacific_tz.localize(sunrise_dt)
         sunset_dt = pacific_tz.localize(sunset_dt)
         
-        # Define true day/night with 30-minute margins (v1.2.1)
+        # Define true day/night with 30-minute margins
         dawn_start = (sunrise_dt - timedelta(minutes=30)).time()
         dawn_end = (sunrise_dt + timedelta(minutes=30)).time()
         
@@ -147,7 +146,6 @@ def _get_detailed_lighting_condition():
 def _update_time_tracking(current_time, sunrise_dt, sunset_dt):
     """
     Update the time tracking for sunrise/sunset countdowns.
-    New in v1.2.1.
     
     Args:
         current_time (datetime): Current time (timezone-aware)
@@ -227,7 +225,7 @@ def _update_time_tracking(current_time, sunrise_dt, sunset_dt):
 def get_current_lighting_condition():
     """
     Determine current lighting condition based on time of day.
-    In v1.1.0, simplified to just 'day', 'night', or 'transition'.
+    Simplified to just 'day', 'night', or 'transition'.
     Uses caching to prevent frequent recalculations.
     
     Returns:
@@ -249,7 +247,7 @@ def get_current_lighting_condition():
     # Get detailed condition
     detailed_condition = _get_detailed_lighting_condition()
     
-    # Map detailed condition to simplified condition for v1.1.0
+    # Map detailed condition to simplified condition
     condition_mapping = {
         'true_day': 'day',
         'true_night': 'night',
@@ -293,13 +291,13 @@ def get_current_lighting_condition():
     _lighting_condition_cache['timestamp'] = current_time
     _lighting_condition_cache['condition'] = condition
     
-    logger.debug(f"New lighting condition calculated: {condition} (detailed: {detailed_condition})")
+    logger.debug(f"Current lighting condition: {condition} (detailed: {detailed_condition})")
     return condition
 
 def get_lighting_info():
     """
     Get all lighting-related information in a single call.
-    Enhanced in v1.2.1 to include countdown information.
+    Enhanced to include countdown information.
     
     Returns:
         dict: Dictionary containing current lighting information
@@ -311,7 +309,7 @@ def get_lighting_info():
     # Get current time for countdown calculations
     current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
     
-    # Get transition completion percentage (new in v1.2.1)
+    # Get transition completion percentage
     transition_percentage = 0
     if condition == 'transition':
         if detailed_condition == 'dawn':
@@ -407,47 +405,6 @@ def get_lighting_info():
             next_true_night = pacific_tz.localize(next_true_night)
         countdown_info['to_true_night'] = (next_true_night - current_time).total_seconds()
     
-    # Calculate countup times (time since event occurred)
-    countup_info = {
-        'since_sunrise': None,
-        'since_sunset': None,
-        'since_true_day': None,
-        'since_true_night': None
-    }
-    
-    # Make sure all datetime comparisons are timezone-aware
-    if _time_tracking['next_sunrise']:
-        next_sunrise = _time_tracking['next_sunrise']
-        if next_sunrise.tzinfo is None:
-            pacific_tz = pytz.timezone('America/Los_Angeles')
-            next_sunrise = pacific_tz.localize(next_sunrise)
-        if next_sunrise < current_time:
-            countup_info['since_sunrise'] = (current_time - next_sunrise).total_seconds()
-        
-    if _time_tracking['next_sunset']:
-        next_sunset = _time_tracking['next_sunset']
-        if next_sunset.tzinfo is None:
-            pacific_tz = pytz.timezone('America/Los_Angeles')
-            next_sunset = pacific_tz.localize(next_sunset)
-        if next_sunset < current_time:
-            countup_info['since_sunset'] = (current_time - next_sunset).total_seconds()
-        
-    if _time_tracking['next_true_day']:
-        next_true_day = _time_tracking['next_true_day']
-        if next_true_day.tzinfo is None:
-            pacific_tz = pytz.timezone('America/Los_Angeles')
-            next_true_day = pacific_tz.localize(next_true_day)
-        if next_true_day < current_time:
-            countup_info['since_true_day'] = (current_time - next_true_day).total_seconds()
-        
-    if _time_tracking['next_true_night']:
-        next_true_night = _time_tracking['next_true_night']
-        if next_true_night.tzinfo is None:
-            pacific_tz = pytz.timezone('America/Los_Angeles')
-            next_true_night = pacific_tz.localize(next_true_night)
-        if next_true_night < current_time:
-            countup_info['since_true_night'] = (current_time - next_true_night).total_seconds()
-    
     # Format times as strings for display, handling None values
     next_sunrise_str = None
     if _time_tracking['next_sunrise']:
@@ -465,7 +422,7 @@ def get_lighting_info():
     if _time_tracking['next_true_night']:
         next_true_night_str = _time_tracking['next_true_night'].strftime('%H:%M:%S')
     
-    # Enhanced lighting info for v1.2.1
+    # Enhanced lighting info
     return {
         'condition': condition,
         'detailed_condition': detailed_condition,
@@ -476,7 +433,6 @@ def get_lighting_info():
         'last_transition_time': _base_image_timing_cache.get('last_transition_time'),
         'transition_percentage': round(transition_percentage, 1),
         'countdown': countdown_info,
-        'countup': countup_info,
         'next_sunrise': next_sunrise_str,
         'next_sunset': next_sunset_str,
         'next_true_day': next_true_day_str,
@@ -487,8 +443,6 @@ def is_lighting_condition_stable():
     """
     Determine if the current lighting condition has been stable for
     enough time to warrant a base image capture.
-    Modified in v1.2.1 to redefine "stable" - transition can be stable for base capture
-    but not for alerts.
     
     Returns:
         bool: True if lighting condition is stable
@@ -509,16 +463,19 @@ def is_lighting_condition_stable():
 def should_capture_base_image():
     """
     Determine if it's an optimal time to capture new base images.
-    Modified in v1.2.1 to allow capture during transitions but prefer day/night.
     
     Returns:
-        bool: True if optimal time for base image capture
-        str: The intended lighting condition for the base image ('day', 'night', 'transition')
+        tuple: (bool, str) - (should_capture, lighting_condition)
     """
     current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
     condition = get_current_lighting_condition()
     
-    # Only capture during stable lighting conditions but allow transitions
+    # Prefer capturing in pure day/night conditions, avoid transitions
+    if condition == 'transition':
+        logger.debug("Transition period, not ideal for base image capture")
+        return False, condition
+    
+    # Only capture during stable lighting conditions
     if not is_lighting_condition_stable():
         logger.debug(f"Lighting condition {condition} not stable yet, skipping base image capture")
         return False, condition
@@ -540,7 +497,7 @@ def should_capture_base_image():
 def is_pure_lighting_condition():
     """
     Determine if the current time represents a "pure" lighting condition for
-    reliable base image capture. New in v1.2.1.
+    reliable base image capture.
     
     Returns:
         bool: True if it's a pure day or night condition, False during transitions
@@ -554,7 +511,6 @@ def is_pure_lighting_condition():
 def record_base_image_capture(lighting_condition):
     """
     Record that a base image capture occurred for the given lighting condition.
-    This helps prevent too-frequent captures.
     
     Args:
         lighting_condition (str): The lighting condition when capture occurred
@@ -573,7 +529,7 @@ def get_luminance_threshold_multiplier():
     condition = get_current_lighting_condition()
     detailed_condition = _get_detailed_lighting_condition()
     
-    # Updated multipliers for v1.1.0 with more granular adjustments
+    # Updated multipliers for better day/night separation
     multipliers = {
         'day': 1.0,
         'night': 2.0,
@@ -602,7 +558,6 @@ def get_luminance_threshold_multiplier():
 def is_transition_period():
     """
     Check if we're currently in a lighting transition period.
-    Added in v1.1.0 to better handle transition periods.
     
     Returns:
         bool: True if currently in transition period
@@ -613,7 +568,6 @@ def is_transition_period():
 def format_time_until(seconds):
     """
     Format a time difference in seconds into a human-readable string.
-    New in v1.2.1.
     
     Args:
         seconds (float): Number of seconds
@@ -650,11 +604,6 @@ def format_time_until(seconds):
 def should_generate_after_action_report():
     """
     Determine if it's time to generate an after action report.
-    Updated in v1.2.0 to include time-based fallback.
-    
-    Reports should be generated when:
-    1. Completed a transition from day to night or night to day
-    2. Haven't generated a report recently (time-based fallback)
     
     Returns:
         bool: True if a report should be generated
@@ -717,63 +666,42 @@ def should_generate_after_action_report():
     return False
 
 def record_after_action_report():
-    """
-    Record that an after action report was generated.
-    Added in v1.1.0 to support after action reports.
-    """
+    """Record that an after action report was generated."""
     current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
     _detailed_lighting_info['last_after_action_report'] = current_time
     logger.info(f"Recorded after action report generation at {current_time}")
 
-def get_session_duration():
-    """
-    Calculate the duration of the current lighting session.
-    Added in v1.1.0 to support after action reports.
-    
-    Returns:
-        timedelta: Duration of current session
-    """
-    current_time = datetime.now(pytz.timezone('America/Los_Angeles'))
-    condition = get_current_lighting_condition()
-    
-    # Use the appropriate period start time
-    if condition == 'day':
-        start_time = _detailed_lighting_info.get('last_day_period')
-    elif condition == 'night':
-        start_time = _detailed_lighting_info.get('last_night_period')
-    else:
-        # For transitions, use the previous major period
-        if _lighting_condition_cache.get('previous_condition') == 'day':
-            start_time = _detailed_lighting_info.get('last_day_period')
-        else:
-            start_time = _detailed_lighting_info.get('last_night_period')
-    
-    # If no start time recorded, default to 12 hours
-    if not start_time:
-        return timedelta(hours=12)
-        
-    return current_time - start_time
-
 if __name__ == "__main__":
     # Test the timing functions
-    logger.info("Testing lighting condition detection...")
+    logger.info("Testing lighting condition detection with day/night settings...")
     lighting_info = get_lighting_info()
-    print(f"Current lighting info: {lighting_info}")
-    print(f"Current detailed condition: {_get_detailed_lighting_condition()}")
-    print(f"Is transition period: {is_transition_period()}")
-    print(f"Is lighting condition stable: {is_lighting_condition_stable()}")
-    print(f"Should capture base image: {should_capture_base_image()}")
-    print(f"Is pure lighting condition: {is_pure_lighting_condition()}")
-    print(f"Luminance threshold multiplier: {get_luminance_threshold_multiplier()}")
-    print(f"Should generate after action report: {should_generate_after_action_report()}")
-    print(f"Session duration: {get_session_duration()}")
     
-    # Test countdown formatting
+    print(f"Current lighting info:")
+    print(f"- Condition: {lighting_info['condition']}")
+    print(f"- Detailed condition: {lighting_info['detailed_condition']}")
+    print(f"- Is transition period: {lighting_info['is_transition']}")
+    print(f"- Transition percentage: {lighting_info['transition_percentage']}%")
+    print(f"- Is lighting condition stable: {is_lighting_condition_stable()}")
+    print(f"- Is pure lighting condition: {is_pure_lighting_condition()}")
+    
+    print("\nTime information:")
+    print(f"- Next sunrise: {lighting_info['next_sunrise']}")
+    print(f"- Next sunset: {lighting_info['next_sunset']}")
+    print(f"- Next true day: {lighting_info['next_true_day']}")
+    print(f"- Next true night: {lighting_info['next_true_night']}")
+    
     if lighting_info['countdown']['to_sunrise']:
-        print(f"Time until sunrise: {format_time_until(lighting_info['countdown']['to_sunrise'])}")
+        print(f"- Time until sunrise: {format_time_until(lighting_info['countdown']['to_sunrise'])}")
     if lighting_info['countdown']['to_sunset']:
-        print(f"Time until sunset: {format_time_until(lighting_info['countdown']['to_sunset'])}")
+        print(f"- Time until sunset: {format_time_until(lighting_info['countdown']['to_sunset'])}")
     if lighting_info['countdown']['to_true_day']:
-        print(f"Time until true day: {format_time_until(lighting_info['countdown']['to_true_day'])}")
+        print(f"- Time until true day: {format_time_until(lighting_info['countdown']['to_true_day'])}")
     if lighting_info['countdown']['to_true_night']:
-        print(f"Time until true night: {format_time_until(lighting_info['countdown']['to_true_night'])}")
+        print(f"- Time until true night: {format_time_until(lighting_info['countdown']['to_true_night'])}")
+    
+    print("\nDetection decisions:")
+    print(f"- Should capture base image: {should_capture_base_image()}")
+    print(f"- Luminance threshold multiplier: {get_luminance_threshold_multiplier()}")
+    print(f"- Should generate after action report: {should_generate_after_action_report()}")
+    
+    print("\nTest complete - ready for integration with day/night detection settings")

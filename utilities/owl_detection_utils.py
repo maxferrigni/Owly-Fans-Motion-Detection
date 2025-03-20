@@ -1,5 +1,11 @@
 # File: utilities/owl_detection_utils.py
 # Purpose: Detect owls in camera images using advanced shape and motion analysis with confidence metrics
+# 
+# March 28, 2025 Update - Version 1.4.6
+# - Added support for day/night specific detection parameters
+# - Improved detection algorithm for infrared lighting conditions
+# - Enhanced logging for parameter selection
+# - Skip detection during transition periods
 
 import cv2
 import numpy as np
@@ -12,6 +18,7 @@ import pytz
 # Import utilities
 from utilities.logging_utils import get_logger
 from utilities.confidence_utils import calculate_owl_confidence, is_owl_detected
+from utilities.time_utils import get_current_lighting_condition
 
 # Initialize logger
 logger = get_logger()
@@ -33,6 +40,9 @@ def analyze_image_differences(base_image, new_image, threshold, config):
             - diff_metrics: Additional difference metrics
     """
     try:
+        # Get current lighting condition for logging
+        lighting_condition = get_current_lighting_condition()
+        
         # Convert to numpy arrays for OpenCV processing
         base_cv = cv2.cvtColor(np.array(base_image), cv2.COLOR_RGB2GRAY)
         new_cv = cv2.cvtColor(np.array(new_image), cv2.COLOR_RGB2GRAY)
@@ -88,7 +98,8 @@ def analyze_image_differences(base_image, new_image, threshold, config):
             'diff_metrics': {
                 'binary_mask': binary_mask,
                 'region_metrics': region_metrics
-            }
+            },
+            'lighting_condition': lighting_condition
         }
         
         return results, binary_mask
@@ -97,18 +108,36 @@ def analyze_image_differences(base_image, new_image, threshold, config):
         logger.error(f"Error analyzing image differences: {e}")
         raise
 
-def find_owl_candidates(binary_mask, config):
+def find_owl_candidates(binary_mask, config, lighting_condition=None):
     """
     Find regions in the binary mask that could potentially be owls.
+    Updated to use lighting-specific parameters.
     
     Args:
         binary_mask (numpy.ndarray): Binary mask of changed pixels
         config (dict): Camera configuration with motion detection parameters
+        lighting_condition (str, optional): Current lighting condition
         
     Returns:
         list: List of owl candidate regions with shape characteristics
     """
     try:
+        # If lighting condition not provided, get it
+        if lighting_condition is None:
+            lighting_condition = get_current_lighting_condition()
+        
+        # Get the appropriate settings based on lighting condition
+        if lighting_condition == 'day' and 'day_settings' in config and 'motion_detection' in config['day_settings']:
+            motion_config = config['day_settings']['motion_detection']
+            logger.debug(f"Using day motion detection settings")
+        elif lighting_condition == 'night' and 'night_settings' in config and 'motion_detection' in config['night_settings']:
+            motion_config = config['night_settings']['motion_detection']
+            logger.debug(f"Using night motion detection settings")
+        else:
+            # Fall back to standard motion detection config
+            motion_config = config.get("motion_detection", {})
+            logger.debug(f"Using standard motion detection settings")
+        
         # Find contours in the binary mask
         contours, _ = cv2.findContours(
             binary_mask,
@@ -117,12 +146,18 @@ def find_owl_candidates(binary_mask, config):
         )
         
         # Get configuration parameters for shape filtering
-        motion_config = config["motion_detection"]
-        min_circularity = motion_config["min_circularity"]
-        min_aspect_ratio = motion_config["min_aspect_ratio"]
-        max_aspect_ratio = motion_config["max_aspect_ratio"]
-        min_area_ratio = motion_config["min_area_ratio"]
-        brightness_threshold = motion_config["brightness_threshold"]
+        min_circularity = motion_config.get("min_circularity", 0.5)
+        min_aspect_ratio = motion_config.get("min_aspect_ratio", 0.5)
+        max_aspect_ratio = motion_config.get("max_aspect_ratio", 2.0)
+        min_area_ratio = motion_config.get("min_area_ratio", 0.01)
+        brightness_threshold = motion_config.get("brightness_threshold", 20)
+        
+        # Log parameters being used
+        logger.debug(
+            f"Motion parameters ({lighting_condition}): circularity: {min_circularity}, "
+            f"aspect ratio: {min_aspect_ratio}-{max_aspect_ratio}, "
+            f"area ratio: {min_area_ratio}, brightness: {brightness_threshold}"
+        )
         
         # Calculate image dimensions for relative measurements
         height, width = binary_mask.shape
@@ -174,7 +209,7 @@ def find_owl_candidates(binary_mask, config):
         # Sort candidates by area ratio (largest first)
         owl_candidates.sort(key=lambda x: x['area_ratio'], reverse=True)
         
-        logger.debug(f"Found {len(owl_candidates)} owl candidates")
+        logger.debug(f"Found {len(owl_candidates)} owl candidates in {lighting_condition} condition")
         return owl_candidates
         
     except Exception as e:
@@ -184,6 +219,7 @@ def find_owl_candidates(binary_mask, config):
 def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=None):
     """
     Detect if an owl is present by comparing base and new images with confidence metrics.
+    Updated to use lighting-specific settings.
     
     Args:
         new_image (PIL.Image): New image to check
@@ -205,8 +241,32 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
         if base_image.mode != 'RGB':
             base_image = base_image.convert('RGB')
             
-        # Get threshold from config
-        threshold = config.get("luminance_threshold", 30)
+        # Get current lighting condition
+        lighting_condition = get_current_lighting_condition()
+        
+        # Skip detection during transition periods unless in test mode
+        if lighting_condition == 'transition' and not is_test:
+            logger.info(f"Skipping detection for {camera_name} during transition period")
+            return False, {
+                "is_owl_present": False,
+                "owl_confidence": 0.0,
+                "consecutive_owl_frames": 0,
+                "pixel_change": 0.0,
+                "luminance_change": 0.0,
+                "lighting_condition": lighting_condition
+            }
+        
+        # Get lighting-specific threshold settings
+        if lighting_condition == 'day' and 'day_settings' in config:
+            threshold = config['day_settings'].get("luminance_threshold", 30)
+            logger.debug(f"Using day luminance threshold: {threshold}")
+        elif lighting_condition == 'night' and 'night_settings' in config:
+            threshold = config['night_settings'].get("luminance_threshold", 30)
+            logger.debug(f"Using night luminance threshold: {threshold}")
+        else:
+            # Fallback to standard threshold
+            threshold = config.get("luminance_threshold", 30)
+            logger.debug(f"Using standard luminance threshold: {threshold}")
         
         # Analyze image differences
         diff_results, binary_mask = analyze_image_differences(
@@ -216,8 +276,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
             config
         )
         
-        # Find potential owl candidates
-        owl_candidates = find_owl_candidates(binary_mask, config)
+        # Find potential owl candidates using appropriate settings
+        owl_candidates = find_owl_candidates(binary_mask, config, lighting_condition)
         
         # Compile detection data for confidence calculation
         detection_data = {
@@ -225,7 +285,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
             "luminance_change": diff_results["luminance_change"],
             "max_luminance": diff_results["max_luminance"],
             "owl_candidates": owl_candidates,
-            "diff_metrics": diff_results["diff_metrics"]
+            "diff_metrics": diff_results["diff_metrics"],
+            "lighting_condition": lighting_condition
         }
         
         # Calculate owl confidence score if camera_name is provided
@@ -242,11 +303,23 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
             consecutive_frames = confidence_results.get("consecutive_owl_frames", 0)
             confidence_factors = confidence_results.get("confidence_factors", {})
             
+            # Get appropriate confidence threshold based on lighting condition
+            if lighting_condition == 'day' and 'day_settings' in config:
+                threshold = config['day_settings'].get("owl_confidence_threshold", 60.0)
+            elif lighting_condition == 'night' and 'night_settings' in config:
+                threshold = config['night_settings'].get("owl_confidence_threshold", 60.0)
+            else:
+                threshold = config.get("owl_confidence_threshold", 60.0)
+                
+            # Update config with current threshold for is_owl_detected
+            detection_config = config.copy()
+            detection_config["owl_confidence_threshold"] = threshold
+            
             # Determine if owl is present based on confidence
             is_owl_present = is_owl_detected(
                 owl_confidence,
                 camera_name,
-                config
+                detection_config
             )
             
             # Create comprehensive detection info
@@ -258,19 +331,21 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
                 "pixel_change": diff_results["pixel_change"],
                 "luminance_change": diff_results["luminance_change"],
                 "owl_candidates": owl_candidates,
-                "diff_metrics": diff_results["diff_metrics"]
+                "diff_metrics": diff_results["diff_metrics"],
+                "lighting_condition": lighting_condition,
+                "threshold_used": threshold
             }
             
             # Log detection result with confidence
             if is_owl_present:
                 logger.info(
                     f"Owl detected in {camera_name} with {owl_confidence:.1f}% confidence "
-                    f"({consecutive_frames} consecutive frames)"
+                    f"({consecutive_frames} consecutive frames) - {lighting_condition} mode"
                 )
             else:
                 logger.debug(
                     f"No owl detected in {camera_name}: {owl_confidence:.1f}% confidence "
-                    f"({confidence_results.get('consecutive_owl_frames', 0)} consecutive frames)"
+                    f"({confidence_results.get('consecutive_owl_frames', 0)} consecutive frames) - {lighting_condition} mode"
                 )
                 
         else:
@@ -286,12 +361,13 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
                 "pixel_change": diff_results["pixel_change"],
                 "luminance_change": diff_results["luminance_change"],
                 "owl_candidates": owl_candidates,
-                "diff_metrics": diff_results["diff_metrics"]
+                "diff_metrics": diff_results["diff_metrics"],
+                "lighting_condition": lighting_condition
             }
             
             logger.debug(
                 f"Test mode detection: Owl present = {is_owl_present}, "
-                f"candidates: {len(owl_candidates)}"
+                f"candidates: {len(owl_candidates)}, lighting: {lighting_condition}"
             )
                 
         return is_owl_present, detection_info
@@ -304,7 +380,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
             "error": str(e),
             "pixel_change": 0.0,
             "luminance_change": 0.0,
-            "owl_candidates": []
+            "owl_candidates": [],
+            "lighting_condition": get_current_lighting_condition()
         }
 
 # Test the module
@@ -312,18 +389,30 @@ if __name__ == "__main__":
     try:
         # Basic configuration for testing
         test_config = {
-            "luminance_threshold": 30,
-            "motion_detection": {
-                "min_circularity": 0.5,
-                "min_aspect_ratio": 0.5,
-                "max_aspect_ratio": 2.0,
-                "min_area_ratio": 0.01,
-                "brightness_threshold": 20
+            "day_settings": {
+                "luminance_threshold": 30,
+                "motion_detection": {
+                    "min_circularity": 0.5,
+                    "min_aspect_ratio": 0.5,
+                    "max_aspect_ratio": 2.0,
+                    "min_area_ratio": 0.01,
+                    "brightness_threshold": 20
+                }
+            },
+            "night_settings": {
+                "luminance_threshold": 20,
+                "motion_detection": {
+                    "min_circularity": 0.6,
+                    "min_aspect_ratio": 0.6,
+                    "max_aspect_ratio": 1.8,
+                    "min_area_ratio": 0.02,
+                    "brightness_threshold": 25
+                }
             }
         }
         
         # Log that we're in test mode
-        logger.info("Testing owl detection utility...")
+        logger.info("Testing owl detection utility with day/night settings...")
         
         # Test with two identical images - should not detect owl
         try:
@@ -332,17 +421,31 @@ if __name__ == "__main__":
             # Capture test image
             test_image = pyautogui.screenshot(region=(0, 0, 640, 480))
             
-            # Test detection with identical images
-            is_present, info = detect_owl_in_box(
+            # Test detection with identical images for day settings
+            logger.info("Testing with day settings...")
+            is_present_day, info_day = detect_owl_in_box(
                 test_image,
                 test_image,
                 test_config,
                 is_test=True
             )
             
-            logger.info(f"Test detection result (identical images): {is_present}")
-            logger.info(f"Pixel change: {info['pixel_change']:.2f}%")
-            logger.info(f"Number of candidates: {len(info['owl_candidates'])}")
+            logger.info(f"Day detection result (identical images): {is_present_day}")
+            logger.info(f"Day pixel change: {info_day['pixel_change']:.2f}%")
+            logger.info(f"Day number of candidates: {len(info_day['owl_candidates'])}")
+            
+            # Test night settings
+            logger.info("Testing with night settings...")
+            is_present_night, info_night = detect_owl_in_box(
+                test_image,
+                test_image,
+                test_config,
+                is_test=True
+            )
+            
+            logger.info(f"Night detection result (identical images): {is_present_night}")
+            logger.info(f"Night pixel change: {info_night['pixel_change']:.2f}%")
+            logger.info(f"Night number of candidates: {len(info_night['owl_candidates'])}")
             
         except ImportError:
             logger.warning("Could not import pyautogui, skipping screenshot test")
