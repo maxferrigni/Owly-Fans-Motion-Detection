@@ -1,5 +1,11 @@
 # File: utilities/confidence_utils.py
 # Purpose: Calculate and manage owl confidence scores for improved detection without decision-making
+# 
+# Updates:
+# - Adjusted motion confidence calculation to be less generous with small changes
+# - Made shape confidence scoring more stringent
+# - Improved temporal confidence to require higher quality detections
+# - Enhanced camera-specific confidence factors for night conditions
 
 import numpy as np
 from datetime import datetime
@@ -22,6 +28,7 @@ MAX_FRAME_HISTORY = 10
 def calculate_shape_confidence(detection_data, config):
     """
     Calculate confidence score based on shape characteristics.
+    Modified to be more stringent with shape requirements.
     
     Args:
         detection_data (dict): Detection data including owl candidates
@@ -44,8 +51,10 @@ def calculate_shape_confidence(detection_data, config):
     circ_value = best_candidate.get("circularity", 0)
     
     if circ_value >= min_circ:
-        # Calculate how close to ideal circularity (higher is better)
-        circ_score = min(10, (circ_value / ideal_circ) * 10)
+        # More stringent scoring curve - requires closer to ideal circularity
+        # Use quadratic scaling to penalize values further from ideal
+        circ_distance = abs(circ_value - ideal_circ)
+        circ_score = min(10, 10 * (1 - (circ_distance * 2)))
         logger.debug(f"Circularity score: {circ_score:.1f}% (value: {circ_value:.2f})")
     else:
         circ_score = 0
@@ -58,9 +67,9 @@ def calculate_shape_confidence(detection_data, config):
     aspect_value = best_candidate.get("aspect_ratio", 0)
     
     if min_aspect <= aspect_value <= max_aspect:
-        # Calculate how close to ideal aspect ratio (higher is better)
+        # More stringent scaling - use quadratic distance from ideal
         aspect_deviation = abs(aspect_value - ideal_aspect) / (max_aspect - min_aspect)
-        aspect_score = 10 * (1 - min(1, aspect_deviation))
+        aspect_score = 10 * (1 - min(1, aspect_deviation * 1.5))  # Multiply by 1.5 to make more stringent
         logger.debug(f"Aspect ratio score: {aspect_score:.1f}% (value: {aspect_value:.2f})")
     else:
         aspect_score = 0
@@ -72,8 +81,12 @@ def calculate_shape_confidence(detection_data, config):
     area_value = best_candidate.get("area_ratio", 0)
     
     if area_value >= min_area:
-        # Calculate area score based on how close to ideal size
-        area_score = min(20, (area_value / ideal_area) * 20)
+        # More stringent size scoring
+        # For very small shapes, reduce score significantly
+        if area_value < min_area * 2:
+            area_score = min(10, (area_value / ideal_area) * 10)
+        else:
+            area_score = min(20, (area_value / ideal_area) * 20)
         logger.debug(f"Area score: {area_score:.1f}% (value: {area_value:.2f})")
     else:
         area_score = 0
@@ -87,6 +100,7 @@ def calculate_shape_confidence(detection_data, config):
 def calculate_motion_confidence(detection_data, config):
     """
     Calculate confidence score based on motion characteristics.
+    Modified to require more substantial motion for high scores.
     
     Args:
         detection_data (dict): Detection data including motion metrics
@@ -101,8 +115,10 @@ def calculate_motion_confidence(detection_data, config):
     min_change = config.get("threshold_percentage", 0.05)
     
     if pixel_change >= min_change:
-        # Calculate score based on how close to ideal change
-        pixel_score = min(15, (pixel_change / ideal_change) * 15)
+        # More stringent scoring curve - requires closer to ideal change
+        # Apply quadratic scaling based on distance from minimum threshold
+        scale_factor = min(1.0, (pixel_change - min_change) / (ideal_change - min_change))
+        pixel_score = min(15, 15 * scale_factor * scale_factor)  # Square it for quadratic scaling
         logger.debug(f"Pixel change score: {pixel_score:.1f}% (value: {pixel_change:.2f})")
     else:
         pixel_score = 0
@@ -114,8 +130,10 @@ def calculate_motion_confidence(detection_data, config):
     min_luminance = config.get("luminance_threshold", 20)
     
     if luminance >= min_luminance:
-        # Calculate score based on how close to ideal luminance
-        luminance_score = min(15, (luminance / ideal_luminance) * 15)
+        # More stringent luminance scoring
+        # Apply quadratic scaling based on distance from minimum threshold
+        scale_factor = min(1.0, (luminance - min_luminance) / (ideal_luminance - min_luminance))
+        luminance_score = min(15, 15 * scale_factor * scale_factor)  # Square it for quadratic scaling
         logger.debug(f"Luminance score: {luminance_score:.1f}% (value: {luminance:.1f})")
     else:
         luminance_score = 0
@@ -129,6 +147,7 @@ def calculate_motion_confidence(detection_data, config):
 def calculate_temporal_confidence(camera_name, current_confidence):
     """
     Calculate confidence score based on temporal persistence.
+    Modified to require higher quality detections for temporal confidence.
     
     Args:
         camera_name (str): Name of the camera
@@ -138,7 +157,10 @@ def calculate_temporal_confidence(camera_name, current_confidence):
         tuple: (temporal_confidence, consecutive_frames)
     """
     max_frames = 5  # Maximum frames to consider
-    confidence_threshold = 30  # Minimum confidence to consider for temporal persistence
+    
+    # Increase minimum confidence required for temporal persistence
+    # This prevents low-quality detections from accumulating temporal confidence
+    confidence_threshold = 40  # Increased from 30 - higher minimum confidence to consider
     
     # Get frame history for this camera
     history = FRAME_HISTORY.get(camera_name, [])
@@ -153,24 +175,38 @@ def calculate_temporal_confidence(camera_name, current_confidence):
     if current_confidence >= confidence_threshold:
         consecutive_frames = 1
     
-    # Check previous frames
+    # Check previous frames with more stringent requirements
+    quality_sum = 0
     for frame in reversed(history):
-        if frame.get("primary_confidence", 0) >= confidence_threshold:
+        frame_confidence = frame.get("primary_confidence", 0)
+        if frame_confidence >= confidence_threshold:
             consecutive_frames += 1
+            # Track the quality of detections for scaling
+            quality_sum += (frame_confidence / 100)  # Normalize to 0-1 range
         else:
             break
     
-    # Calculate persistence score (up to 20%)
-    persistence_factor = min(consecutive_frames / max_frames, 1.0)
-    persistence_score = 20 * persistence_factor
+    if consecutive_frames == 0:
+        return 0, 0
     
-    logger.debug(f"Temporal confidence: {persistence_score:.1f}% from {consecutive_frames} consecutive frames")
+    # Calculate persistence score (up to 20%)
+    # Make scaling more stringent - require more frames for full score
+    frames_factor = min(consecutive_frames / max_frames, 1.0)
+    
+    # Add quality scaling - higher quality detections get more temporal confidence
+    quality_factor = quality_sum / consecutive_frames if consecutive_frames > 0 else 0
+    
+    # Combined scaling - both frame count and quality matter
+    persistence_score = 20 * frames_factor * quality_factor
+    
+    logger.debug(f"Temporal confidence: {persistence_score:.1f}% from {consecutive_frames} consecutive frames (quality factor: {quality_factor:.2f})")
     
     return persistence_score, consecutive_frames
 
 def calculate_camera_specific_confidence(detection_data, camera_name, config):
     """
     Calculate camera-specific confidence factors.
+    Modified for more accurate camera-specific assessments.
     
     Args:
         detection_data (dict): Detection data
@@ -181,52 +217,88 @@ def calculate_camera_specific_confidence(detection_data, camera_name, config):
         float: Camera-specific confidence score (0-10%)
     """
     camera_score = 0
+    lighting_condition = detection_data.get("lighting_condition", "unknown")
     
     if camera_name == "Wyze Internal Camera":  # In-box camera
-        # Position analysis - owls tend to be in certain positions in box
+        # Get region metrics
         region_metrics = detection_data.get("diff_metrics", {}).get("region_metrics", {})
         
         if region_metrics:
-            # Owls often appear in middle or bottom regions of box
+            # More refined position analysis for Wyze Internal Camera
             middle = region_metrics.get("middle", {}).get("mean_luminance", 0)
             top = region_metrics.get("top", {}).get("mean_luminance", 0)
             bottom = region_metrics.get("bottom", {}).get("mean_luminance", 0)
             
-            if middle > top:
-                camera_score += 5
-                logger.debug("Middle region more active than top: +5%")
-            
-            if bottom > top:
-                camera_score += 5
-                logger.debug("Bottom region more active than top: +5%")
+            # Owls typically appear in middle or bottom, rarely just at top
+            # Night scoring - more stringent for infrared/night conditions
+            if lighting_condition == "night":
+                # Require stronger contrast between regions at night
+                if middle > top * 1.5 and middle > 15:  # Middle must be 50% brighter than top and above minimum
+                    camera_score += 3
+                    logger.debug("Night mode: Middle region active and sufficiently bright: +3%")
+                
+                if bottom > top * 1.5 and bottom > 15:  # Bottom must be 50% brighter than top and above minimum
+                    camera_score += 3
+                    logger.debug("Night mode: Bottom region active and sufficiently bright: +3%")
+                    
+                # Additional check for overall activity level - night footage should have significant contrast
+                avg_luminance = (top + middle + bottom) / 3
+                if avg_luminance > 20:  # Higher minimum for good owl detection at night
+                    camera_score += 4
+                    logger.debug(f"Night mode: Sufficient overall luminance ({avg_luminance:.1f}): +4%")
+            else:
+                # Day scoring - standard checks
+                if middle > top:
+                    camera_score += 5
+                    logger.debug("Middle region more active than top: +5%")
+                
+                if bottom > top:
+                    camera_score += 5
+                    logger.debug("Bottom region more active than top: +5%")
                 
     elif camera_name == "Bindy Patio Camera":  # On-box camera
-        # More weight given to middle region where entry hole is
-        region_metrics = detection_data.get("diff_metrics", {}).get("region_metrics", {})
-        
-        if region_metrics:
-            middle = region_metrics.get("middle", {}).get("mean_luminance", 0)
-            top = region_metrics.get("top", {}).get("mean_luminance", 0)
-            bottom = region_metrics.get("bottom", {}).get("mean_luminance", 0)
-            
-            if middle > top and middle > bottom:
-                camera_score += 10
-                logger.debug("Middle region most active (entry hole area): +10%")
-        
-    elif camera_name == "Upper Patio Camera":  # Area camera
-        # For area camera, larger shapes get higher confidence
-        # since the camera is further away
-        if detection_data.get("owl_candidates"):
+        # Check shape characteristics with higher requirements for Bindy camera
+        if detection_data.get("owl_candidates", []):
             best_candidate = max(detection_data["owl_candidates"], key=lambda x: x["area_ratio"])
-            if best_candidate["area_ratio"] > 0.05:
-                camera_score += 10
-                logger.debug("Area camera with large shape detected: +10%")
-            elif best_candidate["area_ratio"] > 0.01:
-                camera_score += 5
-                logger.debug("Area camera with medium shape detected: +5%")
+            
+            # More stringent requirements for night mode
+            if lighting_condition == "night":
+                if best_candidate.get("circularity", 0) > 0.7 and best_candidate.get("area_ratio", 0) > 0.15:
+                    camera_score = 10
+                    logger.debug("Night mode - High quality shape on Bindy camera: +10%")
+                elif best_candidate.get("circularity", 0) > 0.6:
+                    camera_score = 5
+                    logger.debug("Night mode - Medium quality shape on Bindy camera: +5%")
+            else:
+                # Day mode - standard checks
+                if best_candidate.get("circularity", 0) > 0.6:
+                    camera_score = 10
+                    logger.debug("Day mode - Good shape on Bindy camera: +10%")
+            
+    elif camera_name == "Upper Patio Camera":  # Area camera
+        # More precise criteria for area camera
+        if detection_data.get("owl_candidates", []):
+            best_candidate = max(detection_data["owl_candidates"], key=lambda x: x["area_ratio"])
+            
+            # Night mode - more stringent for area camera at night
+            if lighting_condition == "night":
+                if (best_candidate.get("circularity", 0) > 0.75 and 
+                    best_candidate.get("area_ratio", 0) > 0.03):
+                    camera_score = 10
+                    logger.debug("Night mode - Excellent shape on area camera: +10%")
+                elif best_candidate.get("circularity", 0) > 0.65:
+                    camera_score = 5
+                    logger.debug("Night mode - Good shape on area camera: +5%")
+            else:
+                # Day mode
+                if best_candidate.get("circularity", 0) > 0.7:
+                    camera_score = 10
+                    logger.debug("Day mode - High circularity on area camera: +10%")
+                elif best_candidate.get("circularity", 0) > 0.6:
+                    camera_score = 5
+                    logger.debug("Day mode - Good circularity on area camera: +5%")
     
-    logger.debug(f"Camera-specific confidence for {camera_name}: {camera_score}%")
-    
+    logger.debug(f"Camera-specific confidence for {camera_name} ({lighting_condition}): {camera_score}%")
     return camera_score
 
 def calculate_owl_confidence(detection_data, camera_name, config):
@@ -367,60 +439,3 @@ def reset_frame_history():
         "Upper Patio Camera": []
     }
     logger.info("Frame history reset")
-
-# For testing
-if __name__ == "__main__":
-    # Test the confidence calculation
-    test_detection_data = {
-        "owl_candidates": [
-            {
-                "area_ratio": 0.15,
-                "circularity": 0.75,
-                "aspect_ratio": 1.3,
-                "brightness_diff": 45
-            }
-        ],
-        "pixel_change": 25.0,
-        "luminance_change": 30.0,
-        "diff_metrics": {
-            "region_metrics": {
-                "top": {"mean_luminance": 10.0},
-                "middle": {"mean_luminance": 30.0},
-                "bottom": {"mean_luminance": 20.0}
-            }
-        }
-    }
-    
-    test_config = {
-        "motion_detection": {
-            "min_circularity": 0.5,
-            "min_aspect_ratio": 0.5,
-            "max_aspect_ratio": 2.0,
-            "min_area_ratio": 0.1,
-            "brightness_threshold": 20
-        },
-        "owl_confidence_threshold": 60.0,
-        "consecutive_frames_threshold": 2
-    }
-    
-    test_camera = "Wyze Internal Camera"
-    
-    # Calculate confidence
-    results = calculate_owl_confidence(
-        test_detection_data,
-        test_camera,
-        test_config
-    )
-    
-    print(f"Test results: {results}")
-    print(f"Confidence score: {results['owl_confidence']:.1f}%")
-    print(f"Consecutive frames: {results['consecutive_owl_frames']}")
-    
-    # Test owl detection check
-    is_detected = is_owl_detected(
-        results['owl_confidence'],
-        test_camera,
-        test_config
-    )
-    
-    print(f"Owl detected: {is_detected}")

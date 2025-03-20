@@ -1,11 +1,11 @@
 # File: utilities/owl_detection_utils.py
-# Purpose: Detect owls in camera images using advanced shape and motion analysis with confidence metrics
+# Purpose: Detect owls in camera images using advanced shape and motion analysis with improved confidence metrics
 # 
-# March 28, 2025 Update - Version 1.4.6
-# - Added support for day/night specific detection parameters
-# - Improved detection algorithm for infrared lighting conditions
-# - Enhanced logging for parameter selection
-# - Skip detection during transition periods
+# Updates:
+# - Enhanced shape detection parameters for more accurate owl identification
+# - Improved night mode detection to reduce false positives
+# - Updated region analysis for more precise location-based detection
+# - Made threshold adjustments more dynamic based on lighting conditions
 
 import cv2
 import numpy as np
@@ -54,12 +54,24 @@ def analyze_image_differences(base_image, new_image, threshold, config):
         blurred_diff = cv2.GaussianBlur(diff, (5, 5), 0)
         
         # Create binary mask of changed pixels
-        _, binary_mask = cv2.threshold(
-            blurred_diff,
-            threshold,
-            255,
-            cv2.THRESH_BINARY
-        )
+        # For night mode, use a more aggressive threshold to reduce noise
+        if lighting_condition == "night":
+            # Apply more aggressive threshold for night mode to reduce noise
+            adjusted_threshold = threshold * 1.2  # 20% higher threshold at night
+            _, binary_mask = cv2.threshold(
+                blurred_diff,
+                adjusted_threshold,
+                255,
+                cv2.THRESH_BINARY
+            )
+        else:
+            # Standard threshold for day mode
+            _, binary_mask = cv2.threshold(
+                blurred_diff,
+                threshold,
+                255,
+                cv2.THRESH_BINARY
+            )
         
         # Calculate pixel change percentage
         height, width = diff.shape
@@ -111,7 +123,7 @@ def analyze_image_differences(base_image, new_image, threshold, config):
 def find_owl_candidates(binary_mask, config, lighting_condition=None):
     """
     Find regions in the binary mask that could potentially be owls.
-    Updated to use lighting-specific parameters.
+    Updated with more stringent criteria and lighting-specific adjustments.
     
     Args:
         binary_mask (numpy.ndarray): Binary mask of changed pixels
@@ -138,6 +150,19 @@ def find_owl_candidates(binary_mask, config, lighting_condition=None):
             motion_config = config.get("motion_detection", {})
             logger.debug(f"Using standard motion detection settings")
         
+        # Apply morphological operations to clean up noise
+        # More aggressive cleaning for night mode
+        if lighting_condition == 'night':
+            # Use a larger kernel for night mode to remove more noise
+            kernel = np.ones((5, 5), np.uint8)
+            binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
+            binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, kernel)
+        else:
+            # Standard cleaning for day mode
+            kernel = np.ones((3, 3), np.uint8)
+            binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
+            binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, kernel)
+        
         # Find contours in the binary mask
         contours, _ = cv2.findContours(
             binary_mask,
@@ -151,6 +176,12 @@ def find_owl_candidates(binary_mask, config, lighting_condition=None):
         max_aspect_ratio = motion_config.get("max_aspect_ratio", 2.0)
         min_area_ratio = motion_config.get("min_area_ratio", 0.01)
         brightness_threshold = motion_config.get("brightness_threshold", 20)
+        
+        # Apply more stringent criteria for night mode to reduce false positives
+        if lighting_condition == 'night':
+            min_circularity *= 1.1  # 10% higher circularity requirement
+            min_area_ratio *= 1.2   # 20% higher minimum area
+            brightness_threshold *= 1.1  # 10% higher brightness threshold
         
         # Log parameters being used
         logger.debug(
@@ -219,7 +250,7 @@ def find_owl_candidates(binary_mask, config, lighting_condition=None):
 def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=None):
     """
     Detect if an owl is present by comparing base and new images with confidence metrics.
-    Updated to use lighting-specific settings.
+    Updated with improved lighting-specific detection and false positive reduction.
     
     Args:
         new_image (PIL.Image): New image to check
@@ -268,7 +299,14 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
             threshold = config.get("luminance_threshold", 30)
             logger.debug(f"Using standard luminance threshold: {threshold}")
         
-        # Analyze image differences
+        # Apply special adjustments for Wyze Internal Camera at night
+        # This camera is particularly prone to false positives at night
+        if camera_name == "Wyze Internal Camera" and lighting_condition == "night":
+            # Increase threshold for Wyze internal camera at night to reduce false positives
+            threshold = threshold * 1.2  # 20% higher threshold
+            logger.debug(f"Applied Wyze-specific night threshold boost: {threshold:.1f}")
+        
+        # Analyze image differences with improved thresholding
         diff_results, binary_mask = analyze_image_differences(
             base_image,
             new_image,
