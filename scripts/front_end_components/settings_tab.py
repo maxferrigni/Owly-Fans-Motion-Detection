@@ -1,9 +1,10 @@
-#a# File: scripts/front_end_components/settings_tab.py
+# File: scripts/front_end_components/settings_tab.py
 # Purpose: Settings tab component for the Owl Monitoring System GUI
 # 
-# March 17, 2025 Update - Version 1.4.1
-# - Extracted from front_end_app.py
-# - Centralized settings functionality
+# March 19, 2025 Update - Version 1.4.6
+# - Added day/night settings toggle
+# - Removed outdated confidence threshold guidance text
+# - Streamlined UI for better space utilization
 
 import tkinter as tk
 from tkinter import ttk
