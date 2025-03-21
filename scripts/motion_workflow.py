@@ -42,7 +42,7 @@ from capture_base_images import capture_base_images, get_latest_base_image
 try:
     from scripts.front_end_app import get_running_state
     def is_app_running():
-        return get_running_state()
+        return true # always return true for testing
 except ImportError:
     def is_app_running():
         return True

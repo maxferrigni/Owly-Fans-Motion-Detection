@@ -10,6 +10,7 @@
 import tkinter as tk
 from tkinter import ttk
 import time
+import datetime
 import threading
 from utilities.logging_utils import get_logger
 
