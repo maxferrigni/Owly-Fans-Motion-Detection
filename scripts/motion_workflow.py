@@ -1,11 +1,11 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
 #
-# March 28, 2025 Update - Version 1.4.6
-# - Added support for separate day and night detection settings
-# - Skip detection during transition periods
-# - Improved lighting condition handling
-# - Enhanced logging for parameter selection
+# March 20, 2025 Update - Version 1.4.7.1
+# - Added skip detection during transition periods to reduce false negatives
+# - Enhanced lighting condition handling for more reliable detection
+# - Improved base image selection for different lighting conditions
+# - Added clear logging about skipped detection periods
 
 import os
 import time
@@ -42,7 +42,7 @@ from capture_base_images import capture_base_images, get_latest_base_image
 try:
     from scripts.front_end_app import get_running_state
     def is_app_running():
-        return True  # Always return True for motion detection
+        return get_running_state()
 except ImportError:
     def is_app_running():
         return True
@@ -89,7 +89,7 @@ def initialize_system(camera_configs, is_test=False):
                 logger.error(f"Missing ROI configuration for {camera_name}")
                 return False
             
-            # Check for day and night settings
+            # Check for day or night settings
             if "day_settings" not in config or "night_settings" not in config:
                 logger.warning(f"Camera {camera_name} missing day/night settings. Using legacy configuration.")
                 # Create day/night settings from legacy configuration for backward compatibility
@@ -274,7 +274,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 
             logger.info(f"Current lighting condition: {lighting_condition}")
             
-            # Skip detection during transition periods
+            # Skip detection during transition periods unless in test mode
             if lighting_condition == 'transition' and not test_images:
                 logger.info(f"Skipping detection for {camera_name} during transition period")
                 return {
@@ -442,7 +442,17 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
         }
 
 def process_cameras(camera_configs, test_images=None):
-    """Process all cameras in batch for efficient motion detection"""
+    """
+    Process all cameras in batch for efficient motion detection.
+    Updated in v1.4.7.1 to skip processing during transition periods.
+    
+    Args:
+        camera_configs (dict): Dictionary of camera configurations
+        test_images (dict, optional): Test images for each camera
+        
+    Returns:
+        list: List of detection results for each camera
+    """
     try:
         # Check if app is running
         if not is_app_running() and not test_images:
@@ -476,10 +486,11 @@ def process_cameras(camera_configs, test_images=None):
                 })
             return results
         
-        # Only verify base images in real-time mode and if app is running
+        # Check if we should capture base images (only in real-time mode and if app is running)
         if not test_images and is_app_running():
-            if should_capture_base_image():
-                logger.info("Time to capture new base images")
+            should_capture, condition = should_capture_base_image()
+            if should_capture:
+                logger.info(f"Time to capture new base images: {condition}")
                 capture_base_images(lighting_condition, force_capture=True)
                 time.sleep(3)  # Allow system to stabilize after capture
         

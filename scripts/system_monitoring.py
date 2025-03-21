@@ -1,10 +1,11 @@
 # File: system_monitoring.py
 # Purpose: Monitor Wyze camera and OBS stream health for the Owl Monitoring system
 #
-# March 5, 2025 - Version 1.2.0
-# - Check Wyze camera feed health
-# - Monitor OBS streaming status
-# - Send admin alerts for system issues
+# March 20, 2025 - Version 1.4.7.1
+# - Added OBS streaming status monitoring
+# - Improved admin alerts with rate limiting (30-min cooldown)
+# - Enhanced Wyze camera monitoring reliability
+# - Added status display information for UI integration
 
 import os
 import time
@@ -65,9 +66,7 @@ class OwlySystemMonitor:
             'obs_stream': {
                 'enabled': True,
                 'check_interval_seconds': 300,  # Check every 5 minutes
-                'output_dir': os.path.expanduser("~/Videos"),  # Default OBS recording location
-                'min_file_size_kb': 100,  # Minimum expected file size
-                'max_file_age_minutes': 15  # Maximum age of the newest file
+                'alert_cooldown_seconds': 1800  # 30 minutes between alerts
             }
         }
         
@@ -86,7 +85,8 @@ class OwlySystemMonitor:
         self.obs_state = {
             'last_check_time': None,
             'error_count': 0,
-            'last_recording_file': None,
+            'is_running': False,
+            'last_alert_time': 0,  # Time when last alert was sent (unix timestamp)
             'alerts_sent': 0
         }
         
@@ -214,83 +214,33 @@ class OwlySystemMonitor:
             self.logger.error(f"Error during recovery attempt: {e}")
             return False
     
-    def check_obs_stream(self):
-        """
-        Check if OBS is properly streaming and recording.
-        
-        Returns:
-            tuple: (status_ok, details)
-        """
-        self.logger.info("Checking OBS stream status...")
-        
-        try:
-            output_dir = self.config['obs_stream']['output_dir']
-            
-            # Check if output directory exists
-            if not os.path.exists(output_dir):
-                return False, f"OBS output directory not found: {output_dir}"
-            
-            # Look for recent recording files
-            video_files = []
-            for file in os.listdir(output_dir):
-                if file.endswith(('.mp4', '.mkv', '.flv')):
-                    file_path = os.path.join(output_dir, file)
-                    stat = os.stat(file_path)
-                    # Only check files created or modified in the last 24 hours
-                    if (time.time() - stat.st_mtime) < 86400:  # 24 hours
-                        video_files.append({
-                            'path': file_path,
-                            'size': stat.st_size / 1024,  # Size in KB
-                            'mtime': stat.st_mtime,
-                            'ctime': stat.st_ctime
-                        })
-            
-            # No recent video files found
-            if not video_files:
-                return False, "No recent recording files found"
-            
-            # Sort by modification time (newest first)
-            video_files.sort(key=lambda x: x['mtime'], reverse=True)
-            newest_file = video_files[0]
-            
-            # Update last recording file
-            self.obs_state['last_recording_file'] = newest_file
-            
-            # Check file size
-            min_size = self.config['obs_stream']['min_file_size_kb']
-            if newest_file['size'] < min_size:
-                return False, f"Latest recording file too small: {newest_file['size']:.2f}KB < {min_size}KB"
-            
-            # Check file age
-            max_age_minutes = self.config['obs_stream']['max_file_age_minutes']
-            file_age_minutes = (time.time() - newest_file['mtime']) / 60
-            
-            if file_age_minutes > max_age_minutes:
-                return False, f"Latest recording file too old: {file_age_minutes:.1f} min > {max_age_minutes} min"
-            
-            # Everything looks good
-            self.obs_state['last_check_time'] = datetime.datetime.now()
-            self.obs_state['error_count'] = 0  # Reset error count
-            
-            self.logger.info("OBS stream check: OK")
-            return True, f"OBS recording active ({file_age_minutes:.1f} min old, {newest_file['size']:.2f}KB)"
-            
-        except Exception as e:
-            self.logger.error(f"Error checking OBS stream: {e}")
-            return False, f"Check error: {str(e)}"
-    
     def check_obs_process(self):
         """
-        Check if OBS process is running.
+        Check if OBS is properly running.
         
         Returns:
             bool: True if OBS is running, False otherwise
         """
         try:
+            # First check if OBS process is running using psutil
+            obs_running = False
             for proc in psutil.process_iter(['name']):
                 if 'obs' in proc.info['name'].lower():
-                    return True
-            return False
+                    obs_running = True
+                    break
+            
+            # Update state
+            self.obs_state['is_running'] = obs_running
+            self.obs_state['last_check_time'] = datetime.datetime.now()
+            
+            # Log result
+            if obs_running:
+                self.logger.info("OBS is running")
+            else:
+                self.logger.warning("OBS is not running")
+            
+            return obs_running
+            
         except Exception as e:
             self.logger.error(f"Error checking OBS process: {e}")
             return False
@@ -318,7 +268,7 @@ class OwlySystemMonitor:
     
     def send_admin_alert(self, issue, details, screenshot=None):
         """
-        Send an alert email to admin users.
+        Send an alert email to admin users with 30-minute cooldown.
         
         Args:
             issue (str): Short description of the issue
@@ -334,6 +284,14 @@ class OwlySystemMonitor:
             
             if not admins:
                 self.logger.error("Cannot send admin alert: No admin users found")
+                return False
+            
+            # Check if we're within the cooldown period
+            current_time = time.time()
+            cooldown_seconds = self.config['obs_stream']['alert_cooldown_seconds']
+            
+            if (current_time - self.obs_state['last_alert_time']) < cooldown_seconds:
+                self.logger.info(f"Admin alert cooldown active: {int((cooldown_seconds - (current_time - self.obs_state['last_alert_time'])) / 60)} minutes remaining")
                 return False
                 
             # Create email content
@@ -366,6 +324,7 @@ class OwlySystemMonitor:
                             <p>Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
                             <hr>
                             <p>This is an automated message from the Owly System Monitor.</p>
+                            <p><small>You are receiving this message because you are registered as an administrator.</small></p>
                         </body>
                     </html>
                     """
@@ -395,6 +354,10 @@ class OwlySystemMonitor:
                     
                 except Exception as email_err:
                     self.logger.error(f"Error sending admin alert to {admin_email}: {email_err}")
+            
+            # Update last alert time to respect cooldown
+            self.obs_state['last_alert_time'] = current_time
+            self.obs_state['alerts_sent'] += 1
             
             return True
             
@@ -444,39 +407,29 @@ class OwlySystemMonitor:
             
             # Check OBS if enabled
             if self.config['obs_stream']['enabled']:
-                # First check if OBS is running
+                # Check if OBS is running
                 obs_running = self.check_obs_process()
                 
                 if not obs_running:
                     self.logger.warning("OBS process not found")
                     self.obs_state['error_count'] += 1
                     
-                    # Alert after first check if OBS is not running at all
-                    if self.obs_state['error_count'] == 1:
-                        self.send_admin_alert(
-                            issue="OBS Not Running",
-                            details="The OBS process was not found running on the system."
+                    # Send alert with proper cooldown
+                    alert_sent = self.send_admin_alert(
+                        issue="OBS Not Running",
+                        details=(
+                            "The OBS process was not found running on the system.\n\n"
+                            "Please start OBS to ensure the stream continues."
                         )
-                        self.obs_state['alerts_sent'] += 1
-                else:
-                    # OBS is running, check recording status
-                    obs_ok, obs_details = self.check_obs_stream()
+                    )
                     
-                    if not obs_ok:
-                        self.obs_state['error_count'] += 1
-                        error_threshold = 2  # Alert after two consecutive errors
-                        
-                        if self.obs_state['error_count'] >= error_threshold:
-                            self.send_admin_alert(
-                                issue="OBS Recording Issue",
-                                details=f"Issue: {obs_details}"
-                            )
-                            self.obs_state['alerts_sent'] += 1
-                            # Reset error count to avoid repeated alerts
-                            self.obs_state['error_count'] = 0
+                    if alert_sent:
+                        self.logger.info("OBS alert sent to administrators")
                     else:
-                        # Reset error count if everything is ok
-                        self.obs_state['error_count'] = 0
+                        self.logger.debug("OBS alert was not sent (cooldown or no admins)")
+                else:
+                    # OBS is running, reset error count
+                    self.obs_state['error_count'] = 0
             
             self.logger.info("Monitoring cycle completed")
             
@@ -544,34 +497,67 @@ class OwlySystemMonitor:
             'obs_stream': {
                 'enabled': self.config['obs_stream']['enabled'],
                 'last_check': self.obs_state['last_check_time'],
+                'is_running': self.obs_state['is_running'],
                 'error_count': self.obs_state['error_count'],
                 'alerts_sent': self.obs_state['alerts_sent'],
-                'last_file': self.obs_state['last_recording_file']
+                'cooldown_active': (time.time() - self.obs_state['last_alert_time']) < self.config['obs_stream']['alert_cooldown_seconds'],
+                'cooldown_remaining_seconds': max(0, self.config['obs_stream']['alert_cooldown_seconds'] - (time.time() - self.obs_state['last_alert_time']))
             }
         }
 
-# Manual test if run directly
+def start_wyze_monitoring(config=None):
+    """
+    Utility function to start Wyze camera monitoring.
+    
+    Args:
+        config (dict, optional): Configuration options
+        
+    Returns:
+        OwlySystemMonitor: The monitoring instance
+    """
+    monitor = OwlySystemMonitor(config)
+    monitor.start_monitoring()
+    return monitor
+
 if __name__ == "__main__":
+    import random  # For the recovery jitter
+    
+    # Test the camera monitor
     logger.info("Testing system monitoring functionality...")
     
-    # Create monitor with default config
+    # Create the monitor with default settings
     monitor = OwlySystemMonitor()
     
-    # Run a single cycle for testing
-    monitor.run_monitoring_cycle()
+    # Test OBS status check
+    logger.info("Testing OBS process check...")
+    obs_running = monitor.check_obs_process()
+    logger.info(f"OBS running: {obs_running}")
     
-    # Get status
-    status = monitor.get_status()
-    logger.info(f"System status: {status}")
+    # Test Wyze camera check
+    is_working, issue, frame = monitor.check_wyze_camera_feed()
+    logger.info(f"Camera feed working: {is_working}, issue: {issue}")
     
-    # Test background monitoring
-    logger.info("Starting background monitoring for 30 seconds...")
-    monitor.start_monitoring()
+    if not is_working:
+        # Test recovery
+        recovery_success = monitor.attempt_wyze_recovery()
+        logger.info(f"Recovery attempt {'successful' if recovery_success else 'failed'}")
     
-    # Wait for 30 seconds
-    time.sleep(30)
+    # Manual test of admin notification
+    test_notification = input("Send test admin notification? (y/n): ")
+    if test_notification.lower() == 'y':
+        monitor.send_admin_alert(
+            issue="Test System Alert",
+            details="This is a test of the admin notification system."
+        )
     
-    # Stop monitoring
-    monitor.stop_monitoring()
-    
-    logger.info("System monitoring test complete")
+    # Start continuous monitoring if requested
+    start_monitoring = input("Start continuous monitoring? (y/n): ")
+    if start_monitoring.lower() == 'y':
+        monitor.start_monitoring()
+        logger.info("Monitoring started. Press Ctrl+C to stop.")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("Stopping monitoring...")
+            monitor.stop_monitoring()

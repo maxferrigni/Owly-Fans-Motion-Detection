@@ -1,12 +1,11 @@
 # File: capture_base_images.py
 # Purpose: Capture and manage base images for motion detection system
 #
-# March 19, 2025 Update - Version 1.4.4.1
-# - Added version tagging to image filenames
-# - Added running state check to prevent unnecessary captures
-# - Removed text overlays from base images
-# - Improved image naming for better tracking
-# - Added safeguards against excessive image saving
+# March 20, 2025 Update - Version 1.4.7.1
+# - Simplified base image capture logic to only capture at key transition points
+# - Only capture at application startup and after day/night transitions complete
+# - Skip base image capture during transition periods
+# - Added clear logging to show capture decision rationale
 
 import os
 import pyautogui
@@ -30,9 +29,8 @@ from utilities.constants import (
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
     get_current_lighting_condition,
-    is_lighting_condition_stable,
-    record_base_image_capture,
     is_transition_period,
+    record_base_image_capture,
     get_lighting_info,
     is_pure_lighting_condition,
     format_time_until,
@@ -170,7 +168,7 @@ def save_base_image(image, camera_name, lighting_condition):
     """
     Save base image to fixed location and upload to Supabase.
     If local saving is enabled, also save a copy to the saved_images directory.
-    Updated in v1.4.4 to check running state and add version to filenames.
+    Updated in v1.4.7.1 to ensure base images are only saved at key times.
     
     Args:
         image (PIL.Image): The base image to save
@@ -247,10 +245,40 @@ def save_base_image(image, camera_name, lighting_condition):
         logger.error(f"Error saving base image: {e}")
         raise
 
+def should_capture_base_image():
+    """
+    Determine if it's an optimal time to capture new base images.
+    Simplified in v1.4.7.1 to only capture at key transition points.
+    
+    Args:
+        None
+        
+    Returns:
+        tuple: (bool, str) - (should_capture, lighting_condition)
+    """
+    # Get current lighting information
+    condition = get_current_lighting_condition()
+    lighting_info = get_lighting_info()
+    previous_condition = lighting_info.get('previous_condition')
+    
+    # Skip if in transition period
+    if condition == 'transition':
+        logger.info("In transition period - skipping base image capture")
+        return False, condition
+    
+    # Capture after transition completes (day to night or night to day)
+    if previous_condition == 'transition' and condition in ['day', 'night']:
+        logger.info(f"Transition completed from transition to {condition} - capturing base image")
+        return True, condition
+    
+    # Don't capture new base images at other times
+    logger.debug(f"No trigger event for base image capture (condition: {condition}, previous: {previous_condition})")
+    return False, condition
+
 def capture_base_images(lighting_condition=None, force_capture=False, show_ui_message=False):
     """
     Capture new base images for all cameras.
-    Updated in v1.4.4 to check running state before capturing.
+    Updated in v1.4.7.1 to use simplified capture logic.
     
     Args:
         lighting_condition (str, optional): Override current lighting condition
@@ -274,13 +302,18 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
         
         logger.info(f"Using lighting condition: {lighting_condition}")
         
-        # Check if lighting condition is stable and it's a good time to capture
-        # In v1.1.0, we can still capture during transitions if timing is right
+        # Simplified capture logic for v1.4.7.1
+        # We only proceed in two cases:
+        # 1. force_capture is True (manual capture or startup)
+        # 2. should_capture_base_image() returns True (after transition completion)
         if not force_capture:
             should_capture, condition = should_capture_base_image()
             if not should_capture:
-                logger.info(f"Not the optimal time to capture base images, skipping")
+                logger.info(f"No base image trigger detected, skipping capture")
                 return []
+            
+            # Update lighting condition from should_capture result
+            lighting_condition = condition
         
         # Check if we're in a transition period
         is_transition = lighting_condition == 'transition'
@@ -344,7 +377,7 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
                 # Capture new image
                 new_image = capture_real_image(config["roi"])
                 
-                # Save and upload - no annotations in v1.4.4
+                # Save and upload - no annotations in v1.4.7.1
                 local_path, supabase_url = save_base_image(
                     new_image,
                     camera_name,
@@ -386,7 +419,7 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
 def handle_lighting_transition(old_condition, new_condition):
     """
     Handle transition between lighting conditions.
-    Updated in v1.4.4 to check running state before capturing.
+    Updated in v1.4.7.1 to use simplified base image capture logic.
     
     Args:
         old_condition (str): Previous lighting condition
@@ -400,31 +433,18 @@ def handle_lighting_transition(old_condition, new_condition):
             logger.warning("Not handling lighting transition: Application not running")
             return
             
-        # Handle entering a transition period
-        if new_condition == 'transition':
-            logger.info("Entered transition period - will capture transition-specific base images")
-            
-            # Capture base images for the transition period
-            # Enable force_capture to ensure we get images at the start of transition
-            capture_base_images(lighting_condition=new_condition, force_capture=True)
-            return
-            
-        # If exiting a transition period to a stable condition
+        # Handle exiting a transition period to a stable condition
         if old_condition == 'transition' and new_condition in ['day', 'night']:
             # Wait for the new lighting condition to stabilize before capturing
-            wait_time = 60  # 1 minute (reduced from 5 in v1.2.1)
+            wait_time = 60  # 1 minute
             logger.info(f"Exited transition period to {new_condition}. Waiting {wait_time} seconds for lighting to stabilize...")
             time.sleep(wait_time)
             
             # Only capture if the lighting condition is still the same after waiting
             current_condition = get_current_lighting_condition()
             if current_condition == new_condition:
-                # Check if we're in a pure condition for high-quality base images
-                if is_pure_lighting_condition():
-                    logger.info(f"Capturing pure {new_condition} base images after transition")
-                    capture_base_images(lighting_condition=new_condition, force_capture=True)
-                else:
-                    logger.info(f"Not in pure condition yet, waiting for better lighting before capture")
+                logger.info(f"Capturing base images after transition to {new_condition}")
+                capture_base_images(lighting_condition=new_condition, force_capture=True)
             else:
                 logger.info(f"Lighting condition changed again to {current_condition}, skipping capture")
         
@@ -435,7 +455,7 @@ def handle_lighting_transition(old_condition, new_condition):
 def should_capture_startup_base_images():
     """
     Determine if base images should be captured on startup.
-    Updated in v1.4.4 to check running state.
+    Updated in v1.4.7.1 to always return True for startup.
     
     Returns:
         bool: True if base images should be captured on startup
@@ -452,8 +472,9 @@ def should_capture_startup_base_images():
         
         logger.info(f"Current lighting condition on startup: {condition}")
         
-        # Only capture startup images if running
-        return is_app_running()
+        # Always capture images on startup if running - this is a key trigger point
+        logger.info("Application startup detected - will capture base images")
+        return True
             
     except Exception as e:
         logger.error(f"Error checking startup base image capture: {e}")

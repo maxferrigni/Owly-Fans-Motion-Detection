@@ -1,15 +1,20 @@
 # File: alert_email.py
 # Purpose: Handle email alerts for the motion detection system
 #
-# March 5, 2025 Update - Version 1.2.0
-# - Added alert ID to email subject and body for tracking
-# - Streamlined error handling
-# - Updated templates for improved readability
+# March 20, 2025 Update - Version 1.4.7.1
+# - Added admin alert functionality with 30-minute cooldown
+# - Enhanced email formatting for better readability
+# - Streamlined error handling for better reliability
+# - Added cooldown tracking for alert rate limiting
 
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
 import os
+import time
+from datetime import datetime
+import pytz
 from dotenv import load_dotenv
 
 # Import utilities
@@ -17,7 +22,7 @@ from utilities.logging_utils import get_logger
 from utilities.constants import ALERT_PRIORITIES
 
 # Import from database_utils
-from utilities.database_utils import get_subscribers
+from utilities.database_utils import get_subscribers, get_admin_subscribers
 
 # Initialize logger
 logger = get_logger()
@@ -28,6 +33,9 @@ load_dotenv()
 # Email credentials from environment variables
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "owlyfans01@gmail.com")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")  # Google App Password
+
+# Track last admin alert time for rate limiting
+last_admin_alert_time = 0
 
 if not EMAIL_PASSWORD:
     error_msg = "Email password not found in environment variables"
@@ -163,6 +171,107 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", ima
     except Exception as e:
         logger.error(f"Error sending email alerts: {e}")
 
+def send_admin_alert(issue, details, screenshot=None):
+    """
+    Send an alert email to admin users with 30-minute cooldown.
+    Added in v1.4.7.1 for administrator-only system alerts.
+    
+    Args:
+        issue (str): Short description of the issue
+        details (str): Detailed explanation
+        screenshot (PIL.Image, optional): Screenshot showing the issue
+        
+    Returns:
+        bool: True if alert was sent successfully, False otherwise
+    """
+    global last_admin_alert_time
+    
+    try:
+        # Check if within cooldown period (30 minutes = 1800 seconds)
+        current_time = time.time()
+        cooldown_seconds = 1800  # 30 minutes
+        
+        if (current_time - last_admin_alert_time) < cooldown_seconds:
+            remaining_minutes = int((cooldown_seconds - (current_time - last_admin_alert_time)) / 60)
+            logger.info(f"Admin alert cooldown active: {remaining_minutes} minutes remaining")
+            return False
+            
+        # Get admin subscribers
+        admins = get_admin_subscribers()
+        
+        if not admins:
+            logger.error("Cannot send admin alert: No admin users found")
+            return False
+            
+        # Create email content with ADMIN prefix
+        subject = f"OWLY SYSTEM ALERT: {issue}"
+        
+        # Create timestamp
+        timestamp = datetime.now(pytz.timezone('America/Los_Angeles')).strftime('%Y-%m-%d %H:%M:%S %Z')
+        
+        # Send email to each admin
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+
+            for admin in admins:
+                admin_email = admin.get('email')
+                admin_name = admin.get('name', 'Admin')
+                
+                if not admin_email:
+                    continue
+                    
+                # Create multipart message
+                msg = MIMEMultipart()
+                msg['From'] = EMAIL_ADDRESS
+                msg['To'] = admin_email
+                msg['Subject'] = subject
+                
+                # Create HTML body
+                html_content = f"""
+                <html>
+                    <body>
+                        <h2>Owly System Alert</h2>
+                        <p>Hello {admin_name},</p>
+                        <p>An issue has been detected with the Owly monitoring system:</p>
+                        <p><strong>{issue}</strong></p>
+                        <p>{details}</p>
+                        <p>Timestamp: {timestamp}</p>
+                        <hr>
+                        <p>This is an automated message from the Owly System Monitor.</p>
+                        <p><small>You are receiving this message because you are registered as an administrator.</small></p>
+                    </body>
+                </html>
+                """
+                
+                # Attach HTML content
+                msg.attach(MIMEText(html_content, 'html'))
+                
+                # Attach screenshot if provided
+                if screenshot:
+                    # Convert PIL image to bytes
+                    import io
+                    img_bytes = io.BytesIO()
+                    screenshot.save(img_bytes, format='PNG')
+                    img_bytes.seek(0)
+                    
+                    # Create image attachment
+                    image = MIMEImage(img_bytes.read())
+                    image.add_header('Content-Disposition', 'attachment', filename='screenshot.png')
+                    msg.attach(image)
+                
+                # Send email
+                server.send_message(msg)
+                logger.info(f"Admin alert sent to {admin_email}: {issue}")
+        
+        # Update last alert time to enforce cooldown
+        last_admin_alert_time = current_time
+        logger.info(f"Admin alert sent: {issue}")
+        return True
+            
+    except Exception as e:
+        logger.error(f"Error sending admin alert: {e}")
+        return False
+
 def send_test_email(to_email, subject, body, alert_id=None):
     """
     Send a test email for debugging purposes.
@@ -205,8 +314,8 @@ def send_test_email(to_email, subject, body, alert_id=None):
         return False
 
 if __name__ == "__main__":
-    # Test email functionality with alert IDs
-    logger.info("Testing email alert system with alert IDs...")
+    # Test email functionality
+    logger.info("Testing email alert system...")
     
     # Generate a test alert ID
     import random
@@ -216,7 +325,7 @@ if __name__ == "__main__":
     random_suffix = ''.join(random.choices('0123456789ABCDEF', k=3))
     test_alert_id = f"OWL-{timestamp}-{random_suffix}"
     
-    # Test with image URL and alert ID
+    # Test with image URL
     test_image_url = "https://project-dev-123.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_image.jpg"
     
     # Test standard alert with ID
@@ -229,17 +338,42 @@ if __name__ == "__main__":
         alert_id=test_alert_id
     )
     
-    # Test direct email with ID
+    # Test admin alert functionality with cooldown
+    logger.info("Testing admin alert with cooldown...")
+    
+    # Test admin alert
+    admin_result = send_admin_alert(
+        issue="Test System Alert",
+        details="This is a test of the admin alert system with 30-minute cooldown.",
+    )
+    
+    if admin_result:
+        logger.info("Admin alert test succeeded")
+        
+        # Test cooldown by trying to send again immediately
+        second_result = send_admin_alert(
+            issue="Second Test Alert",
+            details="This should be blocked by the cooldown."
+        )
+        
+        if not second_result:
+            logger.info("Cooldown test worked - second alert was blocked")
+        else:
+            logger.error("Cooldown test failed - second alert was sent")
+    else:
+        logger.error("Admin alert test failed")
+    
+    # Test direct email
     test_email = os.getenv("TEST_EMAIL", "maxferrigni@gmail.com")
     send_test_email(
         test_email,
-        "Email Alert System Test with Alert ID",
+        "Email Alert System Test with Admin Alerts",
         """
         <html>
             <body>
                 <h2>Email Alerting System Test</h2>
-                <p>This is a test of the email alert system for the Owl Monitoring App v1.2.0.</p>
-                <p>This test includes a unique alert ID for tracking.</p>
+                <p>This is a test of the email alert system for the Owl Monitoring App v1.4.7.1.</p>
+                <p>This test includes both standard alerts and admin alerts with cooldown.</p>
                 <p>If you're seeing this, the system is working properly.</p>
             </body>
         </html>
