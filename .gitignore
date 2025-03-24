@@ -52,7 +52,6 @@ ehthumbs.db
 *.xlsx
 *.xls
 *.json
-*.txt
 **/logs/
 
 # Media files
