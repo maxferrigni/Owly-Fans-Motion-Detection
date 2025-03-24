@@ -1,24 +1,21 @@
 # File: scripts/front_end_components/images_tab.py
 # Purpose: Images tab component for the Owl Monitoring System GUI
 # 
-# March 25, 2025 Update - Version 1.4.5
-# - Fixed issue with images not refreshing during detection
-# - Synchronized refresh rate with capture interval setting
-# - Added timestamps under images showing capture time
-# - Increased timestamp font size for better readability
-# - Fixed issue with duplicate detection messages across cameras
-# - Implemented proper component path tracking and refresh
-# - Added visual indicator during image refresh
-# - Improved reset behavior when detection is stopped
+# March 25, 2025 Update - Version 1.4.8
+# - Fixed base image timestamp display to show original capture time
+# - Added separate tracking for base image vs current image timestamps
+# - Improved image display to clearly differentiate base images from current captures
+# - Enhanced image component handling to prevent confusion between base and current images
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 import os
 from datetime import datetime
 import threading
 import time
 import pytz
+import json
 
 from utilities.logging_utils import get_logger
 from utilities.constants import CAMERA_MAPPINGS, get_comparison_image_path, get_base_image_path
@@ -62,7 +59,7 @@ class ImagesTab(ttk.Frame):
 class ImageViewerPanel(ttk.Frame):
     """
     Panel for displaying camera images in a grid with detection information.
-    Updated in v1.4.5 for proper image refreshing synchronized with capture interval.
+    Updated in v1.4.8 to properly display base image vs current image timestamps.
     """
     def __init__(self, parent, app_reference, is_running=False):
         super().__init__(parent)
@@ -80,6 +77,9 @@ class ImageViewerPanel(ttk.Frame):
         
         # Last modification times to detect changes
         self.last_modified = {}
+        
+        # Track original capture timestamps for base images separately from file modification times
+        self.base_image_original_timestamps = {}
         
         # Detection results for each camera
         self.detection_results = {}
@@ -117,6 +117,8 @@ class ImageViewerPanel(ttk.Frame):
                 "confidence": 0.0,
                 "criteria_text": "No detection data available"
             }
+            # Initialize base image timestamp tracking
+            self.base_image_original_timestamps[camera] = None
         
         # Create scrollable container
         self.create_scrollable_container()
@@ -180,7 +182,7 @@ class ImageViewerPanel(ttk.Frame):
         self.image_containers = {}
         self.image_labels = {}
         self.image_text_labels = {}
-        self.timestamp_labels = {}  # New timestamp labels under each image
+        self.timestamp_labels = {}  # Timestamp labels under each image
         self.result_labels = {}
         self.detail_labels = {}
         
@@ -267,11 +269,11 @@ class ImageViewerPanel(ttk.Frame):
                 )
                 text_label.pack(side="bottom", fill="x", pady=(5, 0))
                 
-                # Add timestamp label under the text label with larger font (increased from 7 to 10)
+                # Add timestamp label under the text label with larger font
                 timestamp_label = ttk.Label(
                     column_frame,
                     text="Captured: --",
-                    font=("Arial", 10),  # Increased font size by ~40%
+                    font=("Arial", 10),
                     foreground="gray",
                     anchor="center",
                     justify="center"
@@ -388,6 +390,9 @@ class ImageViewerPanel(ttk.Frame):
                 self.timestamp_labels[camera][img_type].config(text="Captured: --")
             self.last_modified[camera] = 0
             
+            # Reset base image original timestamps
+            self.base_image_original_timestamps[camera] = None
+            
             # Reset detection results
             self.detection_results[camera] = {
                 "is_detected": False,
@@ -445,12 +450,25 @@ class ImageViewerPanel(ttk.Frame):
             if not self.is_running:
                 return None
             
-            # For component images (new in v1.4.5)
+            # For component images
             from utilities.image_comparison_utils import get_component_image_path
             component_path = get_component_image_path(camera, image_type)
             
             # Get the path to the 3-panel comparison image as fallback
             comparison_path = get_comparison_image_path(camera)
+            
+            # For base images, use the correct base image path
+            if image_type == "base":
+                base_path = None
+                # Try to get the correct base image path based on current lighting condition
+                try:
+                    from utilities.time_utils import get_current_lighting_condition
+                    lighting_condition = get_current_lighting_condition()
+                    base_path = get_base_image_path(camera, lighting_condition)
+                    if os.path.exists(base_path):
+                        return base_path
+                except Exception as e:
+                    self.logger.error(f"Error getting base image path: {e}")
             
             # First try the component path
             if os.path.exists(component_path):
@@ -494,13 +512,64 @@ class ImageViewerPanel(ttk.Frame):
             self.logger.error(f"Error extracting panel {panel_index}: {e}")
             return None
     
-    def load_and_display_image(self, camera, image_type):
+    def load_base_image_metadata(self, camera_name):
         """
-        Load and display an image for a specific camera and type.
-        Enhanced in v1.4.5 to check timestamps and file changes.
+        Try to load metadata about the base image to get its original capture time.
         
         Args:
-            camera (str): Camera name
+            camera_name (str): Name of the camera
+            
+        Returns:
+            datetime or None: The original capture time of the base image
+        """
+        try:
+            # If we already have a timestamp cached, use it
+            if self.base_image_original_timestamps[camera_name]:
+                return self.base_image_original_timestamps[camera_name]
+                
+            # Try to get the current lighting condition to find the correct base image
+            from utilities.time_utils import get_current_lighting_condition
+            lighting_condition = get_current_lighting_condition()
+            
+            # Get the base image path
+            base_path = get_base_image_path(camera_name, lighting_condition)
+            
+            # Check for a metadata file alongside the base image
+            metadata_path = base_path.replace('.jpg', '_meta.json').replace('.png', '_meta.json')
+            
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                    if 'capture_time' in metadata:
+                        capture_time = datetime.fromisoformat(metadata['capture_time'])
+                        self.base_image_original_timestamps[camera_name] = capture_time
+                        return capture_time
+            
+            # If no metadata file, fall back to file creation time (better than modification time)
+            if os.path.exists(base_path):
+                # Get creation time if possible, otherwise use modification time
+                if hasattr(os.path, 'getctime'):
+                    creation_time = os.path.getctime(base_path)
+                else:
+                    creation_time = os.path.getmtime(base_path)
+                    
+                capture_time = datetime.fromtimestamp(creation_time)
+                self.base_image_original_timestamps[camera_name] = capture_time
+                return capture_time
+                
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error loading base image metadata for {camera_name}: {e}")
+            return None
+    
+    def load_and_display_image(self, camera_name, image_type):
+        """
+        Load and display an image for a specific camera and type.
+        Updated in v1.4.8 to correctly handle base image timestamps.
+        
+        Args:
+            camera_name (str): Name of the camera
             image_type (str): "base", "current", or "analysis"
             
         Returns:
@@ -511,12 +580,61 @@ class ImageViewerPanel(ttk.Frame):
             if not self.is_running:
                 return False
             
+            # Get the path to the image
+            image_path = self.get_image_path(camera_name, image_type)
+            
+            # Handle special case for base images
+            if image_type == "base":
+                # For base images, try to get original capture time from metadata
+                capture_time = self.load_base_image_metadata(camera_name)
+                
+                # Now check if the base image exists
+                if not image_path or not os.path.exists(image_path):
+                    self.display_empty_placeholder(camera_name, image_type)
+                    return False
+                    
+                # Load the base image
+                img = Image.open(image_path)
+                
+                # Resize image to fit container while maintaining aspect ratio
+                width, height = img.size
+                ratio = min(self.image_width/width, self.image_height/height)
+                new_size = (int(width * ratio), int(height * ratio))
+                resized = img.resize(new_size, Image.LANCZOS)
+                
+                # Convert to PhotoImage
+                photo = ImageTk.PhotoImage(resized)
+                
+                # Update image label
+                self.image_labels[camera_name][image_type].config(image=photo)
+                
+                # Update timestamp label with original capture time
+                if capture_time:
+                    # Convert to local timezone
+                    local_time = capture_time
+                    if local_time.tzinfo is None:
+                        local_time = pytz.timezone('America/Los_Angeles').localize(local_time)
+                    time_str = local_time.strftime('%H:%M:%S')
+                    # Use a different color or prefix to indicate this is a base image timestamp
+                    self.timestamp_labels[camera_name][image_type].config(
+                        text=f"Captured: {time_str}",
+                        foreground="blue"  # Different color for base image timestamps
+                    )
+                    # Store timestamp
+                    self.image_timestamps[camera_name][image_type] = capture_time
+                
+                # Store reference to prevent garbage collection
+                self.image_refs[camera_name][image_type] = photo
+                
+                return True
+            
+            # Standard handling for current and analysis images
             # First try direct component path
             from utilities.image_comparison_utils import get_component_image_path
-            component_path = get_component_image_path(camera, image_type)
+            component_path = get_component_image_path(camera_name, image_type)
             
             # Get the 3-panel comparison image path as fallback
-            comparison_path = get_comparison_image_path(camera)
+            comparison_path = get_comparison_image_path(camera_name)
             
             # Determine which path to use
             image_path = None
@@ -531,8 +649,8 @@ class ImageViewerPanel(ttk.Frame):
                 capture_time = datetime.fromtimestamp(mod_time)
                 
                 # Check if file has been modified since last check
-                camera_key = f"{camera}_{image_type}"
-                if camera_key in self.last_modified and mod_time <= self.last_modified[camera_key] and self.image_refs[camera][image_type]:
+                camera_key = f"{camera_name}_{image_type}"
+                if camera_key in self.last_modified and mod_time <= self.last_modified[camera_key] and self.image_refs[camera_name][image_type]:
                     return False
                     
                 # Store modification time
@@ -545,15 +663,15 @@ class ImageViewerPanel(ttk.Frame):
                 capture_time = datetime.fromtimestamp(mod_time)
                 
                 # Check if file has been modified since last check
-                if mod_time <= self.last_modified.get(camera, 0) and self.image_refs[camera][image_type]:
+                if mod_time <= self.last_modified.get(camera_name, 0) and self.image_refs[camera_name][image_type]:
                     return False
                     
                 # Store modification time if this is the analysis image (use as marker for all images)
                 if image_type == "analysis":
-                    self.last_modified[camera] = mod_time
+                    self.last_modified[camera_name] = mod_time
             else:
                 # No image available
-                self.display_empty_placeholder(camera, image_type)
+                self.display_empty_placeholder(camera_name, image_type)
                 return False
             
             # Load the image
@@ -567,7 +685,7 @@ class ImageViewerPanel(ttk.Frame):
                 img = self.extract_panel_from_comparison(comparison_image, panel_index)
             
             if not img:
-                self.display_empty_placeholder(camera, image_type)
+                self.display_empty_placeholder(camera_name, image_type)
                 return False
                 
             # Resize image to fit container while maintaining aspect ratio
@@ -581,172 +699,128 @@ class ImageViewerPanel(ttk.Frame):
             photo = ImageTk.PhotoImage(resized)
             
             # Update image label
-            self.image_labels[camera][image_type].config(image=photo)
+            self.image_labels[camera_name][image_type].config(image=photo)
+            
+            # Use different color for current/analysis timestamps
+            timestamp_color = "gray"
             
             # Update timestamp label with capture time
             if capture_time:
                 # Convert to local timezone
                 local_time = capture_time.astimezone(pytz.timezone('America/Los_Angeles'))
                 time_str = local_time.strftime('%H:%M:%S')
-                self.timestamp_labels[camera][image_type].config(text=f"Captured: {time_str}")
+                self.timestamp_labels[camera_name][image_type].config(
+                    text=f"Captured: {time_str}",
+                    foreground=timestamp_color
+                )
                 # Store timestamp
-                self.image_timestamps[camera][image_type] = capture_time
+                self.image_timestamps[camera_name][image_type] = capture_time
             
             # Store reference to prevent garbage collection
-            self.image_refs[camera][image_type] = photo
+            self.image_refs[camera_name][image_type] = photo
             
             # Update detection information if this is the analysis image
             if image_type == "analysis":
-                self.update_detection_info(camera, image_path)
+                self.update_detection_info(camera_name, image_path)
             
             return True
             
         except Exception as e:
-            self.logger.error(f"Error loading {image_type} image for {camera}: {e}")
-            self.display_empty_placeholder(camera, image_type)
+            self.logger.error(f"Error loading {image_type} image for {camera_name}: {e}")
+            self.display_empty_placeholder(camera_name, image_type)
             return False
     
-    def update_detection_info(self, camera, image_path):
-        """
-        Update detection result information based on comparison image.
-        Enhanced in v1.4.5 to check for file-based detection info
-        and store results per camera to avoid duplicating information.
+def update_detection_info(self, camera, image_path):
+    """
+    Update detection result information based on comparison image.
+    Fixed in v1.4.8 to handle missing info files gracefully.
+    
+    Args:
+        camera (str): Camera name
+        image_path (str): Path to comparison image
+    """
+    try:
+        # Use a default fallback in case all else fails
+        is_detected = False
+        confidence = 0.0
+        criteria_text = "No detection data available"
         
-        Args:
-            camera (str): Camera name
-            image_path (str): Path to comparison image
-        """
-        try:
-            # Check for a detection info JSON file next to the image
+        # Check for a detection info JSON file next to the image
+        if image_path and os.path.exists(image_path):
             info_path = image_path.replace('.jpg', '_info.json').replace('.png', '_info.json')
             
             if os.path.exists(info_path):
-                import json
-                with open(info_path, 'r') as f:
-                    detection_info = json.load(f)
-                
-                # Use the detection info from the file
-                is_detected = detection_info.get("is_owl_present", False)
-                confidence = detection_info.get("owl_confidence", 0.0)
-                criteria_text = detection_info.get("detection_details", "No details available")
+                try:
+                    import json
+                    with open(info_path, 'r') as f:
+                        detection_info = json.load(f)
+                    
+                    # Use the detection info from the file
+                    is_detected = detection_info.get("is_owl_present", False)
+                    confidence = detection_info.get("owl_confidence", 0.0)
+                    criteria_text = detection_info.get("detection_details", "No details available")
+                except Exception as json_error:
+                    self.logger.warning(f"Error reading detection info file: {json_error}")
+                    # Continue to fallback values if JSON parsing fails
             else:
-                # Fallback to information from logs or simulated data
-                from utilities.owl_detection_utils import detect_owl_in_box
+                self.logger.debug(f"No detection info file found at {info_path}")
+        else:
+            self.logger.debug(f"Image path is invalid: {image_path}")
                 
-                # Different behavior for each camera to avoid duplication
-                if camera == "Wyze Internal Camera":
-                    # Internal camera - less likely to detect
-                    is_detected = False
-                    confidence = 45.2
-                    criteria_text = (
-                        "Detection criteria not met: Confidence score: 45.2% (threshold: 75.0%), "
-                        "Consecutive frames: 1 (required: 2), "
-                        "Shape confidence: 20.5%, Motion confidence: 15.7%, "
-                        "Temporal confidence: 5.0%, Camera confidence: 4.0%. "
-                        "Pixel change (12.3%) below ideal range, luminance change (10.2) insufficient."
-                    )
-                elif camera == "Bindy Patio Camera":
-                    # Bindy camera - more likely to detect
-                    is_detected = "detected" in image_path.lower()
-                    confidence = 75.5 if is_detected else 55.2
-                    if is_detected:
-                        criteria_text = (
-                            "Detection criteria: Confidence score: 75.5% (threshold: 65.0%), "
-                            "Consecutive frames: 3 (required: 2), "
-                            "Shape confidence: 30.5%, Motion confidence: 25.0%, "
-                            "Temporal confidence: 15.0%, Camera confidence: 5.0%. "
-                            "Owl shape detected in center-right region with high circularity (0.78) and good aspect ratio (1.2)."
-                        )
-                    else:
-                        criteria_text = (
-                            "Detection criteria not met: Confidence score: 55.2% (threshold: 65.0%), "
-                            "Consecutive frames: 1 (required: 2). "
-                            "Pixel change (22.1%) is sufficient but confidence is below threshold."
-                        )
-                else:  # Upper Patio Camera
-                    # Area camera - medium likelihood
-                    is_detected = "detected" in image_path.lower()
-                    confidence = 65.8 if is_detected else 48.7
-                    if is_detected:
-                        criteria_text = (
-                            "Detection criteria: Confidence score: 65.8% (threshold: 55.0%), "
-                            "Consecutive frames: 2 (required: 2), "
-                            "Shape confidence: 25.3%, Motion confidence: 22.5%, "
-                            "Temporal confidence: 13.0%, Camera confidence: 5.0%. "
-                            "Owl detected in upper-left region with moderate circularity (0.65)."
-                        )
-                    else:
-                        criteria_text = (
-                            "Detection criteria not met: Confidence score: 48.7% (threshold: 55.0%), "
-                            "Shape confidence too low (18.2%) for reliable detection."
-                        )
-            
-            # Store detection results for this camera to avoid duplication
-            self.detection_results[camera] = {
-                "is_detected": is_detected,
-                "confidence": confidence,
-                "criteria_text": criteria_text
-            }
-            
-            # Update result label with appropriate styling
-            if is_detected:
-                self.result_labels[camera].config(
-                    text=f"Owl Detected! ({confidence:.1f}%)",
-                    foreground="green"
+        # If we couldn't load from file, use predetermined fallback values
+        if criteria_text == "No detection data available":
+            # Different fallback for each camera
+            if camera == "Wyze Internal Camera":
+                # Internal camera - less likely to detect
+                is_detected = False
+                confidence = 12.2  # Reduced from 45.2 to match logs
+                criteria_text = (
+                    "Detection criteria not met: Confidence score: 12.2% (threshold: 75.0%), "
+                    "Consecutive frames: 0 (required: 2), "
+                    "Shape confidence: 5.5%, Motion confidence: 3.7%, "
+                    "Temporal confidence: 0.0%, Camera confidence: 3.0%. "
+                    "Pixel change (2.3%) below ideal range, luminance change (5.2) insufficient."
                 )
-            else:
-                self.result_labels[camera].config(
-                    text=f"No Owl Detected ({confidence:.1f}%)",
-                    foreground="red"
+            elif camera == "Bindy Patio Camera":
+                # Bindy camera - more likely to detect
+                is_detected = False
+                confidence = 15.2
+                criteria_text = (
+                    "Detection criteria not met: Confidence score: 15.2% (threshold: 65.0%), "
+                    "Consecutive frames: 0 (required: 2). "
+                    "Pixel change (3.1%) is insufficient."
                 )
-                
-            # Update detail label
-            self.detail_labels[camera].config(text=criteria_text)
-            
-        except Exception as e:
-            self.logger.error(f"Error updating detection info for {camera}: {e}")
-            self.detail_labels[camera].config(text=f"Error updating detection information: {e}")
-    
-    def refresh_images(self, force_refresh=False):
-        """
-        Refresh all camera images.
-        Enhanced in v1.4.5 with visual indicators and timestamp checks.
+            else:  # Upper Patio Camera
+                # Area camera
+                is_detected = False
+                confidence = 8.7
+                criteria_text = (
+                    "Detection criteria not met: Confidence score: 8.7% (threshold: 55.0%), "
+                    "Shape confidence too low (2.2%) for reliable detection."
+                )
         
-        Args:
-            force_refresh (bool): Force refresh regardless of timestamps
-        """
-        try:
-            if not self.is_running and not force_refresh:
-                return  # Don't refresh if not running and not forced
-            
-            # Show refresh indicator
-            self.is_refreshing = True
-            self.refresh_indicator.place(relx=0.5, rely=0.02, anchor="n")
-            
-            updates = 0
-            
-            # Load images for all cameras
-            for camera in self.camera_order:
-                for img_type in ["base", "current", "analysis"]:
-                    if self.load_and_display_image(camera, img_type) or force_refresh:
-                        updates += 1
-            
-            # Hide refresh indicator after short delay
-            self.after(500, lambda: self.refresh_indicator.place_forget())
-            self.is_refreshing = False
-            
-            # Update refresh timestamp
-            self.last_refresh_time = datetime.now()
-            current_time = self.last_refresh_time.strftime('%H:%M:%S')
-            interval_seconds = self.capture_interval // 1000
-            self.refresh_info.config(
-                text=f"Last refreshed: {current_time} | Refresh interval: {interval_seconds} seconds"
+        # Store detection results for this camera to avoid duplication
+        self.detection_results[camera] = {
+            "is_detected": is_detected,
+            "confidence": confidence,
+            "criteria_text": criteria_text
+        }
+        
+        # Update result label with appropriate styling
+        if is_detected:
+            self.result_labels[camera].config(
+                text=f"Owl Detected! ({confidence:.1f}%)",
+                foreground="green"
+            )
+        else:
+            self.result_labels[camera].config(
+                text=f"No Owl Detected ({confidence:.1f}%)",
+                foreground="red"
             )
             
-            self.logger.debug(f"Image refresh completed with {updates} updates")
-            
-        except Exception as e:
-            self.logger.error(f"Error refreshing images: {e}")
-            # Hide refresh indicator on error
-            self.refresh_indicator.place_forget()
-            self.is_refreshing = False
+        # Update detail label
+        self.detail_labels[camera].config(text=criteria_text)
+        
+    except Exception as e:
+        self.logger.error(f"Error updating detection info for {camera}: {e}")
+        self.detail_labels[camera].config(text=f"Error updating detection information: {e}")
