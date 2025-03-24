@@ -740,6 +740,10 @@ def update_detection_info(self, camera, image_path):
         image_path (str): Path to comparison image
     """
     try:
+        # Import necessary modules within the method to avoid circular imports
+        import os
+        import json
+        
         # Use a default fallback in case all else fails
         is_detected = False
         confidence = 0.0
@@ -751,7 +755,6 @@ def update_detection_info(self, camera, image_path):
             
             if os.path.exists(info_path):
                 try:
-                    import json
                     with open(info_path, 'r') as f:
                         detection_info = json.load(f)
                     
@@ -759,6 +762,8 @@ def update_detection_info(self, camera, image_path):
                     is_detected = detection_info.get("is_owl_present", False)
                     confidence = detection_info.get("owl_confidence", 0.0)
                     criteria_text = detection_info.get("detection_details", "No details available")
+                    
+                    self.logger.debug(f"Loaded detection info from file for {camera}: confidence={confidence:.1f}%")
                 except Exception as json_error:
                     self.logger.warning(f"Error reading detection info file: {json_error}")
                     # Continue to fallback values if JSON parsing fails
@@ -798,6 +803,8 @@ def update_detection_info(self, camera, image_path):
                     "Detection criteria not met: Confidence score: 8.7% (threshold: 55.0%), "
                     "Shape confidence too low (2.2%) for reliable detection."
                 )
+                
+            self.logger.debug(f"Using fallback detection info for {camera}: confidence={confidence:.1f}%")
         
         # Store detection results for this camera to avoid duplication
         self.detection_results[camera] = {
@@ -824,3 +831,53 @@ def update_detection_info(self, camera, image_path):
     except Exception as e:
         self.logger.error(f"Error updating detection info for {camera}: {e}")
         self.detail_labels[camera].config(text=f"Error updating detection information: {e}")
+
+def refresh_images(self, force_refresh=False):
+    """
+    Refresh all camera images.
+    Enhanced in v1.4.8 to properly handle base image timestamps.
+    
+    Args:
+        force_refresh (bool): Force refresh regardless of timestamps
+    """
+    try:
+        if not self.is_running and not force_refresh:
+            return  # Don't refresh if not running and not forced
+        
+        # Show refresh indicator
+        self.is_refreshing = True
+        self.refresh_indicator.place(relx=0.5, rely=0.02, anchor="n")
+        
+        updates = 0
+        
+        # First load base images for all cameras
+        # This ensures base images are loaded before current/analysis images
+        for camera in self.camera_order:
+            if self.load_and_display_image(camera, "base") or force_refresh:
+                updates += 1
+        
+        # Then load current and analysis images for all cameras
+        for camera in self.camera_order:
+            for img_type in ["current", "analysis"]:
+                if self.load_and_display_image(camera, img_type) or force_refresh:
+                    updates += 1
+        
+        # Hide refresh indicator after short delay
+        self.after(500, lambda: self.refresh_indicator.place_forget())
+        self.is_refreshing = False
+        
+        # Update refresh timestamp
+        self.last_refresh_time = datetime.now()
+        current_time = self.last_refresh_time.strftime('%H:%M:%S')
+        interval_seconds = self.capture_interval // 1000
+        self.refresh_info.config(
+            text=f"Last refreshed: {current_time} | Refresh interval: {interval_seconds} seconds"
+        )
+        
+        self.logger.debug(f"Image refresh completed with {updates} updates")
+        
+    except Exception as e:
+        self.logger.error(f"Error refreshing images: {e}")
+        # Hide refresh indicator on error
+        self.refresh_indicator.place_forget()
+        self.is_refreshing = False
