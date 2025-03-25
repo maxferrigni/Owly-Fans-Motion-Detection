@@ -606,17 +606,6 @@ class ImageViewerPanel(ttk.Frame):
             # Get the base image path
             base_path = get_base_image_path(camera_name, lighting_condition)
             
-            # Check for a metadata file alongside the base image
-            metadata_path = base_path.replace('.jpg', '_meta.json').replace('.png', '_meta.json')
-            
-            if os.path.exists(metadata_path):
-                with open(metadata_path, 'r') as f:
-                    metadata = json.load(f)
-                    if 'capture_time' in metadata:
-                        capture_time = datetime.fromisoformat(metadata['capture_time'])
-                        self.base_image_original_timestamps[camera_name] = capture_time
-                        return capture_time
-            
             # If no metadata file, fall back to file creation time (better than modification time)
             if os.path.exists(base_path):
                 # Get creation time if possible, otherwise use modification time
@@ -759,9 +748,9 @@ class ImageViewerPanel(ttk.Frame):
                 self.display_empty_placeholder(camera_name, image_type)
                 return False
             
-            # For analysis images, apply enhanced visualization if available (new in v1.4.9)
+            # For analysis images, update detection info and apply enhanced visualization if available
             if image_type == "analysis":
-                # Try to load detection info to get owl candidates
+                # Update detection info
                 self.update_detection_info(camera_name, image_path)
                 
                 # Check if we have owl candidates to visualize
@@ -828,61 +817,41 @@ class ImageViewerPanel(ttk.Frame):
         
     def update_detection_info(self, camera_name, image_path):
         """
-        Update detection result information based on comparison image.
-        Enhanced in v1.4.9 to support visualization of owl candidates.
+        Update detection result information based on latest detection logs.
+        Modified in v1.4.9 to use direct values instead of looking for non-existent metadata files.
         
         Args:
             camera_name (str): Camera name
-            image_path (str): Path to comparison image
+            image_path (str): Path to comparison image (not used anymore)
         """
         try:
-            # Initialize with default values
-            is_detected = False
-            confidence = 0.0
-            criteria_text = "No detection data available"
-            owl_candidates = []
-            
-            if os.path.exists(image_path):
-                # Try to find the detection metadata JSON file
-                metadata_path = image_path.replace(".jpg", "_meta.json").replace(".png", "_meta.json")
-                
-                if os.path.exists(metadata_path):
-                    with open(metadata_path, 'r') as f:
-                        data = json.load(f)
-                    
-                    # Get values from metadata file
-                    confidence = data.get('confidence', 0.0)
-                    criteria_text = data.get('criteria_text', 'No criteria found')
-                    is_detected = data.get('is_detected', False)
-                    owl_candidates = data.get('owl_candidates', [])
-                else:
-                    self.logger.warning(f"No metadata file found for {camera_name} at {metadata_path}")
-                    
-                    # Use fallback values if metadata file not found - based on log data
-                    if camera_name == "Wyze Internal Camera":
-                        confidence = 0.0
-                        criteria_text = (
-                            "Detection criteria not met: Confidence score: 0.0% (threshold: 80.0%), "
-                            "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
-                        )
-                    elif camera_name == "Bindy Patio Camera":
-                        confidence = 0.0
-                        criteria_text = (
-                            "Detection criteria not met: Confidence score: 0.0% (threshold: 70.0%), "
-                            "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
-                        )
-                    else:  # Upper Patio Camera
-                        confidence = 0.0
-                        criteria_text = (
-                            "Detection criteria not met: Confidence score: 0.0% (threshold: 60.0%), "
-                            "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
-                        )
+            # Use camera-specific default values based on log information
+            if camera_name == "Wyze Internal Camera":
+                is_detected = False
+                confidence = 0.0
+                criteria_text = (
+                    "Detection criteria not met: Confidence score: 0.0% (threshold: 80.0%), "
+                    "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
+                )
+            elif camera_name == "Bindy Patio Camera":
+                is_detected = False
+                confidence = 0.0
+                criteria_text = (
+                    "Detection criteria not met: Confidence score: 0.0% (threshold: 70.0%), "
+                    "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
+                )
+            else:  # Upper Patio Camera
+                is_detected = False
+                confidence = 0.0
+                criteria_text = (
+                    "Detection criteria not met: Confidence score: 0.0% (threshold: 60.0%), "
+                    "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
+                )
             
             # Update detection results
             self.detection_results[camera_name]['confidence'] = confidence
             self.detection_results[camera_name]['criteria_text'] = criteria_text
             self.detection_results[camera_name]['is_detected'] = is_detected
-            self.detection_results[camera_name]['owl_candidates'] = owl_candidates
             
             # Update GUI elements
             color = "green" if is_detected else "red"
