@@ -1,6 +1,11 @@
 # File: utilities/image_comparison_utils.py
 # Purpose: Generate and handle image analysis for owl detection
 #
+# March 24, 2025 Update - Version 1.4.9
+# - Added draw_owl_candidates function for improved visualization
+# - Uses color-coding based on confidence levels (green/yellow/red)
+# - Displays confidence percentage text for each owl candidate
+# 
 # March 19, 2025 Update - Version 1.4.4
 # - Removed text overlays from base and analysis images
 # - Ensured analysis images only contain red outlines for owl shapes
@@ -38,6 +43,48 @@ except ImportError:
 
 # Initialize logger
 logger = get_logger()
+
+def draw_owl_candidates(image, candidates):
+    """Draw owl candidates with better visualization"""
+    result = image.copy()
+    
+    for i, candidate in enumerate(candidates):
+        contour = candidate['contour']
+        position = candidate['position']
+        confidence = candidate.get('confidence', 0)
+        x, y, w, h = position
+        
+        # Use color based on confidence
+        # Green for high confidence, yellow for medium, red for low
+        if confidence >= 70:
+            color = (0, 255, 0)  # Green
+        elif confidence >= 40:
+            color = (0, 255, 255)  # Yellow
+        else:
+            color = (0, 0, 255)  # Red
+            
+        # Draw fitted ellipse for better owl shape approximation
+        if len(contour) >= 5:  # Minimum 5 points required for ellipse fitting
+            ellipse = cv2.fitEllipse(contour)
+            cv2.ellipse(result, ellipse, color, 2)
+            
+            # Add confidence text
+            center_x = int(x + w/2)
+            center_y = int(y + h/2)
+            cv2.putText(
+                result, 
+                f"{confidence:.0f}%", 
+                (center_x - 20, center_y),
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                0.5, 
+                color, 
+                1
+            )
+        else:
+            # Fallback if can't fit ellipse
+            cv2.rectangle(result, (x, y), (x+w, y+h), color, 2)
+    
+    return result
 
 def validate_comparison_images(base_image, new_image, expected_size=None):
     """Validate images for comparison."""

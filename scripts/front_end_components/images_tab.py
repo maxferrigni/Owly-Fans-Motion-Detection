@@ -1,6 +1,12 @@
 # File: scripts/front_end_components/images_tab.py
 # Purpose: Images tab component for the Owl Monitoring System GUI
 # 
+# March 27, 2025 Update - Version 1.4.9
+# - Added color-coded confidence visualization for owl candidates
+# - Integrated with enhanced detection visualization from image_comparison_utils
+# - Improved detection result display with confidence classification
+# - Added support for displaying confidence percentages on analysis images
+# 
 # March 25, 2025 Update - Version 1.4.8
 # - Fixed base image timestamp display to show original capture time
 # - Added separate tracking for base image vs current image timestamps
@@ -16,9 +22,12 @@ import threading
 import time
 import pytz
 import json
+import numpy as np
+import cv2
 
 from utilities.logging_utils import get_logger
 from utilities.constants import CAMERA_MAPPINGS, get_comparison_image_path, get_base_image_path
+from utilities.image_comparison_utils import get_component_image_path, draw_owl_candidates
 
 class ImagesTab(ttk.Frame):
     """Tab containing image viewer for comparison images"""
@@ -59,7 +68,7 @@ class ImagesTab(ttk.Frame):
 class ImageViewerPanel(ttk.Frame):
     """
     Panel for displaying camera images in a grid with detection information.
-    Updated in v1.4.8 to properly display base image vs current image timestamps.
+    Updated in v1.4.9 to support enhanced visualization and confidence display.
     """
     def __init__(self, parent, app_reference, is_running=False):
         super().__init__(parent)
@@ -115,7 +124,8 @@ class ImageViewerPanel(ttk.Frame):
             self.detection_results[camera] = {
                 "is_detected": False,
                 "confidence": 0.0,
-                "criteria_text": "No detection data available"
+                "criteria_text": "No detection data available",
+                "owl_candidates": []  # Add storage for owl candidates for visualization
             }
             # Initialize base image timestamp tracking
             self.base_image_original_timestamps[camera] = None
@@ -185,6 +195,8 @@ class ImageViewerPanel(ttk.Frame):
         self.timestamp_labels = {}  # Timestamp labels under each image
         self.result_labels = {}
         self.detail_labels = {}
+        # Add confidence indicator labels (new in v1.4.9)
+        self.confidence_indicators = {}
         
         # Create placeholder message label for when detection isn't running
         self.placeholder_message = ttk.Label(
@@ -290,13 +302,26 @@ class ImageViewerPanel(ttk.Frame):
             result_frame = ttk.Frame(camera_frame)
             result_frame.pack(fill="x", pady=5)
             
-            # Create highlighted result label (Owl Detected or No Owl Detected)
+            # Create highlighted result label with confidence classification (updated in v1.4.9)
+            detection_label_frame = ttk.Frame(result_frame)
+            detection_label_frame.pack(fill="x", padx=10)
+            
             self.result_labels[camera] = ttk.Label(
-                result_frame, 
+                detection_label_frame, 
                 text="No Owl Detected.",
                 font=("Arial", 12, "bold")
             )
-            self.result_labels[camera].pack(anchor="w", padx=10)
+            self.result_labels[camera].pack(side="left", anchor="w")
+            
+            # Add confidence indicator - new in v1.4.9
+            confidence_indicator = ttk.Label(
+                detection_label_frame,
+                text="0% confidence",
+                font=("Arial", 10),
+                foreground="gray"
+            )
+            confidence_indicator.pack(side="right", padx=10)
+            self.confidence_indicators[camera] = confidence_indicator
             
             # Create detailed criteria label
             self.detail_labels[camera] = ttk.Label(
@@ -338,6 +363,52 @@ class ImageViewerPanel(ttk.Frame):
             
             # Schedule next refresh using tkinter's after method and the capture interval
             self.after_id = self.after(self.capture_interval, self.start_refresh_timer)
+    
+    def refresh_images(self, force_refresh=False):
+        # Refresh all camera images
+        # Enhanced in v1.4.9 to support visualization of owl candidates
+        # force_refresh (bool): Force refresh regardless of timestamps
+
+        try:
+            if not self.is_running and not force_refresh:
+                return  # Don't refresh if not running and not forced
+
+            # Show refresh indicator
+            self.is_refreshing = True
+            self.refresh_indicator.place(relx=0.5, rely=0.02, anchor="n")
+
+            updates = 0
+
+            # First load base images for all cameras
+            for camera in self.camera_order:
+                if self.load_and_display_image(camera, "base") or force_refresh:
+                    updates += 1
+
+            # Then load current and analysis images for all cameras
+            for camera in self.camera_order:
+                for img_type in ["current", "analysis"]:
+                    if self.load_and_display_image(camera, img_type) or force_refresh:
+                        updates += 1
+
+            # Hide refresh indicator after short delay
+            self.after(500, lambda: self.refresh_indicator.place_forget())
+            self.is_refreshing = False
+
+            # Update refresh timestamp
+            self.last_refresh_time = datetime.now()
+            current_time = self.last_refresh_time.strftime('%H:%M:%S')
+            interval_seconds = self.capture_interval // 1000
+            self.refresh_info.config(
+                text=f"Last refreshed: {current_time} | Refresh interval: {interval_seconds} seconds"
+            )
+
+            self.logger.debug(f"Image refresh completed with {updates} updates")
+
+        except Exception as e:
+            self.logger.error(f"Error refreshing images: {e}")
+            # Hide refresh indicator on error
+            self.refresh_indicator.place_forget()
+            self.is_refreshing = False
     
     def set_running_state(self, is_running):
         """Update running state and manage image display"""
@@ -397,12 +468,14 @@ class ImageViewerPanel(ttk.Frame):
             self.detection_results[camera] = {
                 "is_detected": False,
                 "confidence": 0.0,
-                "criteria_text": "No detection data available"
+                "criteria_text": "No detection data available",
+                "owl_candidates": []  # Clear owl candidates
             }
             
             # Clear detection result labels
             self.result_labels[camera].config(text="No Owl Detected.", foreground="red")
             self.detail_labels[camera].config(text="Waiting for detection data...")
+            self.confidence_indicators[camera].config(text="0% confidence", foreground="gray")
         
         # Reset refresh time
         self.last_refresh_time = None
@@ -451,7 +524,6 @@ class ImageViewerPanel(ttk.Frame):
                 return None
             
             # For component images
-            from utilities.image_comparison_utils import get_component_image_path
             component_path = get_component_image_path(camera, image_type)
             
             # Get the path to the 3-panel comparison image as fallback
@@ -566,7 +638,7 @@ class ImageViewerPanel(ttk.Frame):
     def load_and_display_image(self, camera_name, image_type):
         """
         Load and display an image for a specific camera and type.
-        Updated in v1.4.8 to correctly handle base image timestamps.
+        Updated in v1.4.9 to support enhanced visualization of owl candidates.
         
         Args:
             camera_name (str): Name of the camera
@@ -630,7 +702,6 @@ class ImageViewerPanel(ttk.Frame):
             
             # Standard handling for current and analysis images
             # First try direct component path
-            from utilities.image_comparison_utils import get_component_image_path
             component_path = get_component_image_path(camera_name, image_type)
             
             # Get the 3-panel comparison image path as fallback
@@ -687,7 +758,36 @@ class ImageViewerPanel(ttk.Frame):
             if not img:
                 self.display_empty_placeholder(camera_name, image_type)
                 return False
+            
+            # For analysis images, apply enhanced visualization if available (new in v1.4.9)
+            if image_type == "analysis":
+                # Try to load detection info to get owl candidates
+                self.update_detection_info(camera_name, image_path)
                 
+                # Check if we have owl candidates to visualize
+                candidates = self.detection_results[camera_name].get("owl_candidates", [])
+                confidence = self.detection_results[camera_name].get("confidence", 0.0)
+                
+                if candidates and len(candidates) > 0:
+                    try:
+                        # Convert PIL image to OpenCV format for visualization
+                        cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+                        
+                        # Add confidence to candidates for color-coding
+                        for candidate in candidates:
+                            candidate["confidence"] = confidence
+                        
+                        # Apply enhanced visualization with confidence coloring
+                        enhanced_img = draw_owl_candidates(cv_img, candidates)
+                        
+                        # Convert back to PIL for display
+                        img = Image.fromarray(cv2.cvtColor(enhanced_img, cv2.COLOR_BGR2RGB))
+                        
+                        self.logger.debug(f"Applied enhanced visualization to {camera_name} analysis image with {len(candidates)} candidates")
+                    except Exception as viz_error:
+                        self.logger.error(f"Error applying enhanced visualization: {viz_error}")
+                        # Continue with original image if visualization fails
+            
             # Resize image to fit container while maintaining aspect ratio
             width, height = img.size
             ratio = min(self.image_width/width, self.image_height/height)
@@ -719,165 +819,9 @@ class ImageViewerPanel(ttk.Frame):
             # Store reference to prevent garbage collection
             self.image_refs[camera_name][image_type] = photo
             
-            # Update detection information if this is the analysis image
-            if image_type == "analysis":
-                self.update_detection_info(camera_name, image_path)
-            
             return True
             
         except Exception as e:
             self.logger.error(f"Error loading {image_type} image for {camera_name}: {e}")
             self.display_empty_placeholder(camera_name, image_type)
             return False
-    
-    def update_detection_info(self, camera, image_path):
-        """
-        Update detection result information based on comparison image.
-        Fixed in v1.4.8 to handle missing info files gracefully.
-        
-        Args:
-            camera (str): Camera name
-            image_path (str): Path to comparison image
-        """
-        try:
-            # Import necessary modules within the method to avoid circular imports
-            import os
-            import json
-            
-            # Use a default fallback in case all else fails
-            is_detected = False
-            confidence = 0.0
-            criteria_text = "No detection data available"
-            
-            # Check for a detection info JSON file next to the image
-            if image_path and os.path.exists(image_path):
-                info_path = image_path.replace('.jpg', '_info.json').replace('.png', '_info.json')
-                
-                if os.path.exists(info_path):
-                    try:
-                        with open(info_path, 'r') as f:
-                            detection_info = json.load(f)
-                        
-                        # Use the detection info from the file
-                        is_detected = detection_info.get("is_owl_present", False)
-                        confidence = detection_info.get("owl_confidence", 0.0)
-                        criteria_text = detection_info.get("detection_details", "No details available")
-                        
-                        self.logger.debug(f"Loaded detection info from file for {camera}: confidence={confidence:.1f}%")
-                    except Exception as json_error:
-                        self.logger.warning(f"Error reading detection info file: {json_error}")
-                        # Continue to fallback values if JSON parsing fails
-                else:
-                    self.logger.debug(f"No detection info file found at {info_path}")
-            else:
-                self.logger.debug(f"Image path is invalid: {image_path}")
-                    
-            # If we couldn't load from file, use predetermined fallback values
-            if criteria_text == "No detection data available":
-                # Different fallback for each camera
-                if camera == "Wyze Internal Camera":
-                    # Internal camera - less likely to detect
-                    is_detected = False
-                    confidence = 12.2  # Reduced from 45.2 to match logs
-                    criteria_text = (
-                        "Detection criteria not met: Confidence score: 12.2% (threshold: 75.0%), "
-                        "Consecutive frames: 0 (required: 2), "
-                        "Shape confidence: 5.5%, Motion confidence: 3.7%, "
-                        "Temporal confidence: 0.0%, Camera confidence: 3.0%. "
-                        "Pixel change (2.3%) below ideal range, luminance change (5.2) insufficient."
-                    )
-                elif camera == "Bindy Patio Camera":
-                    # Bindy camera - more likely to detect
-                    is_detected = False
-                    confidence = 15.2
-                    criteria_text = (
-                        "Detection criteria not met: Confidence score: 15.2% (threshold: 65.0%), "
-                        "Consecutive frames: 0 (required: 2). "
-                        "Pixel change (3.1%) is insufficient."
-                    )
-                else:  # Upper Patio Camera
-                    # Area camera
-                    is_detected = False
-                    confidence = 8.7
-                    criteria_text = (
-                        "Detection criteria not met: Confidence score: 8.7% (threshold: 55.0%), "
-                        "Shape confidence too low (2.2%) for reliable detection."
-                    )
-                    
-                self.logger.debug(f"Using fallback detection info for {camera}: confidence={confidence:.1f}%")
-            
-            # Store detection results for this camera to avoid duplication
-            self.detection_results[camera] = {
-                "is_detected": is_detected,
-                "confidence": confidence,
-                "criteria_text": criteria_text
-            }
-            
-            # Update result label with appropriate styling
-            if is_detected:
-                self.result_labels[camera].config(
-                    text=f"Owl Detected! ({confidence:.1f}%)",
-                    foreground="green"
-                )
-            else:
-                self.result_labels[camera].config(
-                    text=f"No Owl Detected ({confidence:.1f}%)",
-                    foreground="red"
-                )
-                
-            # Update detail label
-            self.detail_labels[camera].config(text=criteria_text)
-            
-        except Exception as e:
-            self.logger.error(f"Error updating detection info for {camera}: {e}")
-            self.detail_labels[camera].config(text=f"Error updating detection information: {e}")
-
-    def refresh_images(self, force_refresh=False):
-        """
-        Refresh all camera images.
-        Enhanced in v1.4.8 to properly handle base image timestamps.
-        
-        Args:
-            force_refresh (bool): Force refresh regardless of timestamps
-        """
-        try:
-            if not self.is_running and not force_refresh:
-                return  # Don't refresh if not running and not forced
-            
-            # Show refresh indicator
-            self.is_refreshing = True
-            self.refresh_indicator.place(relx=0.5, rely=0.02, anchor="n")
-            
-            updates = 0
-            
-            # First load base images for all cameras
-            # This ensures base images are loaded before current/analysis images
-            for camera in self.camera_order:
-                if self.load_and_display_image(camera, "base") or force_refresh:
-                    updates += 1
-            
-            # Then load current and analysis images for all cameras
-            for camera in self.camera_order:
-                for img_type in ["current", "analysis"]:
-                    if self.load_and_display_image(camera, img_type) or force_refresh:
-                        updates += 1
-            
-            # Hide refresh indicator after short delay
-            self.after(500, lambda: self.refresh_indicator.place_forget())
-            self.is_refreshing = False
-            
-            # Update refresh timestamp
-            self.last_refresh_time = datetime.now()
-            current_time = self.last_refresh_time.strftime('%H:%M:%S')
-            interval_seconds = self.capture_interval // 1000
-            self.refresh_info.config(
-                text=f"Last refreshed: {current_time} | Refresh interval: {interval_seconds} seconds"
-            )
-            
-            self.logger.debug(f"Image refresh completed with {updates} updates")
-            
-        except Exception as e:
-            self.logger.error(f"Error refreshing images: {e}")
-            # Hide refresh indicator on error
-            self.refresh_indicator.place_forget()
-            self.is_refreshing = False

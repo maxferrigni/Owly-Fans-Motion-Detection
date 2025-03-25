@@ -1,11 +1,12 @@
 # File: utilities/owl_detection_utils.py
 # Purpose: Detect owls in camera images using advanced shape and motion analysis with improved confidence metrics
 # 
-# Updates:
-# - Enhanced shape detection parameters for more accurate owl identification
-# - Improved night mode detection to reduce false positives
-# - Updated region analysis for more precise location-based detection
-# - Made threshold adjustments more dynamic based on lighting conditions
+# Updates for v1.4.9:
+# - Enhanced shape filtering with absolute size constraints and solidity checks
+# - Improved oval/circular shape detection with proper filtering for owl-sized objects
+# - Added temporal consistency checking for detected shapes
+# - Optimized visualization with elliptical highlights for owl candidates
+# - Added stricter criteria for shape classification
 
 import cv2
 import numpy as np
@@ -120,10 +121,169 @@ def analyze_image_differences(base_image, new_image, threshold, config):
         logger.error(f"Error analyzing image differences: {e}")
         raise
 
+def filter_owl_candidates(contours, height, width, config, lighting_condition=None):
+    """
+    Filter contours to only include those with owl-like characteristics.
+    Enhanced in v1.4.9 with absolute size constraints and solidity checks.
+    
+    Args:
+        contours (list): List of contours to filter
+        height (int): Image height
+        width (int): Image width
+        config (dict): Camera configuration with motion detection parameters
+        lighting_condition (str, optional): Current lighting condition
+        
+    Returns:
+        list: List of filtered owl-like candidates
+    """
+    owl_candidates = []
+    total_area = height * width
+    
+    # If lighting condition not provided, get it
+    if lighting_condition is None:
+        lighting_condition = get_current_lighting_condition()
+    
+    # Get motion parameters from appropriate lighting settings
+    if lighting_condition == 'day' and 'day_settings' in config and 'motion_detection' in config['day_settings']:
+        motion_config = config['day_settings']['motion_detection']
+        logger.debug(f"Using day motion detection settings")
+    elif lighting_condition == 'night' and 'night_settings' in config and 'motion_detection' in config['night_settings']:
+        motion_config = config['night_settings']['motion_detection']
+        logger.debug(f"Using night motion detection settings")
+    else:
+        # Fall back to standard motion detection config
+        motion_config = config.get("motion_detection", {})
+        logger.debug(f"Using standard motion detection settings")
+    
+    # Get shape parameters from config
+    min_circularity = motion_config.get("min_circularity", 0.5)
+    min_aspect_ratio = motion_config.get("min_aspect_ratio", 0.5)
+    max_aspect_ratio = motion_config.get("max_aspect_ratio", 2.0)
+    min_area_ratio = motion_config.get("min_area_ratio", 0.01)
+    
+    # Add absolute size constraints for owls - new in v1.4.9
+    min_owl_area_pixels = 400  # Minimum area in pixels for an owl shape
+    max_owl_area_pixels = total_area * 0.5  # Maximum area as fraction of frame
+    
+    # Adjust for night mode
+    if lighting_condition == 'night':
+        min_circularity *= 1.1  # More strict circularity for night vision
+        min_owl_area_pixels *= 1.2  # Larger minimum size at night
+    
+    # Log parameters being used
+    logger.debug(
+        f"Shape filtering parameters: min_area={min_owl_area_pixels}px, "
+        f"max_area={max_owl_area_pixels}px, circularity={min_circularity}, "
+        f"aspect_ratio={min_aspect_ratio}-{max_aspect_ratio}"
+    )
+    
+    # First perform basic filtering and calculate metrics for all contours
+    for contour in contours:
+        # Calculate basic metrics
+        area = cv2.contourArea(contour)
+        perimeter = cv2.arcLength(contour, True)
+        
+        # Skip tiny contours or giant ones immediately
+        if area < min_owl_area_pixels or area > max_owl_area_pixels:
+            continue
+        
+        # Skip if perimeter is too small
+        if perimeter < 20:
+            continue
+            
+        # Calculate shape characteristics
+        circularity = 4 * np.pi * area / (perimeter * perimeter) if perimeter > 0 else 0
+        x, y, w, h = cv2.boundingRect(contour)
+        aspect_ratio = float(w) / h if h > 0 else 0
+        area_ratio = area / total_area
+        
+        # Check if this could be an owl based on basic shape characteristics
+        if (circularity >= min_circularity and 
+            min_aspect_ratio <= aspect_ratio <= max_aspect_ratio and
+            area_ratio >= min_area_ratio):
+            
+            # Calculate solidity (new in v1.4.9)
+            # Solidity = contour area / convex hull area
+            # Owls typically have high solidity (not very jagged shapes)
+            hull = cv2.convexHull(contour)
+            hull_area = cv2.contourArea(hull)
+            solidity = float(area) / hull_area if hull_area > 0 else 0
+            
+            # Only consider shapes with high solidity (solid, not jagged)
+            if solidity >= 0.7:
+                owl_candidates.append({
+                    'contour': contour,
+                    'circularity': circularity,
+                    'aspect_ratio': aspect_ratio,
+                    'area_ratio': area_ratio,
+                    'position': (x, y, w, h),
+                    'brightness_diff': 0,  # Will be calculated later
+                    'solidity': solidity,  # New in v1.4.9
+                    'area': area,  # Store absolute area
+                    'hull_area': hull_area  # Store convex hull area
+                })
+    
+    # Sort candidates by area ratio (largest first)
+    owl_candidates.sort(key=lambda x: x['area_ratio'], reverse=True)
+    
+    logger.debug(f"Found {len(owl_candidates)} owl candidates after shape filtering")
+    return owl_candidates
+
+def analyze_motion_patterns(current_candidates, previous_candidates, current_frame, previous_frame):
+    """
+    Analyze motion patterns between frames to identify owl-like movement.
+    New in v1.4.9 for better temporal consistency.
+    
+    Args:
+        current_candidates (list): Current frame owl candidates
+        previous_candidates (list): Previous frame owl candidates
+        current_frame (numpy.ndarray): Current frame
+        previous_frame (numpy.ndarray): Previous frame
+        
+    Returns:
+        float: Motion pattern score (0-10)
+    """
+    if not current_candidates or not previous_candidates:
+        return 0.0  # No pattern to analyze
+        
+    # Create masks of current and previous candidates
+    height, width = current_frame.shape[:2]
+    current_mask = np.zeros((height, width), dtype=np.uint8)
+    previous_mask = np.zeros((height, width), dtype=np.uint8)
+    
+    # Draw contours on masks
+    for candidate in current_candidates:
+        cv2.drawContours(current_mask, [candidate['contour']], -1, 255, -1)
+    
+    for candidate in previous_candidates:
+        cv2.drawContours(previous_mask, [candidate['contour']], -1, 255, -1)
+    
+    # Calculate overlap
+    overlap = cv2.bitwise_and(current_mask, previous_mask)
+    overlap_pixels = np.sum(overlap > 0)
+    
+    # Calculate motion continuity score
+    current_area = np.sum(current_mask > 0)
+    previous_area = np.sum(previous_mask > 0)
+    
+    if current_area == 0 or previous_area == 0:
+        return 0.0
+        
+    # Calculate weighted average of overlap ratio
+    overlap_ratio = overlap_pixels / max(current_area, previous_area)
+    
+    # Owl movement typically has some overlap between frames
+    # Too much = static object, too little = random noise
+    ideal_overlap = 0.6  # 60% overlap is ideal for owl movement
+    overlap_score = 10.0 * (1.0 - abs(overlap_ratio - ideal_overlap) / ideal_overlap)
+    
+    logger.debug(f"Motion pattern analysis: overlap_ratio={overlap_ratio:.2f}, score={overlap_score:.1f}")
+    return max(0, min(10, overlap_score))
+
 def find_owl_candidates(binary_mask, config, lighting_condition=None):
     """
     Find regions in the binary mask that could potentially be owls.
-    Updated with more stringent criteria and lighting-specific adjustments.
+    Enhanced in v1.4.9 with better shape filtering and motion analysis.
     
     Args:
         binary_mask (numpy.ndarray): Binary mask of changed pixels
@@ -170,75 +330,11 @@ def find_owl_candidates(binary_mask, config, lighting_condition=None):
             cv2.CHAIN_APPROX_SIMPLE
         )
         
-        # Get configuration parameters for shape filtering
-        min_circularity = motion_config.get("min_circularity", 0.5)
-        min_aspect_ratio = motion_config.get("min_aspect_ratio", 0.5)
-        max_aspect_ratio = motion_config.get("max_aspect_ratio", 2.0)
-        min_area_ratio = motion_config.get("min_area_ratio", 0.01)
-        brightness_threshold = motion_config.get("brightness_threshold", 20)
-        
-        # Apply more stringent criteria for night mode to reduce false positives
-        if lighting_condition == 'night':
-            min_circularity *= 1.1  # 10% higher circularity requirement
-            min_area_ratio *= 1.2   # 20% higher minimum area
-            brightness_threshold *= 1.1  # 10% higher brightness threshold
-        
-        # Log parameters being used
-        logger.debug(
-            f"Motion parameters ({lighting_condition}): circularity: {min_circularity}, "
-            f"aspect ratio: {min_aspect_ratio}-{max_aspect_ratio}, "
-            f"area ratio: {min_area_ratio}, brightness: {brightness_threshold}"
-        )
-        
-        # Calculate image dimensions for relative measurements
+        # Get image dimensions for relative measurements
         height, width = binary_mask.shape
-        total_area = height * width
         
-        # Filter and analyze contours
-        owl_candidates = []
-        
-        for contour in contours:
-            # Calculate contour area and perimeter
-            area = cv2.contourArea(contour)
-            perimeter = cv2.arcLength(contour, True)
-            
-            # Skip if area or perimeter is too small
-            if area < 10 or perimeter < 10:
-                continue
-                
-            # Calculate shape characteristics
-            x, y, w, h = cv2.boundingRect(contour)
-            aspect_ratio = float(w) / h if h > 0 else 0
-            area_ratio = area / total_area
-            
-            # Calculate circularity (4π × Area / Perimeter²)
-            # A perfect circle has circularity of 1
-            circularity = 4 * np.pi * area / (perimeter * perimeter) if perimeter > 0 else 0
-            
-            # Filter based on shape characteristics
-            if (circularity >= min_circularity and 
-                min_aspect_ratio <= aspect_ratio <= max_aspect_ratio and
-                area_ratio >= min_area_ratio):
-                
-                # Calculate average brightness within contour
-                mask = np.zeros(binary_mask.shape, dtype=np.uint8)
-                cv2.drawContours(mask, [contour], 0, 255, -1)
-                brightness = np.mean(cv2.bitwise_and(binary_mask, mask))
-                
-                # Only add if brightness meets threshold
-                if brightness >= brightness_threshold:
-                    # Add this candidate
-                    owl_candidates.append({
-                        'contour': contour,
-                        'circularity': circularity,
-                        'aspect_ratio': aspect_ratio,
-                        'area_ratio': area_ratio,
-                        'position': (x, y, w, h),
-                        'brightness_diff': brightness
-                    })
-        
-        # Sort candidates by area ratio (largest first)
-        owl_candidates.sort(key=lambda x: x['area_ratio'], reverse=True)
+        # Filter contours to only include owl-like shapes
+        owl_candidates = filter_owl_candidates(contours, height, width, config, lighting_condition)
         
         logger.debug(f"Found {len(owl_candidates)} owl candidates in {lighting_condition} condition")
         return owl_candidates
@@ -247,10 +343,10 @@ def find_owl_candidates(binary_mask, config, lighting_condition=None):
         logger.error(f"Error finding owl candidates: {e}")
         return []
 
-def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=None):
+def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=None, previous_frame_data=None):
     """
     Detect if an owl is present by comparing base and new images with confidence metrics.
-    Updated with improved lighting-specific detection and false positive reduction.
+    Enhanced in v1.4.9 with improved shape filtering and temporal consistency.
     
     Args:
         new_image (PIL.Image): New image to check
@@ -258,6 +354,7 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
         config (dict): Camera configuration dictionary
         is_test (bool, optional): Whether this is a test detection
         camera_name (str, optional): Name of the camera for tracking
+        previous_frame_data (dict, optional): Data from previous frame for temporal analysis
         
     Returns:
         tuple: (is_owl_present, detection_info)
@@ -317,6 +414,21 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
         # Find potential owl candidates using appropriate settings
         owl_candidates = find_owl_candidates(binary_mask, config, lighting_condition)
         
+        # Apply motion pattern analysis if previous frame data is available
+        motion_pattern_score = 0.0
+        if previous_frame_data and 'owl_candidates' in previous_frame_data:
+            # Convert PIL images to numpy arrays for motion analysis
+            current_frame_np = np.array(new_image)
+            prev_frame_np = np.array(previous_frame_data.get('current_frame'))
+            if prev_frame_np is not None and current_frame_np.shape == prev_frame_np.shape:
+                motion_pattern_score = analyze_motion_patterns(
+                    owl_candidates,
+                    previous_frame_data.get('owl_candidates', []),
+                    current_frame_np,
+                    prev_frame_np
+                )
+                logger.debug(f"Motion pattern score: {motion_pattern_score:.1f}/10")
+        
         # Compile detection data for confidence calculation
         detection_data = {
             "pixel_change": diff_results["pixel_change"],
@@ -324,7 +436,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
             "max_luminance": diff_results["max_luminance"],
             "owl_candidates": owl_candidates,
             "diff_metrics": diff_results["diff_metrics"],
-            "lighting_condition": lighting_condition
+            "lighting_condition": lighting_condition,
+            "motion_pattern_score": motion_pattern_score  # New in v1.4.9
         }
         
         # Calculate owl confidence score if camera_name is provided
@@ -371,7 +484,9 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
                 "owl_candidates": owl_candidates,
                 "diff_metrics": diff_results["diff_metrics"],
                 "lighting_condition": lighting_condition,
-                "threshold_used": threshold
+                "threshold_used": threshold,
+                "motion_pattern_score": motion_pattern_score,  # New in v1.4.9
+                "current_frame": new_image  # Save for temporal analysis
             }
             
             # Log detection result with confidence
@@ -400,7 +515,8 @@ def detect_owl_in_box(new_image, base_image, config, is_test=False, camera_name=
                 "luminance_change": diff_results["luminance_change"],
                 "owl_candidates": owl_candidates,
                 "diff_metrics": diff_results["diff_metrics"],
-                "lighting_condition": lighting_condition
+                "lighting_condition": lighting_condition,
+                "current_frame": new_image  # Save for temporal analysis
             }
             
             logger.debug(

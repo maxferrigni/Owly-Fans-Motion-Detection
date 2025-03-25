@@ -6,6 +6,7 @@
 # - Made shape confidence scoring more stringent
 # - Improved temporal confidence to require higher quality detections
 # - Enhanced camera-specific confidence factors for night conditions
+# - Updated shape confidence calculation with better weighting of important factors including solidity
 
 import numpy as np
 from datetime import datetime
@@ -25,74 +26,70 @@ FRAME_HISTORY = {
 # Maximum frames to store in history
 MAX_FRAME_HISTORY = 10
 
-def calculate_shape_confidence(detection_data, config):
-    """
-    Calculate confidence score based on shape characteristics.
-    Modified to be more stringent with shape requirements.
-    
-    Args:
-        detection_data (dict): Detection data including owl candidates
-        config (dict): Camera configuration
+def calculate_shape_confidence(owl_candidates, config):
+    """Calculate shape confidence with better weighting of important factors"""
+    if not owl_candidates:
+        return 0.0
         
-    Returns:
-        float: Shape confidence score (0-40%)
-    """
-    shape_score = 0
+    # Get best candidate
+    best_candidate = max(owl_candidates, key=lambda x: x['area_ratio'])
     
-    if not detection_data.get("owl_candidates"):
-        return 0
-        
-    # Get best candidate based on area ratio
-    best_candidate = max(detection_data["owl_candidates"], key=lambda x: x["area_ratio"])
+    # Initialize score components
+    circularity_score = 0
+    aspect_ratio_score = 0
+    size_score = 0
+    solidity_score = 0
     
     # Circularity score (0-10%)
-    min_circ = config["motion_detection"]["min_circularity"]
-    ideal_circ = 0.8  # Ideal owl circularity
-    circ_value = best_candidate.get("circularity", 0)
+    circ_value = best_candidate.get('circularity', 0)
+    ideal_circ = 0.8  # Ideal owl shape circularity
     
-    if circ_value >= min_circ:
-        # More stringent scoring curve - requires closer to ideal circularity
-        # Use quadratic scaling to penalize values further from ideal
+    # More strict scoring curve
+    if circ_value >= config["motion_detection"]["min_circularity"]:
         circ_distance = abs(circ_value - ideal_circ)
-        circ_score = min(10, 10 * (1 - (circ_distance * 2)))
-        logger.debug(f"Circularity score: {circ_score:.1f}% (value: {circ_value:.2f})")
+        circularity_score = 10 * max(0, 1 - (circ_distance * 2))
+        logger.debug(f"Circularity score: {circularity_score:.1f}% (value: {circ_value:.2f})")
     else:
-        circ_score = 0
-        logger.debug(f"Circularity too low: {circ_value:.2f} < {min_circ}")
+        logger.debug(f"Circularity too low: {circ_value:.2f} < {config['motion_detection']['min_circularity']}")
     
     # Aspect ratio score (0-10%)
-    min_aspect = config["motion_detection"]["min_aspect_ratio"]
-    max_aspect = config["motion_detection"]["max_aspect_ratio"]
+    aspect_value = best_candidate.get('aspect_ratio', 0)
     ideal_aspect = 1.2  # Ideal owl aspect ratio
-    aspect_value = best_candidate.get("aspect_ratio", 0)
     
-    if min_aspect <= aspect_value <= max_aspect:
-        # More stringent scaling - use quadratic distance from ideal
-        aspect_deviation = abs(aspect_value - ideal_aspect) / (max_aspect - min_aspect)
-        aspect_score = 10 * (1 - min(1, aspect_deviation * 1.5))  # Multiply by 1.5 to make more stringent
-        logger.debug(f"Aspect ratio score: {aspect_score:.1f}% (value: {aspect_value:.2f})")
+    if (config["motion_detection"]["min_aspect_ratio"] <= aspect_value <= 
+        config["motion_detection"]["max_aspect_ratio"]):
+        aspect_deviation = abs(aspect_value - ideal_aspect) / 0.7  # Normalize
+        aspect_ratio_score = 10 * max(0, 1 - aspect_deviation)
+        logger.debug(f"Aspect ratio score: {aspect_ratio_score:.1f}% (value: {aspect_value:.2f})")
     else:
-        aspect_score = 0
-        logger.debug(f"Aspect ratio outside range: {aspect_value:.2f} not in [{min_aspect}-{max_aspect}]")
+        logger.debug(f"Aspect ratio outside range: {aspect_value:.2f} not in [{config['motion_detection']['min_aspect_ratio']}-{config['motion_detection']['max_aspect_ratio']}]")
     
-    # Size score (0-20%)
-    min_area = config["motion_detection"]["min_area_ratio"]
-    ideal_area = 0.2  # Ideal owl size relative to frame
-    area_value = best_candidate.get("area_ratio", 0)
+    # Size score (0-15%)
+    area_value = best_candidate.get('area_ratio', 0)
+    ideal_min_area = config["motion_detection"]["min_area_ratio"]
+    ideal_max_area = ideal_min_area * 10  # Upper bound
     
-    if area_value >= min_area:
-        # More stringent size scoring
-        # For very small shapes, reduce score significantly
-        if area_value < min_area * 2:
-            area_score = min(10, (area_value / ideal_area) * 10)
+    if area_value >= ideal_min_area:
+        if area_value <= ideal_max_area:
+            # Score based on position within ideal range
+            size_score = 15 * min(1.0, area_value / (ideal_max_area / 2))
         else:
-            area_score = min(20, (area_value / ideal_area) * 20)
-        logger.debug(f"Area score: {area_score:.1f}% (value: {area_value:.2f})")
+            # Penalize too large areas
+            size_score = 15 * (1.0 - min(1.0, (area_value - ideal_max_area) / ideal_max_area))
+        logger.debug(f"Area score: {size_score:.1f}% (value: {area_value:.2f})")
     else:
-        area_score = 0
-        logger.debug(f"Area too small: {area_value:.2f} < {min_area}")
+        logger.debug(f"Area too small: {area_value:.2f} < {ideal_min_area}")
     
-    shape_score = circ_score + aspect_score + area_score
+    # Solidity score (0-5%)
+    solidity = best_candidate.get('solidity', 0)
+    if solidity >= 0.7:
+        solidity_score = 5 * min(1.0, (solidity - 0.7) / 0.3)
+        logger.debug(f"Solidity score: {solidity_score:.1f}% (value: {solidity:.2f})")
+    else:
+        logger.debug(f"Solidity too low: {solidity:.2f} < 0.7")
+    
+    # Total shape score
+    shape_score = circularity_score + aspect_ratio_score + size_score + solidity_score
     logger.debug(f"Total shape score: {shape_score:.1f}%")
     
     return shape_score
@@ -315,7 +312,8 @@ def calculate_owl_confidence(detection_data, camera_name, config):
     """
     try:
         # Calculate primary confidence components
-        shape_confidence = calculate_shape_confidence(detection_data, config)
+        # Updated to use the new shape confidence function
+        shape_confidence = calculate_shape_confidence(detection_data.get("owl_candidates", []), config)
         motion_confidence = calculate_motion_confidence(detection_data, config)
         
         # Primary confidence (shape + motion)

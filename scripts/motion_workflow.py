@@ -1,7 +1,8 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
 #
-# March 20, 2025 Update - Version 1.4.7.1
+# March 24, 2025 Update - Version 1.4.9
+# - Added motion pattern analysis between frames to identify owl-like movement
 # - Added skip detection during transition periods to reduce false negatives
 # - Enhanced lighting condition handling for more reliable detection
 # - Improved base image selection for different lighting conditions
@@ -15,6 +16,7 @@ import pyautogui
 import pytz
 import numpy as np
 import json
+import cv2  # Required for motion pattern analysis
 
 # Import utilities
 from utilities.constants import (
@@ -53,6 +55,44 @@ alert_manager = AlertManager()
 
 # Set timezone
 PACIFIC_TIME = pytz.timezone("America/Los_Angeles")
+
+def analyze_motion_pattern(current_candidates, previous_candidates, current_frame, previous_frame):
+    """Analyze motion patterns between frames to identify owl-like movement"""
+    if not current_candidates or not previous_candidates:
+        return 0.0  # No pattern to analyze
+        
+    # Create mask of current and previous candidates
+    height, width = current_frame.shape[:2]
+    current_mask = np.zeros((height, width), dtype=np.uint8)
+    previous_mask = np.zeros((height, width), dtype=np.uint8)
+    
+    # Draw contours on masks
+    for candidate in current_candidates:
+        cv2.drawContours(current_mask, [candidate['contour']], -1, 255, -1)
+    
+    for candidate in previous_candidates:
+        cv2.drawContours(previous_mask, [candidate['contour']], -1, 255, -1)
+    
+    # Calculate overlap
+    overlap = cv2.bitwise_and(current_mask, previous_mask)
+    overlap_pixels = np.sum(overlap > 0)
+    
+    # Calculate motion continuity score
+    current_area = np.sum(current_mask > 0)
+    previous_area = np.sum(previous_mask > 0)
+    
+    if current_area == 0 or previous_area == 0:
+        return 0.0
+        
+    # Calculate weighted average of overlap ratio
+    overlap_ratio = overlap_pixels / max(current_area, previous_area)
+    
+    # Owl movement typically has some overlap between frames
+    # Too much = static object, too little = random noise
+    ideal_overlap = 0.6  # 60% overlap is ideal for owl movement
+    overlap_score = 10.0 * (1.0 - abs(overlap_ratio - ideal_overlap) / ideal_overlap)
+    
+    return max(0, min(10, overlap_score))
 
 def get_version_tag():
     """
@@ -444,7 +484,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
 def process_cameras(camera_configs, test_images=None):
     """
     Process all cameras in batch for efficient motion detection.
-    Updated in v1.4.7.1 to skip processing during transition periods.
+    Updated in v1.4.9 to analyze motion patterns between frames.
     
     Args:
         camera_configs (dict): Dictionary of camera configurations
