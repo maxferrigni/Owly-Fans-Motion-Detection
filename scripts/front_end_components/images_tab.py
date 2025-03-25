@@ -825,3 +825,43 @@ class ImageViewerPanel(ttk.Frame):
             self.logger.error(f"Error loading {image_type} image for {camera_name}: {e}")
             self.display_empty_placeholder(camera_name, image_type)
             return False
+        
+    def update_detection_info(self, camera_name, image_path):
+        # Load detection metadata associated with the analysis image
+        try:
+            if not os.path.exists(image_path):
+                return
+
+            # Try to find the detection metadata JSON file
+            metadata_path = image_path.replace(".jpg", "_meta.json").replace(".png", "_meta.json")
+            if not os.path.exists(metadata_path):
+                self.logger.warning(f"No metadata file found for {camera_name} at {metadata_path}")
+                return
+
+            with open(metadata_path, 'r') as f:
+                data = json.load(f)
+
+            # Update detection results
+            self.detection_results[camera_name]['confidence'] = data.get('confidence', 0.0)
+            self.detection_results[camera_name]['criteria_text'] = data.get('criteria_text', 'No criteria found')
+            self.detection_results[camera_name]['is_detected'] = data.get('is_detected', False)
+            self.detection_results[camera_name]['owl_candidates'] = data.get('owl_candidates', [])
+
+            # Update GUI elements
+            confidence = self.detection_results[camera_name]['confidence']
+            is_detected = self.detection_results[camera_name]['is_detected']
+            criteria_text = self.detection_results[camera_name]['criteria_text']
+
+            color = "green" if is_detected else "red"
+            self.result_labels[camera_name].config(
+                text="Owl Detected!" if is_detected else "No Owl Detected.",
+                foreground=color
+            )
+            self.detail_labels[camera_name].config(text=criteria_text)
+            self.confidence_indicators[camera_name].config(
+                text=f"{confidence:.1f}% confidence",
+                foreground=color
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error updating detection info for {camera_name}: {e}")
