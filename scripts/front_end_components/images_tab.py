@@ -663,9 +663,13 @@ class ImageViewerPanel(ttk.Frame):
                         width, height = img.size
                         self.logger.debug(f"Original {camera_name} {image_type} image size: {width}x{height}")
                         
-                        # For 16:9 images, scale to fit width completely
-                        ratio = self.image_width / width
-                        new_size = (self.image_width, int(height * ratio))
+                        # Calculate scaling factors for both width and height
+                        width_ratio = self.image_width / width
+                        height_ratio = self.image_height / height
+                        
+                        # Use the minimum ratio to ensure the entire image fits in the container
+                        ratio = min(width_ratio, height_ratio)
+                        new_size = (int(width * ratio), int(height * ratio))
                         
                         # Log resize dimensions
                         self.logger.debug(f"Resizing {camera_name} {image_type} image to: {new_size[0]}x{new_size[1]} (ratio: {ratio:.2f})")
@@ -676,11 +680,12 @@ class ImageViewerPanel(ttk.Frame):
                         # Resize the original image
                         resized = img.resize(new_size, Image.LANCZOS)
                         
-                        # Calculate position to center the image vertically
-                        y_offset = max(0, (self.image_height - new_size[1]) // 2)
+                        # Calculate position to center the image in both dimensions
+                        x_offset = (self.image_width - new_size[0]) // 2
+                        y_offset = (self.image_height - new_size[1]) // 2
                         
                         # Paste the resized image onto the center of the container
-                        container_img.paste(resized, (0, y_offset))
+                        container_img.paste(resized, (x_offset, y_offset))
                     else:
                         # Standard resizing for other cameras
                         width, height = img.size
@@ -827,9 +832,13 @@ class ImageViewerPanel(ttk.Frame):
                     width, height = img.size
                     self.logger.debug(f"Original {camera_name} {image_type} image size: {width}x{height}")
                     
-                    # For 16:9 images, scale to fit width completely
-                    ratio = self.image_width / width
-                    new_size = (self.image_width, int(height * ratio))
+                    # Calculate scaling factors for both width and height
+                    width_ratio = self.image_width / width
+                    height_ratio = self.image_height / height
+                    
+                    # Use the minimum ratio to ensure the entire image fits in the container
+                    ratio = min(width_ratio, height_ratio)
+                    new_size = (int(width * ratio), int(height * ratio))
                     
                     # Log resize dimensions
                     self.logger.debug(f"Resizing {camera_name} {image_type} image to: {new_size[0]}x{new_size[1]} (ratio: {ratio:.2f})")
@@ -840,11 +849,12 @@ class ImageViewerPanel(ttk.Frame):
                     # Resize the original image
                     resized = img.resize(new_size, Image.LANCZOS)
                     
-                    # Calculate position to center the image vertically
-                    y_offset = max(0, (self.image_height - new_size[1]) // 2)
+                    # Calculate position to center the image in both dimensions
+                    x_offset = (self.image_width - new_size[0]) // 2
+                    y_offset = (self.image_height - new_size[1]) // 2
                     
                     # Paste the resized image onto the center of the container
-                    container_img.paste(resized, (0, y_offset))
+                    container_img.paste(resized, (x_offset, y_offset))
                 else:
                     # Standard resizing for other cameras
                     width, height = img.size
