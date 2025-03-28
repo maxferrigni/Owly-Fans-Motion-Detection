@@ -850,55 +850,55 @@ class ImageViewerPanel(ttk.Frame):
             self.display_empty_placeholder(camera_name, image_type)
             return False
             
-        def update_detection_info(self, camera_name, image_path):
-            """
-            Update detection result information based on latest detection logs.
-            Modified in v1.4.9 to use direct values instead of looking for non-existent metadata files.
+    def update_detection_info(self, camera_name, image_path):
+        """
+        Update detection result information based on latest detection logs.
+        Modified in v1.4.9 to use direct values instead of looking for non-existent metadata files.
+        
+        Args:
+            camera_name (str): Camera name
+            image_path (str): Path to comparison image (not used anymore)
+        """
+        try:
+            # Use camera-specific default values based on log information
+            if camera_name == "Wyze Internal Camera":
+                is_detected = False
+                confidence = 0.0
+                criteria_text = (
+                    "Detection criteria not met: Confidence score: 0.0% (threshold: 80.0%), "
+                    "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
+                )
+            elif camera_name == "Bindy Patio Camera":
+                is_detected = False
+                confidence = 0.0
+                criteria_text = (
+                    "Detection criteria not met: Confidence score: 0.0% (threshold: 70.0%), "
+                    "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
+                )
+            else:  # Upper Patio Camera
+                is_detected = False
+                confidence = 0.0
+                criteria_text = (
+                    "Detection criteria not met: Confidence score: 0.0% (threshold: 60.0%), "
+                    "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
+                )
             
-            Args:
-                camera_name (str): Camera name
-                image_path (str): Path to comparison image (not used anymore)
-            """
-            try:
-                # Use camera-specific default values based on log information
-                if camera_name == "Wyze Internal Camera":
-                    is_detected = False
-                    confidence = 0.0
-                    criteria_text = (
-                        "Detection criteria not met: Confidence score: 0.0% (threshold: 80.0%), "
-                        "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
-                    )
-                elif camera_name == "Bindy Patio Camera":
-                    is_detected = False
-                    confidence = 0.0
-                    criteria_text = (
-                        "Detection criteria not met: Confidence score: 0.0% (threshold: 70.0%), "
-                        "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
-                    )
-                else:  # Upper Patio Camera
-                    is_detected = False
-                    confidence = 0.0
-                    criteria_text = (
-                        "Detection criteria not met: Confidence score: 0.0% (threshold: 60.0%), "
-                        "Shape: 0.0%, Motion: 0.0%, Temporal: 0.0%, Camera: 0.0%"
-                    )
-                
-                # Update detection results
-                self.detection_results[camera_name]['confidence'] = confidence
-                self.detection_results[camera_name]['criteria_text'] = criteria_text
-                self.detection_results[camera_name]['is_detected'] = is_detected
-                
-                # Update GUI elements
-                color = "green" if is_detected else "red"
-                self.result_labels[camera_name].config(
-                    text="Owl Detected!" if is_detected else "No Owl Detected.",
-                    foreground=color
-                )
-                self.detail_labels[camera_name].config(text=criteria_text)
-                self.confidence_indicators[camera_name].config(
-                    text=f"{confidence:.1f}% confidence",
-                    foreground=color
-                )
+            # Update detection results
+            self.detection_results[camera_name]['confidence'] = confidence
+            self.detection_results[camera_name]['criteria_text'] = criteria_text
+            self.detection_results[camera_name]['is_detected'] = is_detected
+            
+            # Update GUI elements
+            color = "green" if is_detected else "red"
+            self.result_labels[camera_name].config(
+                text="Owl Detected!" if is_detected else "No Owl Detected.",
+                foreground=color
+            )
+            self.detail_labels[camera_name].config(text=criteria_text)
+            self.confidence_indicators[camera_name].config(
+                text=f"{confidence:.1f}% confidence",
+                foreground=color
+            )
 
-            except Exception as e:
-                self.logger.error(f"Error updating detection info for {camera_name}: {e}")
+        except Exception as e:
+            self.logger.error(f"Error updating detection info for {camera_name}: {e}")
