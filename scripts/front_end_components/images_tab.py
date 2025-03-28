@@ -623,7 +623,7 @@ class ImageViewerPanel(ttk.Frame):
     def load_and_display_image(self, camera_name, image_type):
         """
         Load and display an image for a specific camera and type.
-        Fixed to properly resize and center images with different aspect ratios.
+        Simplified approach based on the working 1.4.5 version.
         
         Args:
             camera_name (str): Name of the camera
@@ -657,11 +657,19 @@ class ImageViewerPanel(ttk.Frame):
                 orig_width, orig_height = img.size
                 self.logger.debug(f"Original {camera_name} {image_type} image size: {orig_width}x{orig_height}")
                 
-                # Resize the image for display (common resize function for all cameras)
-                container_img = self.resize_image_to_container(img, camera_name, image_type)
+                # Simple resize while maintaining aspect ratio
+                width, height = img.size
+                ratio = min(self.image_width/width, self.image_height/height)
+                new_size = (int(width * ratio), int(height * ratio))
+                
+                # Log resize dimensions
+                self.logger.debug(f"Resizing {camera_name} {image_type} image to: {new_size[0]}x{new_size[1]} (ratio: {ratio:.2f})")
+                
+                # Resize the image using high-quality resampling
+                resized = img.resize(new_size, Image.LANCZOS)
                 
                 # Convert to PhotoImage
-                photo = ImageTk.PhotoImage(container_img)
+                photo = ImageTk.PhotoImage(resized)
                 
                 # Update image label
                 self.image_labels[camera_name][image_type].config(image=photo)
@@ -774,11 +782,19 @@ class ImageViewerPanel(ttk.Frame):
                         self.logger.error(f"Error applying enhanced visualization: {viz_error}")
                         # Continue with original image if visualization fails
             
-            # Resize the image for display (using our common resize function)
-            container_img = self.resize_image_to_container(img, camera_name, image_type)
+            # Simple resize, similar to what worked in 1.4.5
+            width, height = img.size
+            ratio = min(self.image_width/width, self.image_height/height)
+            new_size = (int(width * ratio), int(height * ratio))
+            
+            # Log resize dimensions
+            self.logger.debug(f"Resizing {camera_name} {image_type} to: {new_size[0]}x{new_size[1]} (ratio: {ratio:.2f})")
+            
+            # Resize the image using high-quality resampling
+            resized = img.resize(new_size, Image.LANCZOS)
             
             # Convert to PhotoImage
-            photo = ImageTk.PhotoImage(container_img)
+            photo = ImageTk.PhotoImage(resized)
             
             # Update image label
             self.image_labels[camera_name][image_type].config(image=photo)
