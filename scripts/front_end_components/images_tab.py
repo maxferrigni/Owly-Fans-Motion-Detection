@@ -606,15 +606,11 @@ class ImageViewerPanel(ttk.Frame):
             # Get the base image path
             base_path = get_base_image_path(camera_name, lighting_condition)
             
-            # If no metadata file, fall back to file creation time (better than modification time)
+            # Use modification time which is updated when the file is overwritten
             if os.path.exists(base_path):
-                # Get creation time if possible, otherwise use modification time
-                if hasattr(os.path, 'getctime'):
-                    creation_time = os.path.getctime(base_path)
-                else:
-                    creation_time = os.path.getmtime(base_path)
-                    
-                capture_time = datetime.fromtimestamp(creation_time)
+                # Always use modification time for more accurate and up-to-date timestamps
+                mod_time = os.path.getmtime(base_path)
+                capture_time = datetime.fromtimestamp(mod_time)
                 self.base_image_original_timestamps[camera_name] = capture_time
                 return capture_time
                 

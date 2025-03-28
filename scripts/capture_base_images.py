@@ -80,18 +80,18 @@ def capture_real_image(roi):
     Capture a screenshot of the specified region.
     
     Args:
-        roi (tuple): Region of interest (x, y, width, height)
+        roi (tuple): Region of interest (x1, y1, x2, y2)
     
     Returns:
         PIL.Image: Captured screenshot
     """
-    x, y, width, height = roi
-    width = abs(width - x)
-    height = abs(height - y)
-    logger.info(f"Capturing screenshot: x={x}, y={y}, width={width}, height={height}")
+    x1, y1, x2, y2 = roi
+    width = abs(x2 - x1)
+    height = abs(y2 - y1)
+    logger.info(f"Capturing screenshot: x={x1}, y={y1}, width={width}, height={height}")
     if width <= 0 or height <= 0:
         raise ValueError(f"Invalid ROI dimensions: {roi}")
-    return pyautogui.screenshot(region=(x, y, width, height))
+    return pyautogui.screenshot(region=(x1, y1, width, height))
 
 def detect_lighting_mismatch(camera_name):
     """
