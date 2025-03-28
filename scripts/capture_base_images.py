@@ -1,11 +1,12 @@
 # File: capture_base_images.py
 # Purpose: Capture and manage base images for motion detection system
 #
-# March 20, 2025 Update - Version 1.4.7.1
-# - Simplified base image capture logic to only capture at key transition points
-# - Only capture at application startup and after day/night transitions complete
-# - Skip base image capture during transition periods
-# - Added clear logging to show capture decision rationale
+# March 28, 2025 Update - Version 1.6.0
+# - Added detect_lighting_mismatch function to validate base images
+# - Implemented automatic recovery for mismatched lighting conditions
+# - Added validation for base image creation timestamps
+# - Enhanced reliability during day/night transitions
+# - Updated for new ROI coordinates
 
 import os
 import pyautogui
@@ -34,6 +35,7 @@ from utilities.time_utils import (
     get_lighting_info,
     is_pure_lighting_condition,
     format_time_until,
+    determine_lighting_at_time
 )
 from upload_images_to_supabase import upload_base_image
 
@@ -90,6 +92,56 @@ def capture_real_image(roi):
     if width <= 0 or height <= 0:
         raise ValueError(f"Invalid ROI dimensions: {roi}")
     return pyautogui.screenshot(region=(x, y, width, height))
+
+def detect_lighting_mismatch(camera_name):
+    """
+    Check if current base image matches current lighting condition.
+    
+    Args:
+        camera_name (str): Name of the camera
+        
+    Returns:
+        bool: True if mismatch detected, False if base image matches current lighting
+    """
+    try:
+        # Get current lighting condition
+        current_lighting = get_current_lighting_condition()
+        
+        # Get path to expected base image for current condition
+        expected_base_path = get_base_image_path(camera_name, current_lighting)
+        
+        # Check if the file exists
+        if not os.path.exists(expected_base_path):
+            logger.warning(f"Base image for {current_lighting} not found for {camera_name}")
+            return True
+            
+        # Check if the file is stale (created during different lighting condition)
+        file_creation_time = datetime.fromtimestamp(
+            os.path.getctime(expected_base_path)
+        )
+        
+        # Convert to timezone-aware datetime
+        file_creation_time = pytz.timezone('America/Los_Angeles').localize(file_creation_time)
+        
+        # Get lighting condition at file creation time
+        file_creation_lighting = determine_lighting_at_time(file_creation_time)
+        
+        # Check if they match
+        if file_creation_lighting != current_lighting:
+            logger.warning(
+                f"Base image lighting mismatch for {camera_name}: "
+                f"Current: {current_lighting}, Image: {file_creation_lighting}"
+            )
+            return True
+            
+        # Base image is valid for current lighting condition
+        logger.debug(f"Base image for {camera_name} matches current lighting condition: {current_lighting}")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error checking lighting match: {e}")
+        # On error, assume mismatch to force new capture
+        return True
 
 def get_latest_base_image(camera_name, lighting_condition):
     """
@@ -154,6 +206,19 @@ def get_latest_base_image(camera_name, lighting_condition):
                     except:
                         pass
             
+            # If we detect a lighting mismatch, force capture of a new base image
+            if detect_lighting_mismatch(camera_name):
+                logger.warning(f"Detected base image lighting mismatch for {camera_name}. Forcing new capture.")
+                # Capture a new base image for the current lighting condition
+                configs = load_config()
+                if camera_name in configs:
+                    image = capture_real_image(configs[camera_name]["roi"])
+                    save_base_image(image, camera_name, lighting_condition)
+                    logger.info(f"New base image captured for {camera_name} in {lighting_condition} condition")
+                    
+                    # Return the path to the newly captured image
+                    return get_base_image_path(camera_name, lighting_condition)
+            
             # If we get here, we couldn't find a suitable base image
             raise FileNotFoundError(f"No base image found for {camera_name} under {lighting_condition} condition")
             
@@ -168,7 +233,7 @@ def save_base_image(image, camera_name, lighting_condition):
     """
     Save base image to fixed location and upload to Supabase.
     If local saving is enabled, also save a copy to the saved_images directory.
-    Updated in v1.4.7.1 to ensure base images are only saved at key times.
+    Updated in v1.6.0 to add lighting condition validation.
     
     Args:
         image (PIL.Image): The base image to save
@@ -278,7 +343,7 @@ def should_capture_base_image():
 def capture_base_images(lighting_condition=None, force_capture=False, show_ui_message=False):
     """
     Capture new base images for all cameras.
-    Updated in v1.4.7.1 to use simplified capture logic.
+    Updated in v1.6.0 to validate lighting condition matches.
     
     Args:
         lighting_condition (str, optional): Override current lighting condition
@@ -374,32 +439,38 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
             logger.info(f"Capturing base image for {camera_name}...")
             
             try:
-                # Capture new image
-                new_image = capture_real_image(config["roi"])
+                # Check if we need to capture a new base image due to lighting mismatch
+                needs_new_capture = force_capture or detect_lighting_mismatch(camera_name)
                 
-                # Save and upload - no annotations in v1.4.7.1
-                local_path, supabase_url = save_base_image(
-                    new_image,
-                    camera_name,
-                    lighting_condition
-                )
-                
-                # Check if save was successful
-                if not local_path:
-                    logger.warning(f"Base image save failed for {camera_name}")
-                    continue
-                
-                results.append({
-                    'camera': camera_name,
-                    'local_path': local_path,
-                    'supabase_url': supabase_url,
-                    'lighting_condition': lighting_condition,
-                    'is_transition': is_transition,
-                    'is_pure': is_pure,
-                    'timestamp': datetime.now(pytz.timezone('America/Los_Angeles')).isoformat(),
-                    'status': 'success',
-                    'version': get_version_tag()
-                })
+                if needs_new_capture:
+                    # Capture new image
+                    new_image = capture_real_image(config["roi"])
+                    
+                    # Save and upload - no annotations in v1.4.7.1
+                    local_path, supabase_url = save_base_image(
+                        new_image,
+                        camera_name,
+                        lighting_condition
+                    )
+                    
+                    # Check if save was successful
+                    if not local_path:
+                        logger.warning(f"Base image save failed for {camera_name}")
+                        continue
+                    
+                    results.append({
+                        'camera': camera_name,
+                        'local_path': local_path,
+                        'supabase_url': supabase_url,
+                        'lighting_condition': lighting_condition,
+                        'is_transition': is_transition,
+                        'is_pure': is_pure,
+                        'timestamp': datetime.now(pytz.timezone('America/Los_Angeles')).isoformat(),
+                        'status': 'success',
+                        'version': get_version_tag()
+                    })
+                else:
+                    logger.info(f"Base image for {camera_name} already matches current lighting condition, skipping capture")
                 
             except Exception as e:
                 logger.error(f"Error capturing base image for {camera_name}: {e}")
@@ -419,7 +490,7 @@ def capture_base_images(lighting_condition=None, force_capture=False, show_ui_me
 def handle_lighting_transition(old_condition, new_condition):
     """
     Handle transition between lighting conditions.
-    Updated in v1.4.7.1 to use simplified base image capture logic.
+    Updated in v1.6.0 to validate base image lighting conditions.
     
     Args:
         old_condition (str): Previous lighting condition
@@ -448,6 +519,23 @@ def handle_lighting_transition(old_condition, new_condition):
             else:
                 logger.info(f"Lighting condition changed again to {current_condition}, skipping capture")
         
+        # Check for mismatches between existing base images and current lighting
+        elif new_condition in ['day', 'night']:
+            # Load camera configurations
+            configs = load_config()
+            
+            # Check each camera's base image
+            mismatch_detected = False
+            for camera_name in configs.keys():
+                if detect_lighting_mismatch(camera_name):
+                    logger.warning(f"Base image lighting mismatch detected for {camera_name} during {new_condition} condition")
+                    mismatch_detected = True
+            
+            # If any mismatches detected, force capture of new base images
+            if mismatch_detected:
+                logger.info(f"Forcing base image capture due to lighting mismatches")
+                capture_base_images(lighting_condition=new_condition, force_capture=True)
+        
     except Exception as e:
         logger.error(f"Error handling lighting transition: {e}")
         raise
@@ -455,7 +543,7 @@ def handle_lighting_transition(old_condition, new_condition):
 def should_capture_startup_base_images():
     """
     Determine if base images should be captured on startup.
-    Updated in v1.4.7.1 to always return True for startup.
+    Updated in v1.6.0 to check for lighting mismatches.
     
     Returns:
         bool: True if base images should be captured on startup
@@ -471,6 +559,13 @@ def should_capture_startup_base_images():
         condition = lighting_info['condition']
         
         logger.info(f"Current lighting condition on startup: {condition}")
+        
+        # Check if any existing base images have lighting mismatches
+        configs = load_config()
+        for camera_name in configs.keys():
+            if detect_lighting_mismatch(camera_name):
+                logger.warning(f"Base image lighting mismatch detected for {camera_name} on startup")
+                return True
         
         # Always capture images on startup if running - this is a key trigger point
         logger.info("Application startup detected - will capture base images")

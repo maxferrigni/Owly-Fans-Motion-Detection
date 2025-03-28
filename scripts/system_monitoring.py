@@ -519,6 +519,39 @@ def start_wyze_monitoring(config=None):
     monitor.start_monitoring()
     return monitor
 
+def record_system_status(send_to_admins=False):
+    # Record current system status to database and optionally email admins
+    # Args:
+    #     send_to_admins (bool): Whether to send status to admin subscribers
+    # Returns:
+    #     dict: Recorded status data or None if error
+    try:
+        status_data = {
+            'cpu_usage': psutil.cpu_percent(),
+            'memory_usage': psutil.virtual_memory().percent,
+            'disk_space_free': psutil.disk_usage('/').free,
+            'camera_feeds_status': check_camera_feeds(),
+            'obs_status': monitor.check_obs_process(),
+            'alert_system_status': check_alert_system(),
+            'base_image_status': check_base_images(),
+            'last_detection_results': get_last_detection_results(),
+            'system_uptime': int(time.time() - psutil.boot_time()),
+            'notes': 'Automated system monitoring log'
+        }
+
+        log_id = record_monitoring_log(status_data)
+
+        if send_to_admins:
+            send_monitoring_email(status_data)
+            update_monitoring_log_sent(log_id)
+
+        return status_data
+
+    except Exception as e:
+        logger.error(f"Error recording system status: {e}")
+        return None
+
+
 if __name__ == "__main__":
     import random  # For the recovery jitter
     

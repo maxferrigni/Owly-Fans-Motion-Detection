@@ -1,6 +1,6 @@
 {
     "Wyze Internal Camera": {
-        "roi": [-1899, 698, -1255, 1039],
+        "roi": [2474, 186, 2828, 899],
         "alert_type": "Owl In Box",
         "consecutive_frames_threshold": 2,
         "day_settings": {
@@ -41,7 +41,7 @@
         }
     },
     "Bindy Patio Camera": {
-        "roi": [1441, 350, 1636, 526],
+        "roi": [3436, 1817, 3620, 1952],
         "alert_type": "Owl On Box",
         "consecutive_frames_threshold": 2,
         "day_settings": {
@@ -82,7 +82,7 @@
         }
     },
     "Upper Patio Camera": {
-        "roi": [395, 454, 900, 680],
+        "roi": [2590, 1928, 2918, 2022],
         "alert_type": "Owl In Area",
         "consecutive_frames_threshold": 2,
         "day_settings": {

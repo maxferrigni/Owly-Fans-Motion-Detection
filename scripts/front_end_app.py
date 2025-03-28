@@ -1,11 +1,10 @@
 # File: scripts/front_end_app.py
 # Purpose: Main application window for the Owl Monitoring System
 #
-# March 19, 2025 Update - Version 1.4.4
-# - Added global is_running flag to prevent background image saving
-# - Enhanced image clearing to remove all images from all directories
-# - Added version tagging support for image filenames
-# - Fixed issues with Images tab behavior and initialization
+# March 28, 2025 Update - Version 1.6.0
+# - Updated window position for new 4K monitor
+# - Set application to start at coordinates (20, 20)
+# - Added support for new ROI coordinates
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -53,7 +52,9 @@ class OwlApp:
         # Initialize window
         self.root = root
         self.root.title("Owl Monitoring App")
-        self.root.geometry("900x600+-1920+0")
+        
+        # Set window position for new 4K monitor (coordinates 20,20)
+        self.root.geometry("900x600+20+20")
         self.root.update_idletasks()
         self.root.resizable(True, True)
 

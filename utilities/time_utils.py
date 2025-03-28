@@ -294,6 +294,28 @@ def get_current_lighting_condition():
     logger.debug(f"Current lighting condition: {condition} (detailed: {detailed_condition})")
     return condition
 
+def determine_lighting_at_time(time_obj):
+    # Determine lighting condition (day or night) at a specific datetime
+    # Args:
+    #     time_obj (datetime): Time to check
+    # Returns:
+    #     str: 'day' or 'night'
+    try:
+        sunrise_sunset = load_sunrise_sunset_data()
+        today = time_obj.date()
+        sunrise = datetime.combine(today, sunrise_sunset['sunrise']).replace(tzinfo=pytz.UTC)
+        sunset = datetime.combine(today, sunrise_sunset['sunset']).replace(tzinfo=pytz.UTC)
+
+        if sunrise <= time_obj <= sunset:
+            return "day"
+        else:
+            return "night"
+
+    except Exception as e:
+        logger.error(f"Error determining lighting at time {time_obj}: {e}")
+        return "unknown"
+
+
 def get_lighting_info():
     """
     Get all lighting-related information in a single call.
