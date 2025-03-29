@@ -623,7 +623,7 @@ class ImageViewerPanel(ttk.Frame):
     def load_and_display_image(self, camera_name, image_type):
         """
         Load and display an image for a specific camera and type.
-        Simplified approach based on the working 1.4.5 version.
+        Version specifically designed for high-DPI displays and TVs used as monitors.
         
         Args:
             camera_name (str): Name of the camera
@@ -639,188 +639,203 @@ class ImageViewerPanel(ttk.Frame):
             
             # Get the path to the image
             image_path = self.get_image_path(camera_name, image_type)
+            capture_time = None
             
-            # Handle special case for base images
+            # ===== STAGE 1: IMAGE LOADING =====
+            
+            # Handle base images separately
             if image_type == "base":
-                # For base images, try to get original capture time from metadata
                 capture_time = self.load_base_image_metadata(camera_name)
                 
-                # Now check if the base image exists
                 if not image_path or not os.path.exists(image_path):
                     self.display_empty_placeholder(camera_name, image_type)
                     return False
-                    
-                # Load the base image
-                img = Image.open(image_path)
                 
-                # Get original dimensions for debugging
-                orig_width, orig_height = img.size
-                self.logger.debug(f"Original {camera_name} {image_type} image size: {orig_width}x{orig_height}")
-                
-                # Simple resize while maintaining aspect ratio
-                width, height = img.size
-                ratio = min(self.image_width/width, self.image_height/height)
-                new_size = (int(width * ratio), int(height * ratio))
-                
-                # Log resize dimensions
-                self.logger.debug(f"Resizing {camera_name} {image_type} image to: {new_size[0]}x{new_size[1]} (ratio: {ratio:.2f})")
-                
-                # Resize the image using high-quality resampling
-                resized = img.resize(new_size, Image.LANCZOS)
-                
-                # Convert to PhotoImage
-                photo = ImageTk.PhotoImage(resized)
-                
-                # Update image label
-                self.image_labels[camera_name][image_type].config(image=photo)
-                
-                # Update timestamp label with original capture time
-                if capture_time:
-                    # Convert to local timezone
-                    local_time = capture_time
-                    if local_time.tzinfo is None:
-                        local_time = pytz.timezone('America/Los_Angeles').localize(local_time)
-                    time_str = local_time.strftime('%H:%M:%S')
-                    # Use a different color or prefix to indicate this is a base image timestamp
-                    self.timestamp_labels[camera_name][image_type].config(
-                        text=f"Captured: {time_str}",
-                        foreground="blue"  # Different color for base image timestamps
-                    )
-                    # Store timestamp
-                    self.image_timestamps[camera_name][image_type] = capture_time
-                
-                # Store reference to prevent garbage collection
-                self.image_refs[camera_name][image_type] = photo
-                
-                return True
-            
-            # Standard handling for current and analysis images
-            # First try direct component path
-            component_path = get_component_image_path(camera_name, image_type)
-            
-            # Get the 3-panel comparison image path as fallback
-            comparison_path = get_comparison_image_path(camera_name)
-            
-            # Determine which path to use
-            image_path = None
-            use_component = False
-            capture_time = None
-            
-            if os.path.exists(component_path):
-                image_path = component_path
-                use_component = True
-                # Get file modification time for timestamp
-                mod_time = os.path.getmtime(component_path)
-                capture_time = datetime.fromtimestamp(mod_time)
-                
-                # Check if file has been modified since last check
-                camera_key = f"{camera_name}_{image_type}"
-                if camera_key in self.last_modified and mod_time <= self.last_modified[camera_key] and self.image_refs[camera_name][image_type]:
-                    return False
-                    
-                # Store modification time
-                self.last_modified[camera_key] = mod_time
-                
-            elif os.path.exists(comparison_path):
-                image_path = comparison_path
-                # Get file modification time for timestamp
-                mod_time = os.path.getmtime(comparison_path)
-                capture_time = datetime.fromtimestamp(mod_time)
-                
-                # Check if file has been modified since last check
-                if mod_time <= self.last_modified.get(camera_name, 0) and self.image_refs[camera_name][image_type]:
-                    return False
-                    
-                # Store modification time if this is the analysis image (use as marker for all images)
-                if image_type == "analysis":
-                    self.last_modified[camera_name] = mod_time
-            else:
-                # No image available
-                self.display_empty_placeholder(camera_name, image_type)
-                return False
-            
-            # Load the image
-            if use_component:
-                # Direct component loading
                 img = Image.open(image_path)
             else:
-                # Extract from comparison image
-                comparison_image = Image.open(image_path)
-                panel_index = {"base": 0, "current": 1, "analysis": 2}[image_type]
-                img = self.extract_panel_from_comparison(comparison_image, panel_index)
+                # Handle current and analysis images
+                component_path = get_component_image_path(camera_name, image_type)
+                comparison_path = get_comparison_image_path(camera_name)
+                
+                if os.path.exists(component_path):
+                    # Use component image directly
+                    image_path = component_path
+                    mod_time = os.path.getmtime(component_path)
+                    capture_time = datetime.fromtimestamp(mod_time)
+                    
+                    # Check for updates
+                    camera_key = f"{camera_name}_{image_type}"
+                    if camera_key in self.last_modified and mod_time <= self.last_modified[camera_key] and self.image_refs[camera_name][image_type]:
+                        return False
+                    
+                    self.last_modified[camera_key] = mod_time
+                    img = Image.open(image_path)
+                    
+                elif os.path.exists(comparison_path):
+                    # Extract from comparison image
+                    image_path = comparison_path
+                    mod_time = os.path.getmtime(comparison_path)
+                    capture_time = datetime.fromtimestamp(mod_time)
+                    
+                    # Check for updates
+                    if mod_time <= self.last_modified.get(camera_name, 0) and self.image_refs[camera_name][image_type]:
+                        return False
+                    
+                    if image_type == "analysis":
+                        self.last_modified[camera_name] = mod_time
+                    
+                    # Extract panel
+                    comparison_img = Image.open(comparison_path)
+                    
+                    # Critical: Log the full comparison image size
+                    c_width, c_height = comparison_img.size
+                    self.logger.debug(f"DPI-FIX: Comparison image size: {c_width}x{c_height}")
+                    
+                    # Calculate panel width - handle potential rounding issues
+                    panel_width = c_width // 3
+                    panel_index = {"base": 0, "current": 1, "analysis": 2}[image_type]
+                    
+                    # Calculate boundaries
+                    left = panel_index * panel_width
+                    right = left + panel_width
+                    
+                    self.logger.debug(f"DPI-FIX: Extracting panel from {left} to {right}")
+                    
+                    # Extract the panel - use explicit boundaries
+                    img = comparison_img.crop((left, 0, right, c_height))
+                    
+                    # Verify the extracted image size
+                    p_width, p_height = img.size
+                    self.logger.debug(f"DPI-FIX: Extracted panel size: {p_width}x{p_height}")
+                    
+                else:
+                    # No image found
+                    self.display_empty_placeholder(camera_name, image_type)
+                    return False
             
-            if not img:
-                self.display_empty_placeholder(camera_name, image_type)
-                return False
+            # ===== STAGE 2: IMAGE PROCESSING =====
             
-            # For analysis images, update detection info and apply enhanced visualization if available
+            # Process analysis images (owl detection visualization)
             if image_type == "analysis":
-                # Update detection info
                 self.update_detection_info(camera_name, image_path)
                 
-                # Check if we have owl candidates to visualize
                 candidates = self.detection_results[camera_name].get("owl_candidates", [])
                 confidence = self.detection_results[camera_name].get("confidence", 0.0)
                 
                 if candidates and len(candidates) > 0:
                     try:
-                        # Convert PIL image to OpenCV format for visualization
                         cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-                        
-                        # Add confidence to candidates for color-coding
                         for candidate in candidates:
                             candidate["confidence"] = confidence
-                        
-                        # Apply enhanced visualization with confidence coloring
                         enhanced_img = draw_owl_candidates(cv_img, candidates)
-                        
-                        # Convert back to PIL for display
                         img = Image.fromarray(cv2.cvtColor(enhanced_img, cv2.COLOR_BGR2RGB))
-                        
-                        self.logger.debug(f"Applied enhanced visualization to {camera_name} analysis image with {len(candidates)} candidates")
                     except Exception as viz_error:
-                        self.logger.error(f"Error applying enhanced visualization: {viz_error}")
-                        # Continue with original image if visualization fails
+                        self.logger.error(f"Error in visualization: {viz_error}")
             
-            # Simple resize, similar to what worked in 1.4.5
-            width, height = img.size
-            ratio = min(self.image_width/width, self.image_height/height)
-            new_size = (int(width * ratio), int(height * ratio))
+            # ===== STAGE 3: IMAGE SIZING AND DISPLAY (HIGH DPI FIX) =====
             
-            # Log resize dimensions
-            self.logger.debug(f"Resizing {camera_name} {image_type} to: {new_size[0]}x{new_size[1]} (ratio: {ratio:.2f})")
+            # Get the current dimensions of the image container
+            # For DPI-scaled displays, we need to work with the actual container dimensions
+            container = self.image_containers[camera_name][image_type]
             
-            # Resize the image using high-quality resampling
-            resized = img.resize(new_size, Image.LANCZOS)
+            # Force container to update its geometry
+            container.update_idletasks()
             
-            # Convert to PhotoImage
+            # Get actual container dimensions (these may be scaled by DPI)
+            actual_width = container.winfo_width()
+            actual_height = container.winfo_height()
+            
+            # Log container dimensions
+            self.logger.debug(f"DPI-FIX: Container dimensions for {camera_name} {image_type}: {actual_width}x{actual_height}")
+            
+            # Use actual dimensions if available, otherwise fall back to defined values
+            target_width = actual_width if actual_width > 1 else self.image_width
+            target_height = actual_height if actual_height > 1 else self.image_height
+            
+            # Log target dimensions
+            self.logger.debug(f"DPI-FIX: Target dimensions: {target_width}x{target_height}")
+            
+            # Get original image dimensions
+            orig_width, orig_height = img.size
+            self.logger.debug(f"DPI-FIX: Original image size: {orig_width}x{orig_height}")
+            
+            # Calculate aspect ratio of the image
+            if orig_height > 0:
+                img_aspect = orig_width / orig_height
+            else:
+                img_aspect = 1.0  # Default to square if height is zero
+                
+            self.logger.debug(f"DPI-FIX: Image aspect ratio: {img_aspect:.4f}")
+            
+            # Calculate container aspect ratio
+            if target_height > 0:
+                container_aspect = target_width / target_height
+            else:
+                container_aspect = 1.0  # Default to square if height is zero
+                
+            self.logger.debug(f"DPI-FIX: Container aspect ratio: {container_aspect:.4f}")
+            
+            # Determine optimal scaling based on aspect ratios
+            if img_aspect >= container_aspect:
+                # Image is wider than container (relative to height)
+                # Scale by width and adjust height
+                new_width = target_width
+                new_height = int(new_width / img_aspect)
+                self.logger.debug(f"DPI-FIX: Scaling by width")
+            else:
+                # Image is taller than container (relative to width)
+                # Scale by height and adjust width
+                new_height = target_height
+                new_width = int(new_height * img_aspect)
+                self.logger.debug(f"DPI-FIX: Scaling by height")
+            
+            # Ensure dimensions are at least 1 pixel
+            new_width = max(1, new_width)
+            new_height = max(1, new_height)
+            
+            self.logger.debug(f"DPI-FIX: Final resize dimensions: {new_width}x{new_height}")
+            
+            # Resize the image
+            resized = img.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Convert to PhotoImage directly (no intermediate container image)
             photo = ImageTk.PhotoImage(resized)
             
             # Update image label
             self.image_labels[camera_name][image_type].config(image=photo)
             
-            # Use different color for current/analysis timestamps
-            timestamp_color = "gray"
+            # ===== STAGE 4: UPDATE TIMESTAMP AND STORE REFERENCES =====
             
-            # Update timestamp label with capture time
+            # Update timestamp display
             if capture_time:
-                # Convert to local timezone
-                local_time = capture_time.astimezone(pytz.timezone('America/Los_Angeles'))
-                time_str = local_time.strftime('%H:%M:%S')
-                self.timestamp_labels[camera_name][image_type].config(
-                    text=f"Captured: {time_str}",
-                    foreground=timestamp_color
-                )
-                # Store timestamp
-                self.image_timestamps[camera_name][image_type] = capture_time
+                # Format and localize timestamp
+                try:
+                    if hasattr(capture_time, 'tzinfo') and capture_time.tzinfo is None:
+                        capture_time = pytz.timezone('America/Los_Angeles').localize(capture_time)
+                    
+                    time_str = capture_time.strftime('%H:%M:%S')
+                    
+                    # Different formatting for base vs other images
+                    color = "blue" if image_type == "base" else "gray"
+                    self.timestamp_labels[camera_name][image_type].config(
+                        text=f"Captured: {time_str}",
+                        foreground=color
+                    )
+                    
+                    # Store timestamp
+                    self.image_timestamps[camera_name][image_type] = capture_time
+                except Exception as ts_error:
+                    self.logger.error(f"Error formatting timestamp: {ts_error}")
             
             # Store reference to prevent garbage collection
             self.image_refs[camera_name][image_type] = photo
             
             return True
-                
+        
         except Exception as e:
-            self.logger.error(f"Error loading {image_type} image for {camera_name}: {e}")
+            self.logger.error(f"Error in high-DPI load_and_display_image for {camera_name} {image_type}: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             self.display_empty_placeholder(camera_name, image_type)
             return False
             
