@@ -405,60 +405,49 @@ class TestInterface:
 
     def run_detection_test(self):
         """Run owl detection test with loaded images using confidence metrics"""
-        camera = self.camera_var.get()
-        if not camera:
+        camera_name = self.camera_var.get()
+        if not camera_name:
             messagebox.showwarning("Warning", "Please select a camera first")
             return
             
-        if camera not in self.base_images or camera not in self.test_images:
+        if camera_name not in self.base_images or camera_name not in self.test_images:
             messagebox.showwarning("Warning", "Please load both base and test images")
             return
             
-        try:
-            # Get configuration
-            config = self.load_camera_config()
-            camera_config = config[camera]
+        # Get configuration
+        config = self.load_camera_config()
+        
+        # Create a copy of the camera config for modification
+        camera_config = config[camera_name].copy()
+        
+        # Force night mode for testing
+        # Add a root-level luminance_threshold from the night settings
+        if 'night_settings' in camera_config and 'luminance_threshold' in camera_config['night_settings']:
+            camera_config['luminance_threshold'] = camera_config['night_settings']['luminance_threshold']
+        else:
+            # Fallback value if night settings aren't available
+            camera_config['luminance_threshold'] = 20
             
-            # Add or update confidence thresholds in config
-            camera_config["owl_confidence_threshold"] = self.confidence_threshold_var.get()
-            camera_config["consecutive_frames_threshold"] = self.consecutive_frames_var.get()
-            
-            # Update the threshold indicator
-            self.threshold_indicator.config(
-                text=f"Threshold: {self.confidence_threshold_var.get():.1f}%"
-            )
-            
-            # Update the frames threshold label
-            self.frames_threshold_label.config(
-                text=str(self.consecutive_frames_var.get())
-            )
-            
-            # Run the detection with confidence metrics
-            is_present, info = detect_owl_in_box(
-                self.test_images[camera],
-                self.base_images[camera],
-                camera_config,
-                is_test=True,
-                camera_name=camera
-            )
-            
-            # Create confidence-enhanced comparison image
-            create_comparison_image(
-                self.base_images[camera],
-                self.test_images[camera],
-                camera_name=camera,
-                threshold=camera_config["luminance_threshold"],
-                config=camera_config,
-                detection_info=info,
-                is_test=True
-            )
-            
-            # Display results with confidence metrics
-            self.display_results(is_present, info)
-                
-        except Exception as e:
-            self.logger.error(f"Error running detection test: {e}")
-            messagebox.showerror("Error", f"Detection test failed: {e}")
+        # Add confidence thresholds from the UI
+        camera_config["owl_confidence_threshold"] = self.confidence_threshold_var.get()
+        camera_config["consecutive_frames_threshold"] = self.consecutive_frames_var.get()
+        
+        # Update the threshold indicator
+        self.threshold_indicator.config(
+            text=f"Threshold: {self.confidence_threshold_var.get():.1f}%"
+        )
+        
+        # Run the detection with confidence metrics
+        is_present, info = detect_owl_in_box(
+            self.test_images[camera_name],
+            self.base_images[camera_name],
+            camera_config,
+            is_test=True,
+            camera_name=camera_name
+        )
+        
+        # Display results with confidence metrics
+        self.display_results(is_present, info)
 
     def display_results(self, detection_result, info):
         """Display detection test results with confidence information"""
