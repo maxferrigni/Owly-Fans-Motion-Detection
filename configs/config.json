@@ -6,12 +6,13 @@
         "day_settings": {
             "threshold_percentage": 0.15,
             "luminance_threshold": 15,
-            "owl_confidence_threshold": 75.0,
-            "lighting_thresholds": {
-                "day": 10,
-                "civil_twilight": 8,
-                "astronomical_twilight": 6,
-                "night": 5
+            "owl_confidence_threshold": 60.0,  
+            "motion_detection": {
+                "min_circularity": 0.4,       
+                "min_aspect_ratio": 0.4,       
+                "max_aspect_ratio": 2.0,       
+                "min_area_ratio": 0.15,        
+                "brightness_threshold": 20
             },
             "motion_detection": {
                 "min_circularity": 0.6,
@@ -24,12 +25,13 @@
         "night_settings": {
             "threshold_percentage": 0.22,  
             "luminance_threshold": 20,     
-            "owl_confidence_threshold": 80.0,
-            "lighting_thresholds": {
-                "day": 15,
-                "civil_twilight": 12,
-                "astronomical_twilight": 8,
-                "night": 5
+            "owl_confidence_threshold": 60.0,  
+            "motion_detection": {
+                "min_circularity": 0.4,        
+                "min_aspect_ratio": 0.4,       
+                "max_aspect_ratio": 2.0,       
+                "min_area_ratio": 0.15,        
+                "brightness_threshold": 30      
             },
             "motion_detection": {
                 "min_circularity": 0.7,        
