@@ -1,6 +1,6 @@
 {
     "Wyze Internal Camera": {
-        "roi": [2474, 186, 2828, 899],
+        "roi": [2474, 186, 3828, 899],
         "alert_type": "Owl In Box",
         "consecutive_frames_threshold": 2,
         "day_settings": {
