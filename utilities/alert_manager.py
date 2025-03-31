@@ -1,7 +1,10 @@
 # File: utilities/alert_manager.py
 # Purpose: Manage owl detection alerts with hierarchy, timing rules, and confidence-based decisions
 #
-# March 2025 Update - Version 1.3.0
+# March 31, 2025 Update - Version 1.3.1
+# - Enhanced image URL handling to include all detection images
+# - Improved email alert with comprehensive image URLs
+# - Enhanced confidence information structure for email notifications
 # - Simplified to focus only on email alerts
 # - Removed text alerts and email-to-text functionality
 # - Streamlined alert processing
@@ -155,10 +158,13 @@ class AlertManager:
                     return True
         return False
 
-    def _send_email_alert_async(self, camera_name, alert_type, alert_entry, alert_id, comparison_image_url=None, confidence_info=None, is_test=False):
+    def _send_email_alert_async(self, camera_name, alert_type, alert_entry, alert_id, 
+                               comparison_image_url=None, base_image_url=None,
+                               current_image_url=None, analysis_image_url=None,
+                               confidence_info=None, is_test=False):
         """
         Background thread function to send email alerts.
-        Simplified in v1.3.0 to focus only on email alerts.
+        Enhanced in v1.3.1 to include all image URLs.
         
         Args:
             camera_name (str): Name of the camera
@@ -166,6 +172,9 @@ class AlertManager:
             alert_entry (dict): Alert entry from database
             alert_id (str): Unique identifier for this alert
             comparison_image_url (str, optional): URL to the comparison image
+            base_image_url (str, optional): URL to the base image
+            current_image_url (str, optional): URL to the current image
+            analysis_image_url (str, optional): URL to the analysis image
             confidence_info (dict, optional): Confidence information
             is_test (bool, optional): Whether this is a test alert
         """
@@ -187,14 +196,18 @@ class AlertManager:
                     email_count = len(email_subscribers) if email_subscribers else 0
                     logger.info(f"Sending email alerts to {email_count} subscribers")
                     
-                    # Send email alert with test prefix, image URL, and alert ID
+                    # Send email alert with test prefix, all image URLs, and alert ID
                     send_email_alert(
                         camera_name, 
                         alert_type, 
                         is_test=is_test, 
                         test_prefix=test_prefix,
                         image_url=comparison_image_url,
-                        alert_id=alert_id
+                        base_image_url=base_image_url,
+                        current_image_url=current_image_url,
+                        analysis_image_url=analysis_image_url,
+                        alert_id=alert_id,
+                        confidence_info=confidence_info
                     )
                 except Exception as e:
                     logger.error(f"Error sending email alerts: {e}")
@@ -252,16 +265,22 @@ class AlertManager:
         except Exception as e:
             logger.error(f"Error in background alert processing: {e}")
 
-    def _send_alert(self, camera_name, alert_type, activity_log_id=None, comparison_image_url=None, confidence_info=None, is_test=False, trigger_condition=None):
+    def _send_alert(self, camera_name, alert_type, activity_log_id=None, 
+                   comparison_image_url=None, base_image_url=None,
+                   current_image_url=None, analysis_image_url=None,
+                   confidence_info=None, is_test=False, trigger_condition=None):
         """
         Send email alerts based on alert type and cooldown period.
-        Simplified in v1.3.0 to focus only on email alerts.
+        Enhanced in v1.3.1 to include all image URLs.
         
         Args:
             camera_name (str): Name of the camera that triggered the alert
             alert_type (str): Type of alert ("Owl In Box", "Owl On Box", "Owl In Area", etc.)
             activity_log_id (int, optional): ID of the corresponding activity log entry
             comparison_image_url (str, optional): URL to the comparison image
+            base_image_url (str, optional): URL to the base image
+            current_image_url (str, optional): URL to the current image
+            analysis_image_url (str, optional): URL to the analysis image
             confidence_info (dict, optional): Confidence information for this alert
             is_test (bool, optional): Whether this is a test alert
             trigger_condition (str, optional): What triggered this alert
@@ -317,11 +336,19 @@ class AlertManager:
                 'activity_log_id': activity_log_id
             }
             
-            # Start a background thread to send emails
+            # Start a background thread to send emails with all image URLs
             # This prevents the UI from freezing during network operations
             thread = threading.Thread(
                 target=self._send_email_alert_async,
-                args=(camera_name, alert_type, alert_entry, alert_id, comparison_image_url, confidence_info, is_test)
+                args=(camera_name, alert_type, alert_entry, alert_id),
+                kwargs={
+                    'comparison_image_url': comparison_image_url,
+                    'base_image_url': base_image_url,
+                    'current_image_url': current_image_url,
+                    'analysis_image_url': analysis_image_url,
+                    'confidence_info': confidence_info,
+                    'is_test': is_test
+                }
             )
             thread.daemon = True  # Make thread exit when main thread exits
             thread.start()
@@ -451,7 +478,7 @@ class AlertManager:
     def process_detection(self, camera_name, detection_result, activity_log_id=None, is_test=False):
         """
         Process detection results and send alerts based on hierarchy, cooldown, and confidence.
-        Simplified in v1.3.0 to focus only on email alerts.
+        Enhanced in v1.3.1 to include all image URLs.
         
         Args:
             camera_name (str): Name of the camera that triggered the detection
@@ -488,14 +515,20 @@ class AlertManager:
             logger.debug(f"No owl detected for {alert_type}, skipping alert")
             return False
             
-        # Get image URL if available
+        # Extract all available image URLs
         comparison_image_url = detection_result.get("comparison_image_url")
+        base_image_url = detection_result.get("base_image_url")
+        current_image_url = detection_result.get("current_image_url")
+        analysis_image_url = detection_result.get("analysis_image_url")
             
-        # Extract confidence information
+        # Extract enhanced confidence information with additional metrics
         confidence_info = {
             "owl_confidence": detection_result.get("owl_confidence", 0.0),
             "consecutive_owl_frames": detection_result.get("consecutive_owl_frames", 0),
-            "confidence_factors": detection_result.get("confidence_factors", {})
+            "confidence_factors": detection_result.get("confidence_factors", {}),
+            "threshold_used": detection_result.get("threshold_used", 60.0),
+            "pixel_change": detection_result.get("pixel_change", 0.0),
+            "luminance_change": detection_result.get("luminance_change", 0.0)
         }
         
         # Get priority for hierarchy checks
@@ -521,24 +554,30 @@ class AlertManager:
 
         # Determine which alert to send based on hierarchy or if it's a test
         if is_test:
-            # For tests, just send the alert directly
+            # For tests, just send the alert directly with all image URLs
             return self._send_alert(
                 camera_name, 
                 alert_type, 
                 activity_log_id, 
-                comparison_image_url, 
-                confidence_info, 
+                comparison_image_url=comparison_image_url,
+                base_image_url=base_image_url,
+                current_image_url=current_image_url,
+                analysis_image_url=analysis_image_url,
+                confidence_info=confidence_info, 
                 is_test=True,
                 trigger_condition=f"TEST: {trigger_condition}"
             )
         elif alert_type in ["Eggs Or Babies", "Two Owls In Box"]:
-            # Highest priority alerts - always send
+            # Highest priority alerts - always send with all image URLs
             return self._send_alert(
                 camera_name, 
                 alert_type, 
                 activity_log_id, 
-                comparison_image_url, 
-                confidence_info,
+                comparison_image_url=comparison_image_url,
+                base_image_url=base_image_url,
+                current_image_url=current_image_url,
+                analysis_image_url=analysis_image_url,
+                confidence_info=confidence_info,
                 trigger_condition=trigger_condition
             )
         elif alert_type == "Two Owls":
@@ -548,8 +587,11 @@ class AlertManager:
                     camera_name, 
                     alert_type, 
                     activity_log_id, 
-                    comparison_image_url, 
-                    confidence_info,
+                    comparison_image_url=comparison_image_url,
+                    base_image_url=base_image_url,
+                    current_image_url=current_image_url,
+                    analysis_image_url=analysis_image_url,
+                    confidence_info=confidence_info,
                     trigger_condition=trigger_condition
                 )
         elif alert_type == "Owl In Box":
@@ -561,8 +603,11 @@ class AlertManager:
                     camera_name, 
                     alert_type, 
                     activity_log_id, 
-                    comparison_image_url, 
-                    confidence_info,
+                    comparison_image_url=comparison_image_url,
+                    base_image_url=base_image_url,
+                    current_image_url=current_image_url,
+                    analysis_image_url=analysis_image_url,
+                    confidence_info=confidence_info,
                     trigger_condition=trigger_condition
                 )
         elif alert_type == "Owl On Box":
@@ -575,8 +620,11 @@ class AlertManager:
                     camera_name, 
                     alert_type, 
                     activity_log_id, 
-                    comparison_image_url, 
-                    confidence_info,
+                    comparison_image_url=comparison_image_url,
+                    base_image_url=base_image_url,
+                    current_image_url=current_image_url,
+                    analysis_image_url=analysis_image_url,
+                    confidence_info=confidence_info,
                     trigger_condition=trigger_condition
                 )
         elif alert_type == "Owl In Area":
@@ -590,8 +638,11 @@ class AlertManager:
                     camera_name, 
                     alert_type, 
                     activity_log_id, 
-                    comparison_image_url, 
-                    confidence_info,
+                    comparison_image_url=comparison_image_url,
+                    base_image_url=base_image_url,
+                    current_image_url=current_image_url,
+                    analysis_image_url=analysis_image_url,
+                    confidence_info=confidence_info,
                     trigger_condition=trigger_condition
                 )
 
@@ -742,7 +793,10 @@ if __name__ == "__main__":
                 "temporal_confidence": 15.0,
                 "camera_confidence": 5.0
             },
-            "comparison_image_url": "https://example.com/image.jpg"
+            "comparison_image_url": "https://example.com/image.jpg",
+            "base_image_url": "https://example.com/base.jpg",
+            "current_image_url": "https://example.com/current.jpg",
+            "analysis_image_url": "https://example.com/analysis.jpg"
         }
 
         # Process test detection with alert ID tracking

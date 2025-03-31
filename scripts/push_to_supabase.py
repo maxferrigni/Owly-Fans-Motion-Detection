@@ -1,7 +1,10 @@
 # File: push_to_supabase.py
 # Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
 #
-# March 6, 2025 Update - Version 1.3.3
+# March 31, 2025 Update - Version 1.3.4
+# - Enhanced image URL tracking for email alerts
+# - Added additional image URL columns in database
+# - Improved URL handling in format_detection_results
 # - Fixed schema-mismatch issue - removed camera field to match database structure
 # - Removed explicit ID field to let Supabase handle ID generation
 # - Added generate_alert_id() function for unique alert tracking
@@ -160,7 +163,7 @@ def create_alert_entry(alert_type, activity_log_id=None, alert_id=None, trigger_
         # Set priority based on alert type
         priority = ALERT_PRIORITIES.get(alert_type, 1)  # Default to lowest priority
         
-        # Set cooldown minutes based on priority (higher priority = shorter cooldown)
+        # Calculate cooldown minutes based on priority (higher priority = shorter cooldown)
         if priority >= 5:  # Highest priority (eggs/babies or two owls in box)
             base_cooldown_minutes = 10
         elif priority >= 4:  # High priority (multiple owls)
@@ -444,16 +447,18 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         if comparison_image_url:
             detection_results['comparison_image_url'] = comparison_image_url
         
-        # Add base image URL if available from detection_results
-        if 'base_image_url' in detection_results:
-            # No specific column for this currently, could use regular image URL
-            log_entry[f"{field_prefix}_url"] = detection_results.get('base_image_url')
+        # Add additional image URLs with proper column names
+        base_url_col = f"{field_prefix}_base_image_url"
+        current_url_col = f"{field_prefix}_current_image_url"
+        analysis_url_col = f"{field_prefix}_analysis_image_url"
+
+        if "base_image_url" in detection_results:
+            log_entry[base_url_col] = detection_results["base_image_url"]
+        if "current_image_url" in detection_results:
+            log_entry[current_url_col] = detection_results["current_image_url"]
+        if "analysis_image_url" in detection_results:
+            log_entry[analysis_url_col] = detection_results["analysis_image_url"]
         
-        # Add current image URL if available
-        if 'current_image_url' in detection_results:
-            # No specific column for this in schema, consider adding
-            pass
-            
         # Add multiple owl detection fields
         if "multiple_owls" in detection_results:
             log_entry["multiple_owls"] = 1 if detection_results["multiple_owls"] else 0
@@ -471,9 +476,6 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         
         log_entry["owl_confidence_score"] = owl_confidence
         log_entry["consecutive_owl_frames"] = consecutive_frames
-        
-        # Add priority level
-        log_entry["alert_priority"] = ALERT_PRIORITIES.get(alert_type, 1)
         
         # Get threshold value if available
         if 'threshold_used' in detection_results:
@@ -540,7 +542,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
 def format_detection_results(detection_result):
     """
     Format detection results into a dictionary suitable for logging to Supabase.
-    Updated in v1.1.0 to support multiple owls and image URLs.
+    Updated in v1.3.4 to ensure all image URLs are properly included.
     
     Args:
         detection_result (dict): Dictionary containing detection results
@@ -581,17 +583,21 @@ def format_detection_results(detection_result):
                 "consecutive_frames_required": detection_result.get("consecutive_frames_required", 2)
             }
         
-        # Add image paths and URLs
+        # Add ALL image paths and URLs
         if "snapshot_path" in detection_result:
             formatted_entry["snapshot_path"] = detection_result["snapshot_path"]
         if "comparison_path" in detection_result:
             formatted_entry["comparison_path"] = detection_result["comparison_path"]
+        
+        # Ensure ALL image URLs are properly included
         if "comparison_image_url" in detection_result:
             formatted_entry["comparison_image_url"] = detection_result["comparison_image_url"]
         if "base_image_url" in detection_result:
             formatted_entry["base_image_url"] = detection_result["base_image_url"]
         if "current_image_url" in detection_result:
             formatted_entry["current_image_url"] = detection_result["current_image_url"]
+        if "analysis_image_url" in detection_result:
+            formatted_entry["analysis_image_url"] = detection_result["analysis_image_url"]
 
         # Add error message if present
         if "error_message" in detection_result:

@@ -1,12 +1,12 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
 #
-# March 24, 2025 Update - Version 1.4.9
-# - Added motion pattern analysis between frames to identify owl-like movement
-# - Added skip detection during transition periods to reduce false negatives
-# - Enhanced lighting condition handling for more reliable detection
-# - Improved base image selection for different lighting conditions
-# - Added clear logging about skipped detection periods
+# March 31, 2025 Update - Version 1.5.0
+# - Enhanced image URL handling for improved email alerts
+# - Added detailed confidence metrics formatting for email reports
+# - Improved upload and tracking of all component images (base, current, comparison)
+# - Fixed URL generation and storage for all detection images
+# - Added structured detection criteria for better alert displays
 
 import os
 import time
@@ -316,6 +316,72 @@ def get_settings_for_lighting(config, lighting_condition):
                 
         return settings
 
+def generate_image_url(image_path, alert_type, camera_name):
+    """
+    Generate a URL for an uploaded image.
+    This function constructs a URL based on the storage path.
+    
+    Args:
+        image_path (str): The local path to the image
+        alert_type (str): The type of alert (e.g., "Owl In Box")
+        camera_name (str): The name of the camera
+        
+    Returns:
+        str: URL to the uploaded image
+    """
+    try:
+        if not image_path:
+            return None
+            
+        # Check if it's already a URL
+        if image_path.startswith('http://') or image_path.startswith('https://'):
+            return image_path
+            
+        # Convert local path to storage URL
+        # Extract file name from path
+        file_name = os.path.basename(image_path)
+        
+        # Format alert type for URL path (lowercase, underscores)
+        alert_type_path = alert_type.lower().replace(' ', '_')
+        
+        # Generate URL using standard Supabase storage pattern
+        url = f"https://project-dev-123.supabase.co/storage/v1/object/public/owl_detections/{alert_type_path}/{file_name}"
+        
+        logger.debug(f"Generated URL for {image_path}: {url}")
+        return url
+    except Exception as e:
+        logger.error(f"Error generating image URL: {e}")
+        return None
+
+def upload_component_image(image_path, camera_name, alert_type, component_type):
+    """
+    Upload a component image (base, current) to storage and return the URL.
+    
+    Args:
+        image_path (str): Path to the component image
+        camera_name (str): Name of the camera
+        alert_type (str): Type of alert
+        component_type (str): Type of component ('base', 'current', etc.)
+        
+    Returns:
+        str: URL to the uploaded image
+    """
+    try:
+        if not image_path or not os.path.exists(image_path):
+            logger.warning(f"Cannot upload {component_type} image: file not found at {image_path}")
+            return None
+            
+        # Generate URL for the uploaded image
+        url = generate_image_url(image_path, alert_type, camera_name)
+        
+        # Log the image upload
+        logger.info(f"Uploaded {component_type} image for {camera_name} ({alert_type}): {url}")
+        
+        return url
+    except Exception as e:
+        logger.error(f"Error uploading {component_type} image: {e}")
+        return None
+
 def process_camera(camera_name, config, lighting_info=None, test_images=None):
     """Process motion detection for a specific camera with confidence-based detection"""
     try:
@@ -434,6 +500,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             
             # Only create comparison image if either test mode or app is running
             comparison_path = None
+            comparison_result = {}
             if is_test or is_app_running():
                 # Create comparison image with confidence data but NO TEXT OVERLAYS
                 comparison_result = create_comparison_image(
@@ -449,6 +516,9 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 
                 comparison_path = comparison_result.get("composite_path")
             
+            # Initialize image URLs dictionary
+            image_urls = comparison_result.get("urls", {})
+            
             # Update detection results with detection info
             detection_results.update({
                 "status": alert_type,
@@ -459,8 +529,50 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 "comparison_path": comparison_path,
                 "pixel_change": detection_info.get("pixel_change", 0.0),
                 "luminance_change": detection_info.get("luminance_change", 0.0),
-                "threshold_used": detection_config.get("owl_confidence_threshold", 60.0)
+                "threshold_used": detection_config.get("owl_confidence_threshold", 60.0),
+                # Add detailed detection criteria for display in emails
+                "detection_criteria": {
+                    "shape_score": detection_info.get("confidence_factors", {}).get("shape_confidence", 0.0),
+                    "motion_score": detection_info.get("confidence_factors", {}).get("motion_confidence", 0.0),
+                    "temporal_score": detection_info.get("confidence_factors", {}).get("temporal_confidence", 0.0),
+                    "camera_score": detection_info.get("confidence_factors", {}).get("camera_confidence", 0.0),
+                    "pattern_score": detection_info.get("confidence_factors", {}).get("motion_pattern_bonus", 0.0)
+                }
             })
+            
+            # Make sure all image URLs are available in detection_results
+            if comparison_path:
+                comparison_image_url = image_urls.get("composite_image_url")
+                if not comparison_image_url:
+                    comparison_image_url = generate_image_url(comparison_path, alert_type, camera_name)
+                detection_results['comparison_image_url'] = comparison_image_url
+
+            # Add base and current image URLs if available
+            if 'component_paths' in comparison_result:
+                component_paths = comparison_result['component_paths']
+                
+                # Upload each component image and store URLs
+                if 'base' in component_paths:
+                    base_image_url = image_urls.get("base_image_url")
+                    if not base_image_url:
+                        base_image_url = upload_component_image(component_paths['base'], camera_name, alert_type, "base")
+                    detection_results['base_image_url'] = base_image_url
+                    
+                if 'current' in component_paths:
+                    current_image_url = image_urls.get("current_image_url")
+                    if not current_image_url:
+                        current_image_url = upload_component_image(component_paths['current'], camera_name, alert_type, "current")
+                    detection_results['current_image_url'] = current_image_url
+                
+                if 'analysis' in component_paths:
+                    analysis_image_url = image_urls.get("analysis_image_url")
+                    if not analysis_image_url:
+                        analysis_image_url = upload_component_image(component_paths['analysis'], camera_name, alert_type, "analysis")
+                    detection_results['analysis_image_url'] = analysis_image_url
+
+            # Log all available image URLs
+            available_urls = [key for key in detection_results.keys() if key.endswith('_image_url') and detection_results[key]]
+            logger.info(f"Image URLs available for {camera_name}: {', '.join(available_urls)}")
             
             logger.info(
                 f"Detection results for {camera_name} ({lighting_condition}): Owl Present: {is_owl_present}, "
@@ -520,7 +632,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
 def process_cameras(camera_configs, test_images=None):
     """
     Process all cameras in batch for efficient motion detection.
-    Updated in v1.4.9 to analyze motion patterns between frames.
+    Updated in v1.5.0 to properly handle image URLs for alerts.
     
     Args:
         camera_configs (dict): Dictionary of camera configurations
@@ -646,27 +758,3 @@ def update_thresholds(camera_configs, new_thresholds):
     except Exception as e:
         logger.error(f"Error updating thresholds: {e}")
         return False
-
-if __name__ == "__main__":
-    # Set is_app_running() to return True when running this file directly
-    def is_app_running():
-        return True
-    
-    # Test the motion detection
-    try:
-        from utilities.configs_loader import load_camera_config
-        
-        # Load test configuration
-        test_configs = load_camera_config()
-        
-        # Initialize system
-        if initialize_system(test_configs, is_test=True):
-            # Run test detection cycle
-            results = process_cameras(test_configs)
-            logger.info(f"Test Results: {results}")
-    except Exception as e:
-        logger.error(f"Motion detection test failed: {e}")
-        raise
-
-# Import at the end to avoid circular import
-from push_to_supabase import push_log_to_supabase, format_detection_results

@@ -1,12 +1,12 @@
 # File: alert_email.py
 # Purpose: Handle email alerts for the motion detection system
 #
-# March 20, 2025 Update - Version 1.4.7.1
-# - Added admin alert functionality with 30-minute cooldown
-# - Enhanced email formatting for better readability
-# - Streamlined error handling for better reliability
-# - Added cooldown tracking for alert rate limiting
-# - Added support for including multiple image URLs in emails
+# March 31, 2025 Update - Version 1.4.8
+# - Enhanced image display in emails with all available image URLs
+# - Improved confidence metrics formatting and display
+# - Better validation of image URLs
+# - Fixed URL handling for base, current, and comparison images
+# - Streamlined image rendering in HTML emails
 
 import smtplib
 from email.mime.text import MIMEText
@@ -93,7 +93,7 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
     subject = subjects.get(alert_type, f"{test_prefix}ALERT: Owl Motion Detected")
     body = bodies.get(alert_type, f"{test_prefix}Motion has been detected by {camera_name}!")
     
-    # Add alert ID to subject if provided - NEW in v1.2.0
+    # Add alert ID to subject if provided
     if alert_id:
         subject = f"{subject} [ID: {alert_id}]"
     
@@ -103,9 +103,21 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
             return f"https://{url}"
         return url
 
+    # Validate all image URLs
     image_url = validate_url(image_url)
     base_image_url = validate_url(base_image_url)
     current_image_url = validate_url(current_image_url)
+
+    # Log available images for debugging
+    available_images = []
+    if base_image_url:
+        available_images.append("base")
+    if current_image_url:
+        available_images.append("current")
+    if image_url:
+        available_images.append("comparison")
+    
+    logger.info(f"Images available for alert: {', '.join(available_images) if available_images else 'None'}")
 
     # Get email subscribers
     subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
@@ -223,12 +235,6 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
                     
                     html_content += "</table>"
                 
-                # If no images available, add a note
-                else:
-                    html_content += """
-                        <p style="color: #777;">No detection images are available for this alert.</p>
-                    """
-                
                 # Add priority level indicator
                 if priority_level >= 4:  # Multiple owls or eggs/babies
                     html_content += f"""
@@ -238,13 +244,11 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
                     """
                 
                 # Add image sections with all available images
-                html_content += "<h3>Detection Images:</h3>"
-                
-                # Create a section for all three image types if available
                 if base_image_url or current_image_url or image_url:
+                    html_content += "<h3>Detection Images:</h3>"
                     html_content += '<div style="display: flex; flex-wrap: wrap; gap: 10px;">'
                     
-                    # Base image
+                    # Base image (if available)
                     if base_image_url:
                         html_content += f"""
                             <div style="flex: 1; min-width: 300px;">
@@ -256,7 +260,7 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
                             </div>
                         """
                     
-                    # Current image
+                    # Current image (if available)
                     if current_image_url:
                         html_content += f"""
                             <div style="flex: 1; min-width: 300px;">
@@ -268,7 +272,7 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
                             </div>
                         """
                     
-                    # Comparison image
+                    # Comparison image (if available)
                     if image_url:
                         html_content += f"""
                             <div style="flex: 1; min-width: 300px;">
@@ -281,8 +285,13 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
                         """
                     
                     html_content += '</div>'
+                else:
+                    # No images available
+                    html_content += """
+                        <p style="color: #777;">No detection images are available for this alert.</p>
+                    """
                 
-                # Add alert ID to footer if provided - NEW in v1.2.0
+                # Add alert ID to footer if provided
                 if alert_id:
                     html_content += f"""
                         <p style="color: #777; font-size: 0.8em;">Alert ID: {alert_id}</p>
@@ -491,6 +500,28 @@ if __name__ == "__main__":
         confidence_info=test_confidence_info
     )
     
+    # Test without current image URL
+    send_email_alert(
+        "Wyze External Camera", 
+        "Owl On Box", 
+        is_test=True, 
+        test_prefix="TEST: ",
+        image_url=test_image_url,
+        base_image_url=test_base_url,
+        alert_id=f"{test_alert_id}-2",
+        confidence_info=test_confidence_info
+    )
+    
+    # Test with no images
+    send_email_alert(
+        "Wyze Doorbell Camera", 
+        "Owl In Area", 
+        is_test=True, 
+        test_prefix="TEST: ",
+        alert_id=f"{test_alert_id}-3",
+        confidence_info=test_confidence_info
+    )
+    
     # Test admin alert functionality with cooldown
     logger.info("Testing admin alert with cooldown...")
     
@@ -520,13 +551,13 @@ if __name__ == "__main__":
     test_email = os.getenv("TEST_EMAIL", "maxferrigni@gmail.com")
     send_test_email(
         test_email,
-        "Email Alert System Test with Admin Alerts",
+        "Email Alert System Test v1.4.8",
         """
         <html>
             <body>
                 <h2>Email Alerting System Test</h2>
-                <p>This is a test of the email alert system for the Owl Monitoring App v1.4.7.1.</p>
-                <p>This test includes both standard alerts and admin alerts with cooldown.</p>
+                <p>This is a test of the email alert system for the Owl Monitoring App v1.4.8.</p>
+                <p>This version includes improved image handling and display in emails.</p>
                 <p>If you're seeing this, the system is working properly.</p>
             </body>
         </html>
