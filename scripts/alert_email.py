@@ -6,6 +6,7 @@
 # - Enhanced email formatting for better readability
 # - Streamlined error handling for better reliability
 # - Added cooldown tracking for alert rate limiting
+# - Added support for including multiple image URLs in emails
 
 import smtplib
 from email.mime.text import MIMEText
@@ -42,7 +43,9 @@ if not EMAIL_PASSWORD:
     logger.error(error_msg)
     raise ValueError(error_msg)
 
-def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", image_url=None, alert_id=None):
+def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", 
+                     image_url=None, alert_id=None, base_image_url=None, 
+                     current_image_url=None, confidence_info=None):
     """
     Send email alerts based on camera name and alert type.
     
@@ -53,6 +56,9 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", ima
         test_prefix (str, optional): Prefix to add for test alerts (e.g., "TEST: ")
         image_url (str, optional): URL to the comparison image
         alert_id (str, optional): Unique ID for the alert for tracking
+        base_image_url (str, optional): URL to the base image
+        current_image_url (str, optional): URL to the current image
+        confidence_info (dict, optional): Information about detection confidence and criteria
     """
     # Check if email alerts are enabled
     if os.environ.get('OWL_EMAIL_ALERTS', 'True').lower() != 'true':
@@ -91,9 +97,15 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", ima
     if alert_id:
         subject = f"{subject} [ID: {alert_id}]"
     
-    # Ensure URL is valid and complete
-    if image_url and not (image_url.startswith('http://') or image_url.startswith('https://')):
-        image_url = f"https://{image_url}"
+    # Ensure all URLs are valid and complete
+    def validate_url(url):
+        if url and not (url.startswith('http://') or url.startswith('https://')):
+            return f"https://{url}"
+        return url
+
+    image_url = validate_url(image_url)
+    base_image_url = validate_url(base_image_url)
+    current_image_url = validate_url(current_image_url)
 
     # Get email subscribers
     subscribers = get_subscribers(notification_type="email", owl_location=alert_type)
@@ -124,7 +136,7 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", ima
                 # Personalize greeting if name is available
                 greeting = f"Hello {recipient_name}," if recipient_name else "Hello,"
 
-                # HTML email body with personalized greeting, image, and alert ID
+                # HTML email body with personalized greeting, images, and detailed metrics
                 html_content = f"""
                 <html>
                     <body>
@@ -133,13 +145,88 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", ima
                         <p>Please check the camera feed at <a href='http://www.owly-fans.com'>Owly-Fans.com</a>.</p>
                 """
                 
-                # Add image if URL provided
-                if image_url:
+                # Format confidence metrics if available
+                if confidence_info:
                     html_content += f"""
-                        <p><strong>Detection Image:</strong></p>
-                        <p><a href='{image_url}'><img src='{image_url}' 
-                            alt='Detection Image' style='max-width: 600px; max-height: 400px;' /></a></p>
-                        <p><small>If the image doesn't display, <a href='{image_url}'>click here</a> to view it.</small></p>
+                        <h3>Detection Details:</h3>
+                        <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+                            <tr style="background-color: #f2f2f2;">
+                                <th>Metric</th>
+                                <th>Value</th>
+                                <th>Threshold</th>
+                                <th>Result</th>
+                            </tr>
+                    """
+                    
+                    owl_confidence = confidence_info.get("owl_confidence", 0.0)
+                    threshold = confidence_info.get("threshold_used", 60.0)
+                    confidence_factors = confidence_info.get("confidence_factors", {})
+                    
+                    # Overall confidence row
+                    html_content += f"""
+                        <tr>
+                            <td><strong>Overall Confidence</strong></td>
+                            <td>{owl_confidence:.1f}%</td>
+                            <td>{threshold:.1f}%</td>
+                            <td style="color: {'green' if owl_confidence >= threshold else 'red'}">
+                                {'✓ Pass' if owl_confidence >= threshold else '✗ Fail'}
+                            </td>
+                        </tr>
+                    """
+                    
+                    # Add rows for confidence factors
+                    for factor, value in confidence_factors.items():
+                        factor_name = factor.replace('_', ' ').title()
+                        html_content += f"""
+                            <tr>
+                                <td>{factor_name}</td>
+                                <td>{value:.1f}%</td>
+                                <td>-</td>
+                                <td>Component</td>
+                            </tr>
+                        """
+                    
+                    # Consecutive frames
+                    consecutive_frames = confidence_info.get("consecutive_owl_frames", 0)
+                    frames_required = confidence_info.get("consecutive_frames_required", 2)
+                    html_content += f"""
+                        <tr>
+                            <td><strong>Consecutive Frames</strong></td>
+                            <td>{consecutive_frames}</td>
+                            <td>{frames_required}</td>
+                            <td style="color: {'green' if consecutive_frames >= frames_required else 'red'}">
+                                {'✓ Pass' if consecutive_frames >= frames_required else '✗ Fail'}
+                            </td>
+                        </tr>
+                    """
+                    
+                    # Other metrics if available
+                    if "pixel_change" in confidence_info:
+                        html_content += f"""
+                            <tr>
+                                <td>Pixel Change</td>
+                                <td>{confidence_info['pixel_change']:.2f}%</td>
+                                <td>-</td>
+                                <td>Informational</td>
+                            </tr>
+                        """
+                        
+                    if "luminance_change" in confidence_info:
+                        html_content += f"""
+                            <tr>
+                                <td>Luminance Change</td>
+                                <td>{confidence_info['luminance_change']:.2f}</td>
+                                <td>-</td>
+                                <td>Informational</td>
+                            </tr>
+                        """
+                    
+                    html_content += "</table>"
+                
+                # If no images available, add a note
+                else:
+                    html_content += """
+                        <p style="color: #777;">No detection images are available for this alert.</p>
                     """
                 
                 # Add priority level indicator
@@ -149,6 +236,51 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", ima
                             This is a high priority alert! (Priority Level: {priority_level}/6)
                         </p>
                     """
+                
+                # Add image sections with all available images
+                html_content += "<h3>Detection Images:</h3>"
+                
+                # Create a section for all three image types if available
+                if base_image_url or current_image_url or image_url:
+                    html_content += '<div style="display: flex; flex-wrap: wrap; gap: 10px;">'
+                    
+                    # Base image
+                    if base_image_url:
+                        html_content += f"""
+                            <div style="flex: 1; min-width: 300px;">
+                                <p><strong>Base Image:</strong></p>
+                                <a href="{base_image_url}" target="_blank">
+                                    <img src="{base_image_url}" alt="Base Image" style="max-width: 100%; max-height: 300px;" />
+                                </a>
+                                <p><small><a href="{base_image_url}" target="_blank">Open Base Image</a></small></p>
+                            </div>
+                        """
+                    
+                    # Current image
+                    if current_image_url:
+                        html_content += f"""
+                            <div style="flex: 1; min-width: 300px;">
+                                <p><strong>Current Image:</strong></p>
+                                <a href="{current_image_url}" target="_blank">
+                                    <img src="{current_image_url}" alt="Current Image" style="max-width: 100%; max-height: 300px;" />
+                                </a>
+                                <p><small><a href="{current_image_url}" target="_blank">Open Current Image</a></small></p>
+                            </div>
+                        """
+                    
+                    # Comparison image
+                    if image_url:
+                        html_content += f"""
+                            <div style="flex: 1; min-width: 300px;">
+                                <p><strong>Comparison Image:</strong></p>
+                                <a href="{image_url}" target="_blank">
+                                    <img src="{image_url}" alt="Comparison Image" style="max-width: 100%; max-height: 300px;" />
+                                </a>
+                                <p><small><a href="{image_url}" target="_blank">Open Comparison Image</a></small></p>
+                            </div>
+                        """
+                    
+                    html_content += '</div>'
                 
                 # Add alert ID to footer if provided - NEW in v1.2.0
                 if alert_id:
@@ -325,17 +457,38 @@ if __name__ == "__main__":
     random_suffix = ''.join(random.choices('0123456789ABCDEF', k=3))
     test_alert_id = f"OWL-{timestamp}-{random_suffix}"
     
-    # Test with image URL
+    # Test with image URLs
     test_image_url = "https://project-dev-123.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_image.jpg"
+    test_base_url = "https://project-dev-123.supabase.co/storage/v1/object/public/base_images/test_base.jpg"
+    test_current_url = "https://project-dev-123.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_current.jpg"
     
-    # Test standard alert with ID
+    # Example confidence information
+    test_confidence_info = {
+        "owl_confidence": 75.5,
+        "threshold_used": 60.0,
+        "consecutive_owl_frames": 3,
+        "consecutive_frames_required": 2,
+        "confidence_factors": {
+            "shape_confidence": 30.0,
+            "motion_confidence": 25.5,
+            "temporal_confidence": 15.0,
+            "camera_confidence": 5.0
+        },
+        "pixel_change": 15.2,
+        "luminance_change": 35.7
+    }
+    
+    # Test standard alert with ID and all images
     send_email_alert(
         "Wyze Internal Camera", 
         "Owl In Box", 
         is_test=True, 
         test_prefix="TEST: ",
         image_url=test_image_url,
-        alert_id=test_alert_id
+        base_image_url=test_base_url,
+        current_image_url=test_current_url,
+        alert_id=test_alert_id,
+        confidence_info=test_confidence_info
     )
     
     # Test admin alert functionality with cooldown

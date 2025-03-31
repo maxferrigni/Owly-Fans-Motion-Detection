@@ -5,6 +5,7 @@
 # - Added draw_owl_candidates function for improved visualization
 # - Uses color-coding based on confidence levels (green/yellow/red)
 # - Displays confidence percentage text for each owl candidate
+# - Ensures all images are properly uploaded to Supabase with URLs tracked
 # 
 # March 19, 2025 Update - Version 1.4.4
 # - Removed text overlays from base and analysis images
@@ -30,6 +31,13 @@ from utilities.constants import (
     get_saved_image_path,
     COMPARISON_IMAGE_FILENAMES,
     VERSION
+)
+
+# Import upload function from the upload_images_to_supabase module
+from upload_images_to_supabase import (
+    upload_component_image, 
+    upload_comparison_image, 
+    upload_detection_images
 )
 
 # Import function to check running state, otherwise default to True for backward compatibility
@@ -459,7 +467,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
     """
     Create 3-panel composite image and save individual components.
     The three panels are: base image, current image, and analysis image.
-    Updated in v1.4.4 to check running state and include version in filenames.
+    Updated to upload images to Supabase and track URLs.
     
     Args:
         base_image (PIL.Image): Base reference image
@@ -472,7 +480,7 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         timestamp (datetime): Timestamp for image
         
     Returns:
-        str: Path to saved 3-panel composite image
+        dict: Details about created images including paths and URLs
     """
     try:
         # Check if the application is running before saving any images
@@ -538,8 +546,9 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
         local_saving = os.getenv('OWL_LOCAL_SAVING', 'False').lower() == 'true'
         
         # If local saving is enabled, save a complete set of images with the same timestamp
+        local_paths = None
         if local_saving:
-            saved_paths = save_local_image_set(
+            local_paths = save_local_image_set(
                 base_image, 
                 new_image, 
                 analysis_image,
@@ -547,9 +556,59 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
                 camera_name,
                 timestamp
             )
-            
+        
+        # Determine if this is a valid owl detection based on confidence and detection info
         is_owl_detected = detection_info.get("is_owl_present", False) if detection_info else contains_owl_shapes
         confidence = detection_info.get("owl_confidence", 0.0) if detection_info else 0.0
+        
+        # Initialize empty dictionary for URLs
+        image_urls = {
+            "base_image_url": None,
+            "current_image_url": None,
+            "analysis_image_url": None,
+            "composite_image_url": None
+        }
+        
+        # Upload images to Supabase if this is a valid owl detection or test
+        if is_owl_detected or is_test:
+            try:
+                # Get alert type for this camera
+                alert_type = CAMERA_MAPPINGS.get(camera_name, "Unknown")
+                
+                # Upload individual component images
+                base_url = upload_component_image(component_paths.get("base"), camera_name, "base", alert_type)
+                current_url = upload_component_image(component_paths.get("current"), camera_name, "current", alert_type)
+                analysis_url = upload_component_image(component_paths.get("analysis"), camera_name, "analysis", alert_type)
+                
+                # Upload the composite image
+                composite_url = upload_comparison_image(composite_path, camera_name, alert_type)
+                
+                # Store URLs for returning
+                image_urls = {
+                    "base_image_url": base_url,
+                    "current_image_url": current_url,
+                    "analysis_image_url": analysis_url,
+                    "composite_image_url": composite_url
+                }
+                
+                # If multiple component images uploaded successfully, upload as a set
+                if all([base_url, current_url, analysis_url, composite_url]):
+                    upload_detection_images(
+                        base_url, 
+                        current_url, 
+                        analysis_url, 
+                        composite_url,
+                        camera_name, 
+                        alert_type, 
+                        detection_info
+                    )
+                    logger.info(f"All detection images uploaded to Supabase for {camera_name}")
+                else:
+                    logger.warning(f"Some images failed to upload for {camera_name}")
+                    
+            except Exception as upload_error:
+                logger.error(f"Error uploading images to Supabase: {upload_error}")
+                # Continue execution even if upload fails
         
         logger.info(
             f"Created images for {camera_name}. "
@@ -558,11 +617,15 @@ def create_comparison_image(base_image, new_image, camera_name, threshold, confi
             f"{'(Test Mode)' if is_test else ''}"
         )
         
-        # Return both the composite path and component paths
+        # Return comprehensive results including URLs
         return {
             "composite_path": composite_path,
             "component_paths": component_paths,
-            "contains_owl_shapes": contains_owl_shapes
+            "local_paths": local_paths,
+            "contains_owl_shapes": contains_owl_shapes,
+            "urls": image_urls,
+            "change_metrics": change_metrics,
+            "detection_info": detection_info
         }
         
     except Exception as e:
@@ -653,6 +716,13 @@ if __name__ == "__main__":
         )
         
         print(f"Test results: {result}")
+        # Check if URLs were generated
+        if result.get("urls"):
+            print("Image URLs generated successfully:")
+            for key, url in result["urls"].items():
+                print(f"  {key}: {url}")
+        else:
+            print("No image URLs were generated")
         
     except Exception as e:
         logger.error(f"Test failed: {e}")

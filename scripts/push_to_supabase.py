@@ -297,7 +297,8 @@ def format_confidence_factors(confidence_factors):
         "shape_confidence", 
         "motion_confidence", 
         "temporal_confidence", 
-        "camera_confidence"
+        "camera_confidence",
+        "motion_pattern_bonus"  # Include the motion pattern bonus
     ]
     
     try:
@@ -425,7 +426,8 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         luminance_col = f"luminance_change_{field_prefix}"
         log_entry[luminance_col] = luminance_change
         
-        # Add image URL if available
+        # Add all image URLs 
+        # Comparison image URL (from detection results or local path)
         image_url_col = f"{field_prefix}_image_comparison_url"
         comparison_path = detection_results.get('comparison_path')
         comparison_image_url = detection_results.get('comparison_image_url')
@@ -441,6 +443,16 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         # Make sure to also store it in detection_results for future use
         if comparison_image_url:
             detection_results['comparison_image_url'] = comparison_image_url
+        
+        # Add base image URL if available from detection_results
+        if 'base_image_url' in detection_results:
+            # No specific column for this currently, could use regular image URL
+            log_entry[f"{field_prefix}_url"] = detection_results.get('base_image_url')
+        
+        # Add current image URL if available
+        if 'current_image_url' in detection_results:
+            # No specific column for this in schema, consider adding
+            pass
             
         # Add multiple owl detection fields
         if "multiple_owls" in detection_results:
@@ -554,14 +566,32 @@ def format_detection_results(detection_result):
             "timestamp": detection_result.get("timestamp", datetime.datetime.now().isoformat())
         }
         
-        # Add image paths if available
+        # Add detailed criteria that qualified as an Owl Detection
+        # Include threshold values used for all criteria
+        if "confidence_factors" in detection_result:
+            formatted_entry["detection_criteria"] = {
+                "shape_confidence": detection_result.get("confidence_factors", {}).get("shape_confidence", 0.0),
+                "motion_confidence": detection_result.get("confidence_factors", {}).get("motion_confidence", 0.0),
+                "temporal_confidence": detection_result.get("confidence_factors", {}).get("temporal_confidence", 0.0),
+                "camera_confidence": detection_result.get("confidence_factors", {}).get("camera_confidence", 0.0),
+                "motion_pattern_bonus": detection_result.get("confidence_factors", {}).get("motion_pattern_bonus", 0.0),
+                "threshold_used": detection_result.get("threshold_used", 0.0),
+                "owl_confidence": detection_result.get("owl_confidence", 0.0),
+                "consecutive_frames": detection_result.get("consecutive_owl_frames", 0),
+                "consecutive_frames_required": detection_result.get("consecutive_frames_required", 2)
+            }
+        
+        # Add image paths and URLs
         if "snapshot_path" in detection_result:
             formatted_entry["snapshot_path"] = detection_result["snapshot_path"]
         if "comparison_path" in detection_result:
             formatted_entry["comparison_path"] = detection_result["comparison_path"]
-        # Add image URL if available - New in v1.1.0
         if "comparison_image_url" in detection_result:
             formatted_entry["comparison_image_url"] = detection_result["comparison_image_url"]
+        if "base_image_url" in detection_result:
+            formatted_entry["base_image_url"] = detection_result["base_image_url"]
+        if "current_image_url" in detection_result:
+            formatted_entry["current_image_url"] = detection_result["current_image_url"]
 
         # Add error message if present
         if "error_message" in detection_result:

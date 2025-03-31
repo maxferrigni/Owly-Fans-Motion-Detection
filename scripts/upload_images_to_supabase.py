@@ -165,6 +165,63 @@ def upload_comparison_image(local_image_path, camera_name, detection_type):
         logger.error(f"Error uploading image to Supabase: {e}")
         return None
 
+def upload_component_image(local_image_path, camera_name, detection_type, image_type):
+    """
+    Upload an individual component image (base, current, analysis) to Supabase Storage.
+    
+    Args:
+        local_image_path (str): Path to the image file
+        camera_name (str): Name of the camera
+        detection_type (str): Type of detection ("Owl In Box", "Owl On Box", "Owl In Area", etc.)
+        image_type (str): Type of image ("base", "current", "analysis")
+    
+    Returns:
+        str or None: Public URL of the uploaded image or None if failed
+    """
+    try:
+        if not os.path.exists(local_image_path):
+            logger.error(f"{image_type.capitalize()} image not found: {local_image_path}")
+            return None
+
+        # Get the correct folder for this detection type
+        detection_folder = get_detection_folder(detection_type)
+        
+        # Generate unique filename using timestamp
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        camera_name_clean = camera_name.lower().replace(" ", "_")
+        filename = f"{camera_name_clean}_{image_type}_{timestamp}.jpg"
+        
+        # Storage path: organized by detection type folder
+        storage_path = f"{detection_folder}/{filename}"
+
+        # Determine MIME type
+        mime_type, _ = mimetypes.guess_type(local_image_path)
+        if not mime_type:
+            mime_type = "image/jpeg"
+        
+        logger.info(f"Uploading {image_type} image for {detection_type}: {filename}")
+        logger.debug(f"Local path: {local_image_path}")
+        logger.debug(f"Storage path: {storage_path}")
+        logger.debug(f"Using bucket: {SUPABASE_BUCKET_DETECTIONS}")
+
+        # Upload image to Supabase Storage using the correct bucket
+        with open(local_image_path, "rb") as file:
+            response = supabase_client.storage.from_(SUPABASE_BUCKET_DETECTIONS).upload(
+                path=storage_path,
+                file=file,
+                file_options={"content-type": mime_type}
+            )
+
+        # Generate and return public URL
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_DETECTIONS}/{storage_path}"
+        logger.info(f"{image_type.capitalize()} image successfully uploaded to {detection_folder}: {public_url}")
+        
+        return public_url
+
+    except Exception as e:
+        logger.error(f"Error uploading {image_type} image to Supabase: {e}")
+        return None
+
 def upload_base_image(local_image_path, supabase_filename, camera_name, lighting_condition):
     """
     Upload a base image to Supabase Storage and log its metadata.
@@ -211,6 +268,35 @@ def upload_base_image(local_image_path, supabase_filename, camera_name, lighting
     except Exception as e:
         logger.error(f"Error uploading base image to Supabase: {e}")
         return None
+
+def upload_detection_images(component_paths, camera_name, detection_type):
+    """
+    Upload all component images (base, current, analysis) for a detection event.
+    
+    Args:
+        component_paths (dict): Paths to the different component images
+        camera_name (str): Name of the camera
+        detection_type (str): Type of detection ("Owl In Box", "Owl On Box", "Owl In Area", etc.)
+    
+    Returns:
+        dict: Dictionary with URLs of the uploaded images
+    """
+    try:
+        image_urls = {}
+        
+        # Upload each component if it exists
+        for image_type, local_path in component_paths.items():
+            if local_path and os.path.exists(local_path):
+                url = upload_component_image(local_path, camera_name, detection_type, image_type)
+                if url:
+                    image_urls[f"{image_type}_image_url"] = url
+        
+        logger.info(f"Uploaded {len(image_urls)} component images for {detection_type} detection by {camera_name}")
+        return image_urls
+    
+    except Exception as e:
+        logger.error(f"Error uploading detection images: {e}")
+        return {}
 
 def ensure_storage_folders_exist():
     """
