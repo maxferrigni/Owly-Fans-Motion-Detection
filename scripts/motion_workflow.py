@@ -84,13 +84,13 @@ def analyze_motion_pattern(current_candidates, previous_candidates, current_fram
     if current_area == 0 or previous_area == 0:
         return 0.0
         
-    # Calculate weighted average of overlap ratio
+    # Calculate weighted average of overlap ratio - MODIFIED: More lenient overlap requirement
     overlap_ratio = overlap_pixels / max(current_area, previous_area)
     
-    # Owl movement typically has some overlap between frames
-    # Too much = static object, too little = random noise
-    ideal_overlap = 0.6  # 60% overlap is ideal for owl movement
-    overlap_score = 10.0 * (1.0 - abs(overlap_ratio - ideal_overlap) / ideal_overlap)
+    # MODIFIED: Owl movement can have varying degrees of overlap - more lenient scoring
+    # Previous ideal_overlap was 0.6, changed to accept wider range
+    ideal_overlap = 0.4  # Lowered from 0.6 to be more permissive
+    overlap_score = 10.0 * (1.0 - min(1.0, abs(overlap_ratio - ideal_overlap) / 0.6))
     
     return max(0, min(10, overlap_score))
 
@@ -135,9 +135,9 @@ def initialize_system(camera_configs, is_test=False):
                 # Create day/night settings from legacy configuration for backward compatibility
                 migrate_legacy_config(config)
                 
-            # Ensure consecutive frames threshold is set
+            # Ensure consecutive frames threshold is set - MODIFIED: Default to 1 instead of 2
             if "consecutive_frames_threshold" not in config:
-                config["consecutive_frames_threshold"] = 2
+                config["consecutive_frames_threshold"] = 1  # CHANGED: Lowered from 2 to 1 for more sensitivity
                 
         # Verify base images directory based on local saving setting
         if not os.path.exists(BASE_IMAGES_DIR):
@@ -145,9 +145,9 @@ def initialize_system(camera_configs, is_test=False):
             logger.info(f"Created base images directory: {BASE_IMAGES_DIR}")
             
         # Log confidence thresholds for day and night
-        day_thresholds = {camera: config.get("day_settings", {}).get("owl_confidence_threshold", 60.0) 
+        day_thresholds = {camera: config.get("day_settings", {}).get("owl_confidence_threshold", 55.0) 
                           for camera, config in camera_configs.items()}
-        night_thresholds = {camera: config.get("night_settings", {}).get("owl_confidence_threshold", 60.0) 
+        night_thresholds = {camera: config.get("night_settings", {}).get("owl_confidence_threshold", 50.0) 
                            for camera, config in camera_configs.items()}
                            
         logger.info(f"Day confidence thresholds: {json.dumps(day_thresholds)}")
@@ -189,34 +189,49 @@ def migrate_legacy_config(config):
         # Create night settings with slightly adjusted values
         night_settings = json.loads(json.dumps(day_settings))  # Deep copy
         
-        # Adjust night settings for better infrared detection
+        # MODIFIED: Adjust night settings for better detection
         if "threshold_percentage" in night_settings:
-            night_settings["threshold_percentage"] = min(night_settings["threshold_percentage"] * 1.5, 1.0)
+            # MODIFIED: Lower threshold percentage for night for better motion sensitivity
+            night_settings["threshold_percentage"] = min(max(night_settings["threshold_percentage"] * 0.8, 0.05), 0.5)
             
         if "luminance_threshold" in night_settings:
-            night_settings["luminance_threshold"] = max(night_settings["luminance_threshold"] * 0.8, 5)
+            # MODIFIED: Lower luminance threshold at night to be more sensitive
+            night_settings["luminance_threshold"] = max(night_settings["luminance_threshold"] * 0.6, 5)
             
         if "owl_confidence_threshold" in night_settings:
-            night_settings["owl_confidence_threshold"] = min(night_settings["owl_confidence_threshold"] * 1.1, 95.0)
+            # MODIFIED: Lower confidence threshold for night to be more permissive
+            night_settings["owl_confidence_threshold"] = max(min(night_settings["owl_confidence_threshold"] * 0.8, 95.0), 45.0)
             
         if "motion_detection" in night_settings:
-            # Adjust motion detection parameters for night
+            # MODIFIED: Adjust motion detection parameters for night with more permissive settings
             if "min_circularity" in night_settings["motion_detection"]:
-                night_settings["motion_detection"]["min_circularity"] = min(
-                    night_settings["motion_detection"]["min_circularity"] + 0.1, 
-                    0.9
+                night_settings["motion_detection"]["min_circularity"] = max(
+                    night_settings["motion_detection"]["min_circularity"] * 0.7, 
+                    0.3  # Lower minimum to 0.3
+                )
+                
+            if "min_aspect_ratio" in night_settings["motion_detection"]:
+                night_settings["motion_detection"]["min_aspect_ratio"] = max(
+                    night_settings["motion_detection"]["min_aspect_ratio"] * 0.7, 
+                    0.3  # Lower minimum to 0.3
+                )
+                
+            if "max_aspect_ratio" in night_settings["motion_detection"]:
+                night_settings["motion_detection"]["max_aspect_ratio"] = min(
+                    night_settings["motion_detection"]["max_aspect_ratio"] * 1.3, 
+                    2.5  # Increased max to 2.5
                 )
                 
             if "min_area_ratio" in night_settings["motion_detection"]:
-                night_settings["motion_detection"]["min_area_ratio"] = min(
-                    night_settings["motion_detection"]["min_area_ratio"] * 1.2, 
-                    0.5
+                night_settings["motion_detection"]["min_area_ratio"] = max(
+                    night_settings["motion_detection"]["min_area_ratio"] * 0.5, 
+                    0.05  # Lowered to 0.05
                 )
                 
             if "brightness_threshold" in night_settings["motion_detection"]:
                 night_settings["motion_detection"]["brightness_threshold"] = max(
-                    night_settings["motion_detection"]["brightness_threshold"] * 0.7, 
-                    10
+                    night_settings["motion_detection"]["brightness_threshold"] * 0.6, 
+                    10  # Lowered to be more sensitive
                 )
         
         # Set the day and night settings in the config
@@ -261,8 +276,26 @@ def get_settings_for_lighting(config, lighting_condition):
     elif lighting_condition == 'night' and "night_settings" in config:
         return config["night_settings"]
     elif lighting_condition == 'transition':
-        # During transition periods, we'll return None to skip detection
-        return None
+        # MODIFIED: During transition periods, use the more permissive of day/night settings
+        # instead of returning None to skip detection
+        if "day_settings" in config and "night_settings" in config:
+            # For confidence threshold, use the lower of the two
+            day_confidence = config["day_settings"].get("owl_confidence_threshold", 60.0)
+            night_confidence = config["night_settings"].get("owl_confidence_threshold", 55.0)
+            
+            # Choose the settings with the lower confidence threshold
+            if night_confidence <= day_confidence:
+                transition_settings = dict(config["night_settings"])
+            else:
+                transition_settings = dict(config["day_settings"])
+                
+            # Lower the confidence threshold further for transition periods
+            if "owl_confidence_threshold" in transition_settings:
+                # MODIFIED: Reduce further for transition periods
+                transition_settings["owl_confidence_threshold"] = max(transition_settings["owl_confidence_threshold"] * 0.9, 45.0)
+                
+            logger.info(f"Using transition settings with confidence threshold: {transition_settings.get('owl_confidence_threshold', 60.0)}")
+            return transition_settings
     else:
         # Fallback to legacy settings
         logger.warning(f"Using legacy settings for {lighting_condition} condition")
@@ -314,31 +347,26 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 
             logger.info(f"Current lighting condition: {lighting_condition}")
             
-            # Skip detection during transition periods unless in test mode
-            if lighting_condition == 'transition' and not test_images:
-                logger.info(f"Skipping detection for {camera_name} during transition period")
-                return {
-                    "camera": camera_name,
-                    "status": "Skipped - Transition Period",
-                    "is_owl_present": False,
-                    "owl_confidence": 0.0,
-                    "consecutive_owl_frames": 0,
-                    "timestamp": timestamp.isoformat(),
-                    "lighting_condition": lighting_condition
-                }
+            # MODIFIED: Don't skip detection during transition periods
+            # Instead, use the more permissive settings
             
             # Get appropriate settings for current lighting
             settings = get_settings_for_lighting(config, lighting_condition)
             if settings is None and not test_images:
-                logger.warning(f"No settings available for {lighting_condition} condition. Skipping detection.")
-                return {
-                    "camera": camera_name,
-                    "status": "Skipped - No Settings",
-                    "is_owl_present": False,
-                    "owl_confidence": 0.0,
-                    "consecutive_owl_frames": 0,
-                    "timestamp": timestamp.isoformat(),
-                    "lighting_condition": lighting_condition
+                # This should rarely happen now with the modified get_settings_for_lighting
+                logger.warning(f"No settings available for {lighting_condition} condition. Using fallback settings.")
+                # Create fallback settings with very permissive thresholds
+                settings = {
+                    "threshold_percentage": 0.05,
+                    "luminance_threshold": 10,
+                    "owl_confidence_threshold": 45.0,  # Very permissive
+                    "motion_detection": {
+                        "min_circularity": 0.3,
+                        "min_aspect_ratio": 0.3,
+                        "max_aspect_ratio": 2.5,
+                        "min_area_ratio": 0.05,
+                        "brightness_threshold": 15
+                    }
                 }
                 
             # Log which settings we're using
@@ -391,6 +419,10 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 for key, value in settings.items():
                     detection_config[key] = value
                 
+            # MODIFIED: Adjust the threshold multiplier to be more sensitive
+            # This effectively lowers all thresholds
+            threshold_multiplier = threshold_multiplier * 0.8  # 20% reduction
+            
             # Pass camera name to detect_owl_in_box for temporal confidence
             is_owl_present, detection_info = detect_owl_in_box(
                 new_image, 
@@ -440,8 +472,12 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             # Format the results for database
             formatted_results = format_detection_results(detection_results)
             
+            # MODIFIED: Push to Supabase even if no owl detected but confidence is above a minimum threshold
+            # This helps with debugging and understanding near-miss detections
+            min_debug_confidence = 30.0  # Log if confidence is at least 30%
+            
             # Only push to Supabase if motion was detected or in test mode, and app is running or test mode
-            if (is_owl_present or is_test) and (is_app_running() or is_test):
+            if (is_owl_present or is_test or detection_results["owl_confidence"] >= min_debug_confidence) and (is_app_running() or is_test):
                 log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
                 
                 # Process alert only if we have a successful log entry and owl was detected
@@ -510,21 +546,8 @@ def process_cameras(camera_configs, test_images=None):
         
         logger.info(f"Processing cameras under {lighting_condition} condition")
         
-        # Skip processing during transition periods
-        if lighting_condition == 'transition' and not test_images:
-            logger.info("Transition period detected - skipping detection for all cameras")
-            results = []
-            for camera_name in camera_configs.keys():
-                results.append({
-                    "camera": camera_name,
-                    "status": "Skipped - Transition Period",
-                    "is_owl_present": False,
-                    "owl_confidence": 0.0,
-                    "consecutive_owl_frames": 0,
-                    "timestamp": datetime.now(PACIFIC_TIME).isoformat(),
-                    "lighting_condition": lighting_condition
-                })
-            return results
+        # MODIFIED: Don't skip processing during transition periods
+        # Instead use more permissive settings
         
         # Check if we should capture base images (only in real-time mode and if app is running)
         if not test_images and is_app_running():

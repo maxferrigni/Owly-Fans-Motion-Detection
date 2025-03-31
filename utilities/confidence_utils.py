@@ -40,53 +40,68 @@ def calculate_shape_confidence(owl_candidates, config):
     size_score = 0
     solidity_score = 0
     
-    # Circularity score (0-10%)
+    # MODIFIED: Circularity score (0-10%) - more lenient
     circ_value = best_candidate.get('circularity', 0)
-    ideal_circ = 0.8  # Ideal owl shape circularity
+    ideal_circ = 0.75  # CHANGED: Slightly lower ideal circularity (was 0.8)
     
-    # More strict scoring curve
-    if circ_value >= config["motion_detection"]["min_circularity"]:
+    # More lenient scoring curve
+    # MODIFIED: Much more lenient minimum circularity value
+    min_circularity = config["motion_detection"]["min_circularity"]
+    if min_circularity > 0.4:  # Enforce maximum strictness
+        min_circularity = 0.4
+        
+    if circ_value >= min_circularity:
+        # MODIFIED: More generous scoring that allows for varying owl shapes
         circ_distance = abs(circ_value - ideal_circ)
-        circularity_score = 10 * max(0, 1 - (circ_distance * 2))
+        circularity_score = 10 * max(0, 1 - (circ_distance * 1.5))  # Reduced penalty (was 2)
         logger.debug(f"Circularity score: {circularity_score:.1f}% (value: {circ_value:.2f})")
     else:
-        logger.debug(f"Circularity too low: {circ_value:.2f} < {config['motion_detection']['min_circularity']}")
+        logger.debug(f"Circularity too low: {circ_value:.2f} < {min_circularity}")
     
-    # Aspect ratio score (0-10%)
+    # MODIFIED: Aspect ratio score (0-10%) - much more lenient
     aspect_value = best_candidate.get('aspect_ratio', 0)
-    ideal_aspect = 1.2  # Ideal owl aspect ratio
+    # MODIFIED: Lower ideal aspect ratio to match the oblong shape of perched owls
+    ideal_aspect = 1.8  # CHANGED: Increased from 1.2 for more oval/oblong shape
     
-    if (config["motion_detection"]["min_aspect_ratio"] <= aspect_value <= 
-        config["motion_detection"]["max_aspect_ratio"]):
-        aspect_deviation = abs(aspect_value - ideal_aspect) / 0.7  # Normalize
+    # Enforce more permissive aspect ratio bounds
+    min_aspect = min(config["motion_detection"]["min_aspect_ratio"], 0.3)
+    max_aspect = max(config["motion_detection"]["max_aspect_ratio"], 2.5)
+    
+    if min_aspect <= aspect_value <= max_aspect:
+        # MODIFIED: More lenient scoring for aspect ratio
+        aspect_deviation = abs(aspect_value - ideal_aspect) / 1.5  # Increased tolerance (was 0.7)
         aspect_ratio_score = 10 * max(0, 1 - aspect_deviation)
         logger.debug(f"Aspect ratio score: {aspect_ratio_score:.1f}% (value: {aspect_value:.2f})")
     else:
-        logger.debug(f"Aspect ratio outside range: {aspect_value:.2f} not in [{config['motion_detection']['min_aspect_ratio']}-{config['motion_detection']['max_aspect_ratio']}]")
+        logger.debug(f"Aspect ratio outside range: {aspect_value:.2f} not in [{min_aspect}-{max_aspect}]")
     
-    # Size score (0-15%)
+    # MODIFIED: Size score (0-15%) - increased weighting and more lenient
     area_value = best_candidate.get('area_ratio', 0)
     ideal_min_area = config["motion_detection"]["min_area_ratio"]
-    ideal_max_area = ideal_min_area * 10  # Upper bound
+    # Enforce more permissive minimum area
+    ideal_min_area = min(ideal_min_area, 0.05)
+    ideal_max_area = ideal_min_area * 15  # Upper bound
     
     if area_value >= ideal_min_area:
         if area_value <= ideal_max_area:
-            # Score based on position within ideal range
-            size_score = 15 * min(1.0, area_value / (ideal_max_area / 2))
+            # MODIFIED: More generous scoring for size
+            # Score based on position within ideal range - increased weight to 15 (was 0-15%)
+            size_score = 15 * min(1.0, area_value / (ideal_max_area / 4))
         else:
-            # Penalize too large areas
-            size_score = 15 * (1.0 - min(1.0, (area_value - ideal_max_area) / ideal_max_area))
+            # Penalize too large areas but still give some points
+            size_score = 15 * max(0.3, (1.0 - min(1.0, (area_value - ideal_max_area) / ideal_max_area)))
         logger.debug(f"Area score: {size_score:.1f}% (value: {area_value:.2f})")
     else:
         logger.debug(f"Area too small: {area_value:.2f} < {ideal_min_area}")
     
-    # Solidity score (0-5%)
+    # MODIFIED: Solidity score (0-5%) - more lenient
     solidity = best_candidate.get('solidity', 0)
-    if solidity >= 0.7:
-        solidity_score = 5 * min(1.0, (solidity - 0.7) / 0.3)
+    # Lowered solidity threshold from 0.7 to 0.6
+    if solidity >= 0.6:
+        solidity_score = 5 * min(1.0, (solidity - 0.6) / 0.3)
         logger.debug(f"Solidity score: {solidity_score:.1f}% (value: {solidity:.2f})")
     else:
-        logger.debug(f"Solidity too low: {solidity:.2f} < 0.7")
+        logger.debug(f"Solidity too low: {solidity:.2f} < 0.6")
     
     # Total shape score
     shape_score = circularity_score + aspect_ratio_score + size_score + solidity_score
@@ -106,31 +121,31 @@ def calculate_motion_confidence(detection_data, config):
     Returns:
         float: Motion confidence score (0-30%)
     """
-    # Pixel change (0-15%)
+    # MODIFIED: Pixel change (0-15%) - more lenient threshold
     pixel_change = detection_data.get("pixel_change", 0) / 100  # Convert from percentage
     ideal_change = 0.3  # 30% is ideal for owl movement
-    min_change = config.get("threshold_percentage", 0.05)
+    # MODIFIED: Reduce minimum threshold to detect smaller movements
+    min_change = min(config.get("threshold_percentage", 0.05), 0.05)
     
     if pixel_change >= min_change:
-        # More stringent scoring curve - requires closer to ideal change
-        # Apply quadratic scaling based on distance from minimum threshold
+        # MODIFIED: More lenient scoring curve - linear scaling instead of quadratic
         scale_factor = min(1.0, (pixel_change - min_change) / (ideal_change - min_change))
-        pixel_score = min(15, 15 * scale_factor * scale_factor)  # Square it for quadratic scaling
+        pixel_score = min(15, 15 * scale_factor)  # Linear scaling
         logger.debug(f"Pixel change score: {pixel_score:.1f}% (value: {pixel_change:.2f})")
     else:
         pixel_score = 0
         logger.debug(f"Pixel change too low: {pixel_change:.2f} < {min_change}")
     
-    # Luminance difference (0-15%)
+    # MODIFIED: Luminance difference (0-15%) - more lenient
     luminance = detection_data.get("luminance_change", 0)
     ideal_luminance = 50  # Ideal luminance difference for owl
-    min_luminance = config.get("luminance_threshold", 20)
+    # MODIFIED: Reduce minimum luminance threshold
+    min_luminance = min(config.get("luminance_threshold", 20), 15)
     
     if luminance >= min_luminance:
-        # More stringent luminance scoring
-        # Apply quadratic scaling based on distance from minimum threshold
+        # MODIFIED: More lenient luminance scoring - linear scaling
         scale_factor = min(1.0, (luminance - min_luminance) / (ideal_luminance - min_luminance))
-        luminance_score = min(15, 15 * scale_factor * scale_factor)  # Square it for quadratic scaling
+        luminance_score = min(15, 15 * scale_factor)  # Linear scaling
         logger.debug(f"Luminance score: {luminance_score:.1f}% (value: {luminance:.1f})")
     else:
         luminance_score = 0
@@ -144,7 +159,7 @@ def calculate_motion_confidence(detection_data, config):
 def calculate_temporal_confidence(camera_name, current_confidence):
     """
     Calculate confidence score based on temporal persistence.
-    Modified to require higher quality detections for temporal confidence.
+    Modified to require fewer high quality detections for temporal confidence.
     
     Args:
         camera_name (str): Name of the camera
@@ -153,11 +168,12 @@ def calculate_temporal_confidence(camera_name, current_confidence):
     Returns:
         tuple: (temporal_confidence, consecutive_frames)
     """
-    max_frames = 5  # Maximum frames to consider
+    # MODIFIED: Lower max frames required for full temporal score
+    max_frames = 3  # Was 5 - Need fewer frames to get full score
     
-    # Increase minimum confidence required for temporal persistence
-    # This prevents low-quality detections from accumulating temporal confidence
-    confidence_threshold = 40  # Increased from 30 - higher minimum confidence to consider
+    # MODIFIED: Lower minimum confidence required for temporal persistence
+    # This helps with near-threshold detections
+    confidence_threshold = 35  # Was 40 - Lower threshold to be more permissive
     
     # Get frame history for this camera
     history = FRAME_HISTORY.get(camera_name, [])
@@ -172,7 +188,7 @@ def calculate_temporal_confidence(camera_name, current_confidence):
     if current_confidence >= confidence_threshold:
         consecutive_frames = 1
     
-    # Check previous frames with more stringent requirements
+    # Check previous frames with more lenient requirements
     quality_sum = 0
     for frame in reversed(history):
         frame_confidence = frame.get("primary_confidence", 0)
@@ -186,14 +202,14 @@ def calculate_temporal_confidence(camera_name, current_confidence):
     if consecutive_frames == 0:
         return 0, 0
     
-    # Calculate persistence score (up to 20%)
-    # Make scaling more stringent - require more frames for full score
+    # MODIFIED: Calculate persistence score (up to 20%) with more generous scaling
+    # Make scaling more lenient - require fewer frames for full score
     frames_factor = min(consecutive_frames / max_frames, 1.0)
     
-    # Add quality scaling - higher quality detections get more temporal confidence
-    quality_factor = quality_sum / consecutive_frames if consecutive_frames > 0 else 0
+    # Add quality scaling but be more generous
+    quality_factor = max(0.7, quality_sum / consecutive_frames) if consecutive_frames > 0 else 0
     
-    # Combined scaling - both frame count and quality matter
+    # MODIFIED: Combined scaling - more generous formula that gives higher scores
     persistence_score = 20 * frames_factor * quality_factor
     
     logger.debug(f"Temporal confidence: {persistence_score:.1f}% from {consecutive_frames} consecutive frames (quality factor: {quality_factor:.2f})")
@@ -203,7 +219,7 @@ def calculate_temporal_confidence(camera_name, current_confidence):
 def calculate_camera_specific_confidence(detection_data, camera_name, config):
     """
     Calculate camera-specific confidence factors.
-    Modified for more accurate camera-specific assessments.
+    Modified for more lenient camera-specific assessments.
     
     Args:
         detection_data (dict): Detection data
@@ -221,77 +237,80 @@ def calculate_camera_specific_confidence(detection_data, camera_name, config):
         region_metrics = detection_data.get("diff_metrics", {}).get("region_metrics", {})
         
         if region_metrics:
-            # More refined position analysis for Wyze Internal Camera
+            # MODIFIED: More lenient position analysis for Wyze Internal Camera
             middle = region_metrics.get("middle", {}).get("mean_luminance", 0)
             top = region_metrics.get("top", {}).get("mean_luminance", 0)
             bottom = region_metrics.get("bottom", {}).get("mean_luminance", 0)
             
             # Owls typically appear in middle or bottom, rarely just at top
-            # Night scoring - more stringent for infrared/night conditions
+            # MODIFIED: Night scoring - more lenient for infrared/night conditions
             if lighting_condition == "night":
-                # Require stronger contrast between regions at night
-                if middle > top * 1.5 and middle > 15:  # Middle must be 50% brighter than top and above minimum
+                # MODIFIED: Require less contrast between regions at night
+                if middle > top * 1.2 and middle > 10:  # Was 1.5 and 15 - reduced requirements
                     camera_score += 3
                     logger.debug("Night mode: Middle region active and sufficiently bright: +3%")
                 
-                if bottom > top * 1.5 and bottom > 15:  # Bottom must be 50% brighter than top and above minimum
+                if bottom > top * 1.2 and bottom > 10:  # Was 1.5 and 15 - reduced requirements
                     camera_score += 3
                     logger.debug("Night mode: Bottom region active and sufficiently bright: +3%")
                     
-                # Additional check for overall activity level - night footage should have significant contrast
+                # MODIFIED: Additional check for overall activity level - reduced requirement
                 avg_luminance = (top + middle + bottom) / 3
-                if avg_luminance > 20:  # Higher minimum for good owl detection at night
+                if avg_luminance > 12:  # Was 20 - lower minimum for night detection
                     camera_score += 4
                     logger.debug(f"Night mode: Sufficient overall luminance ({avg_luminance:.1f}): +4%")
             else:
-                # Day scoring - standard checks
-                if middle > top:
+                # MODIFIED: Day scoring - more lenient checks
+                if middle > top * 0.8:  # Was just middle > top - allow some lower middle values
                     camera_score += 5
                     logger.debug("Middle region more active than top: +5%")
                 
-                if bottom > top:
+                if bottom > top * 0.8:  # Was just bottom > top - allow some lower bottom values
                     camera_score += 5
                     logger.debug("Bottom region more active than top: +5%")
                 
     elif camera_name == "Bindy Patio Camera":  # On-box camera
-        # Check shape characteristics with higher requirements for Bindy camera
+        # MODIFIED: Check shape characteristics with much lower requirements for Bindy camera
         if detection_data.get("owl_candidates", []):
             best_candidate = max(detection_data["owl_candidates"], key=lambda x: x["area_ratio"])
             
-            # More stringent requirements for night mode
+            # MODIFIED: Much more lenient requirements for night mode
             if lighting_condition == "night":
-                if best_candidate.get("circularity", 0) > 0.7 and best_candidate.get("area_ratio", 0) > 0.15:
+                if best_candidate.get("circularity", 0) > 0.5 and best_candidate.get("area_ratio", 0) > 0.1:
                     camera_score = 10
                     logger.debug("Night mode - High quality shape on Bindy camera: +10%")
-                elif best_candidate.get("circularity", 0) > 0.6:
+                elif best_candidate.get("circularity", 0) > 0.4:  # Even lower threshold
                     camera_score = 5
                     logger.debug("Night mode - Medium quality shape on Bindy camera: +5%")
             else:
-                # Day mode - standard checks
-                if best_candidate.get("circularity", 0) > 0.6:
+                # MODIFIED: Day mode - more lenient checks
+                if best_candidate.get("circularity", 0) > 0.5:  # Was 0.6
                     camera_score = 10
                     logger.debug("Day mode - Good shape on Bindy camera: +10%")
+                elif best_candidate.get("circularity", 0) > 0.4:  # Added low tier scoring
+                    camera_score = 5
+                    logger.debug("Day mode - Fair shape on Bindy camera: +5%")
             
     elif camera_name == "Upper Patio Camera":  # Area camera
-        # More precise criteria for area camera
+        # MODIFIED: More precise criteria for area camera
         if detection_data.get("owl_candidates", []):
             best_candidate = max(detection_data["owl_candidates"], key=lambda x: x["area_ratio"])
             
-            # Night mode - more stringent for area camera at night
+            # MODIFIED: Night mode - more lenient for area camera at night
             if lighting_condition == "night":
-                if (best_candidate.get("circularity", 0) > 0.75 and 
-                    best_candidate.get("area_ratio", 0) > 0.03):
+                if (best_candidate.get("circularity", 0) > 0.6 and 
+                    best_candidate.get("area_ratio", 0) > 0.02):  # Was 0.75 and 0.03
                     camera_score = 10
                     logger.debug("Night mode - Excellent shape on area camera: +10%")
-                elif best_candidate.get("circularity", 0) > 0.65:
+                elif best_candidate.get("circularity", 0) > 0.5:  # Was 0.65
                     camera_score = 5
                     logger.debug("Night mode - Good shape on area camera: +5%")
             else:
-                # Day mode
-                if best_candidate.get("circularity", 0) > 0.7:
+                # MODIFIED: Day mode - more lenient
+                if best_candidate.get("circularity", 0) > 0.6:  # Was 0.7
                     camera_score = 10
                     logger.debug("Day mode - High circularity on area camera: +10%")
-                elif best_candidate.get("circularity", 0) > 0.6:
+                elif best_candidate.get("circularity", 0) > 0.5:  # Was 0.6
                     camera_score = 5
                     logger.debug("Day mode - Good circularity on area camera: +5%")
     
@@ -332,8 +351,15 @@ def calculate_owl_confidence(detection_data, camera_name, config):
             config
         )
         
-        # Final confidence score (0-100%)
-        total_confidence = primary_confidence + temporal_confidence + camera_confidence
+        # MODIFIED: Add bonus for motion pattern score if available
+        motion_pattern_bonus = 0
+        if "motion_pattern_score" in detection_data and detection_data["motion_pattern_score"] > 0:
+            # Convert 0-10 score to 0-5% bonus
+            motion_pattern_bonus = detection_data["motion_pattern_score"] * 0.5
+            logger.debug(f"Adding motion pattern bonus: +{motion_pattern_bonus:.1f}%")
+        
+        # MODIFIED: Final confidence score (0-100%) with motion pattern bonus
+        total_confidence = primary_confidence + temporal_confidence + camera_confidence + motion_pattern_bonus
         
         # Update frame history
         update_frame_history(
@@ -350,14 +376,16 @@ def calculate_owl_confidence(detection_data, camera_name, config):
                 "shape_confidence": shape_confidence,
                 "motion_confidence": motion_confidence,
                 "temporal_confidence": temporal_confidence,
-                "camera_confidence": camera_confidence
+                "camera_confidence": camera_confidence,
+                "motion_pattern_bonus": motion_pattern_bonus  # Add the bonus to factors
             }
         }
         
         logger.info(
             f"Owl confidence for {camera_name}: {total_confidence:.1f}% "
             f"(Shape: {shape_confidence:.1f}%, Motion: {motion_confidence:.1f}%, "
-            f"Temporal: {temporal_confidence:.1f}%, Camera: {camera_confidence:.1f}%)"
+            f"Temporal: {temporal_confidence:.1f}%, Camera: {camera_confidence:.1f}%, "
+            f"Pattern: {motion_pattern_bonus:.1f}%)"
         )
         
         return confidence_results
@@ -415,11 +443,23 @@ def is_owl_detected(confidence_score, camera_name, config):
     Returns:
         bool: True if owl is detected, False otherwise
     """
-    # Get camera-specific threshold or use default
-    confidence_threshold = config.get("owl_confidence_threshold", 60.0)
+    # MODIFIED: Get camera-specific threshold or use default with lower fallback threshold
+    confidence_threshold = config.get("owl_confidence_threshold", 50.0)  # Lowered default from 60.0
+    
+    # MODIFIED: Special case for Wyze Internal Camera - use even lower threshold at night
+    lighting_condition = config.get("lighting_condition", "day")
+    if camera_name == "Wyze Internal Camera" and lighting_condition == "night":
+        # Apply a 10% reduction to the threshold for Wyze camera at night
+        confidence_threshold = confidence_threshold * 0.9
+        logger.debug(f"Using reduced threshold for Wyze camera at night: {confidence_threshold:.1f}%")
     
     # Check if confidence meets threshold
     is_detected = confidence_score >= confidence_threshold
+    
+    # MODIFIED: Special case for high near-miss cases
+    # If we're within 10% of the threshold, log it as a near-miss for debugging
+    if not is_detected and confidence_score >= (confidence_threshold * 0.9):
+        logger.info(f"Near-miss detection for {camera_name}: {confidence_score:.1f}% (threshold: {confidence_threshold:.1f}%)")
     
     if is_detected:
         logger.info(f"Owl detected for {camera_name} with {confidence_score:.1f}% confidence (threshold: {confidence_threshold:.1f}%)")
