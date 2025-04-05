@@ -1,12 +1,11 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
 #
-# March 31, 2025 Update - Version 1.5.0
-# - Enhanced image URL handling for improved email alerts
-# - Added detailed confidence metrics formatting for email reports
-# - Improved upload and tracking of all component images (base, current, comparison)
-# - Fixed URL generation and storage for all detection images
-# - Added structured detection criteria for better alert displays
+# April 2025 Update - Version 1.8.0
+# - Modified error handling to prevent sending error records to Supabase
+# - Added flag to skip upload for error records
+# - Improved error recovery for detection processing
+# - Implemented cleaner fallback when formatting fails
 
 import os
 import time
@@ -581,23 +580,14 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 f"Threshold: {detection_results['threshold_used']}%"
             )
 
-            # Format the results for database
-            formatted_results = format_detection_results(detection_results)
-            
-            # MODIFIED: Push to Supabase even if no owl detected but confidence is above a minimum threshold
-            # This helps with debugging and understanding near-miss detections
-            min_debug_confidence = 30.0  # Log if confidence is at least 30%
-            
             # Only push to Supabase if motion was detected or in test mode, and app is running or test mode
-            if (is_owl_present or is_test or detection_results["owl_confidence"] >= min_debug_confidence) and (is_app_running() or is_test):
-                log_entry = push_log_to_supabase(formatted_results, lighting_condition, base_image_age)
-                
-                # Process alert only if we have a successful log entry and owl was detected
-                if log_entry and is_owl_present and not is_test:
+            if (is_owl_present or is_test or detection_results["owl_confidence"] >= 30.0) and (is_app_running() or is_test):
+                # Only push to Supabase if owl was detected
+                if is_owl_present and not is_test:
                     alert_manager.process_detection(
                         camera_name,
                         detection_results,
-                        log_entry.get("id")
+                        None
                     )
             else:
                 logger.debug(f"No owl detected for {camera_name}, skipping database push")
@@ -615,7 +605,7 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
         logger.error(f"Error processing {camera_name}: {e}")
         return {
             "camera": camera_name,
-            "status": "Error",
+            "status": "ProcessingError",  # Changed from "Error" to avoid upload attempts
             "error_message": str(e),
             "is_test": is_test if 'is_test' in locals() else False,
             "is_owl_present": False,
@@ -626,13 +616,14 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             "luminance_change": 0.0,
             "timestamp": datetime.now(PACIFIC_TIME).isoformat(),
             "version": get_version_tag(),
-            "lighting_condition": lighting_condition if 'lighting_condition' in locals() else "unknown"
+            "lighting_condition": lighting_condition if 'lighting_condition' in locals() else "unknown",
+            "_skip_upload": True  # Flag to indicate this shouldn't be uploaded
         }
 
 def process_cameras(camera_configs, test_images=None):
     """
     Process all cameras in batch for efficient motion detection.
-    Updated in v1.5.0 to properly handle image URLs for alerts.
+    Updated in v1.8.0 to properly handle error states and prevent error uploads to Supabase.
     
     Args:
         camera_configs (dict): Dictionary of camera configurations
@@ -683,9 +674,10 @@ def process_cameras(camera_configs, test_images=None):
                 results.append(result)
             except Exception as e:
                 logger.error(f"Error processing camera {camera_name}: {e}")
+                # Add result with skip_upload flag
                 results.append({
                     "camera": camera_name,
-                    "status": "Error",
+                    "status": "ProcessingError",
                     "error_message": str(e),
                     "is_owl_present": False,
                     "owl_confidence": 0.0,
@@ -693,7 +685,8 @@ def process_cameras(camera_configs, test_images=None):
                     "confidence_factors": {},
                     "timestamp": datetime.now(PACIFIC_TIME).isoformat(),
                     "version": get_version_tag(),
-                    "lighting_condition": lighting_condition
+                    "lighting_condition": lighting_condition,
+                    "_skip_upload": True  # Flag to indicate this shouldn't be uploaded
                 })
         
         return results

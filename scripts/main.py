@@ -23,7 +23,8 @@ from push_to_supabase import push_log_to_supabase
 from capture_base_images import capture_base_images
 
 # Import from push_to_supabase
-from push_to_supabase import format_detection_results  # Changed to push_to_supabase
+# Remove incorrect import and use the correct one that already exists above
+# from push_to_supabase import format_detection_results  # REMOVED
 
 # Set up logging
 logger = get_logger()
@@ -93,14 +94,14 @@ def motion_detection():
                 # Format and upload results for each camera
                 for result in camera_results:
                     try:
-                        # Format detection log for Supabase
-                        log_entry = format_detection_results(result)
-                        
-                        # Push log entry to Supabase
-                        push_log_to_supabase(log_entry)
-                        
+                        # Only push detection results to Supabase if owl was detected or in test mode
+                        if result.get("is_owl_present", False) or result.get("is_test", False):
+                            # Push log entry to Supabase
+                            push_log_to_supabase(result, result.get("lighting_condition"), 0)
+                            
                     except Exception as e:
                         logger.error(f"Error processing results for camera {result.get('camera', 'unknown')}: {e}")
+                        # Don't attempt to send error data to Supabase
 
                 # Wait before next iteration using the configured interval
                 logger.debug(f"Waiting {capture_interval} seconds for next detection cycle")

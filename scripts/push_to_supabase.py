@@ -1,15 +1,20 @@
 # File: push_to_supabase.py
 # Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
 #
-# March 31, 2025 Update - Version 1.3.4
-# - Enhanced image URL tracking for email alerts
-# - Added additional image URL columns in database
-# - Improved URL handling in format_detection_results
-# - Fixed schema-mismatch issue - removed camera field to match database structure
-# - Removed explicit ID field to let Supabase handle ID generation
-# - Added generate_alert_id() function for unique alert tracking
-# - Updated create_alert_entry to include alert_id and trigger_condition
-# - Streamlined database operations and error handling
+# April 2025 Update - Version 1.8.0
+# - Fixed format_detection_results import issue in main.py
+# - Removed error logging to Supabase
+# - Improved error handling with descriptive logging
+# - Added skip check logic to prevent error records from being uploaded
+# - Previous changes from v1.3.4:
+#   - Enhanced image URL tracking for email alerts
+#   - Added additional image URL columns in database
+#   - Improved URL handling in format_detection_results
+#   - Fixed schema-mismatch issue - removed camera field to match database structure
+#   - Removed explicit ID field to let Supabase handle ID generation
+#   - Added generate_alert_id() function for unique alert tracking
+#   - Updated create_alert_entry to include alert_id and trigger_condition
+#   - Streamlined database operations and error handling
 
 import os
 import datetime
@@ -305,6 +310,7 @@ def format_confidence_factors(confidence_factors):
     ]
     
     try:
+        # Process each expected factor
         for factor in expected_factors:
             if factor in confidence_factors:
                 # Ensure it's a float
@@ -321,7 +327,6 @@ def format_confidence_factors(confidence_factors):
         # Validate the result is JSON serializable
         json.dumps(clean_factors)
         return clean_factors
-        
     except Exception as e:
         logger.error(f"Error formatting confidence factors: {e}")
         return {}
@@ -367,6 +372,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
     Push detection results to the owl_activity_log table in Supabase.
     Checks for duplicates to prevent multiple uploads of the same data.
     Now includes confidence metrics and image URLs.
+    V1.8.0: Added skip checks to prevent error records from being uploaded
     
     Args:
         detection_results (dict): Dictionary containing detection results with confidence
@@ -377,9 +383,23 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         dict: The created log entry or None if failed
     """
     try:
+        # V1.8.0: Skip uploading errors or results marked for skipping
+        if detection_results.get("_skip_upload", False):
+            logger.debug(f"Skipping upload for {detection_results.get('camera', 'unknown')}: marked for skipping")
+            return None
+            
+        # V1.8.0: Skip if status is "Error" or "ProcessingError"
+        if detection_results.get("status") in ["Error", "ProcessingError"]:
+            logger.debug(f"Skipping upload for {detection_results.get('camera', 'unknown')}: error status")
+            return None
+
         # Validate detection results
-        if 'camera' not in detection_results or 'status' not in detection_results:
-            logger.error("Missing required camera or status field in detection results")
+        if not isinstance(detection_results, dict):
+            logger.error(f"Invalid detection_results type: {type(detection_results)}")
+            return None
+            
+        if 'status' not in detection_results:
+            logger.error("Missing required status field in detection results")
             return None
 
         # Get camera and status
@@ -543,6 +563,7 @@ def format_detection_results(detection_result):
     """
     Format detection results into a dictionary suitable for logging to Supabase.
     Updated in v1.3.4 to ensure all image URLs are properly included.
+    Updated in v1.8.0 to skip error records.
     
     Args:
         detection_result (dict): Dictionary containing detection results
@@ -551,6 +572,13 @@ def format_detection_results(detection_result):
         dict: Formatted log entry
     """
     try:
+        # V1.8.0: Skip formatting errors or processing errors
+        if detection_result.get("status") in ["Error", "ProcessingError"] or detection_result.get("_skip_upload", False):
+            # Add a skip flag to ensure this won't be uploaded
+            detection_result["_skip_upload"] = True
+            logger.debug(f"Skipping formatting for error record: {detection_result.get('camera', 'unknown')}")
+            return detection_result
+
         # Extract required fields
         camera = detection_result.get("camera")
         status = detection_result.get("status", "Unknown")
@@ -630,14 +658,16 @@ def format_detection_results(detection_result):
         return formatted_entry
     except Exception as e:
         logger.error(f"Error formatting detection results: {e}")
+        # V1.8.0: Instead of returning an error entry to be uploaded, mark it to be skipped
         return {
             "camera": detection_result.get("camera", "Unknown"),
-            "status": "Error",
+            "status": "ProcessingError",  # Changed from "Error" to prevent upload attempts
             "error_message": str(e),
-            "is_test": 0,  # Use integers for booleans
+            "is_test": 0,
             "owl_confidence": 0.0,
             "consecutive_owl_frames": 0,
-            "confidence_factors": {}
+            "confidence_factors": {},
+            "_skip_upload": True  # Flag to indicate this shouldn't be uploaded
         }
 
 def get_alert_statistics(days=1):
