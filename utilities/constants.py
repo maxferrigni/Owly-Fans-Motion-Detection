@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Version information
-VERSION = "1.91"
+VERSION = "2.0"  # Updated to reflect the new version
 
 # Base directory path from environment variables with fallback
 BASE_DIR = os.getenv("BASE_DIR", "/Users/maxferrigni/Insync/maxferrigni@gmail.com/Google Drive/01 - Owl Box/60_IT/20_Motion_Detection")
@@ -104,6 +104,9 @@ SUPABASE_STORAGE = {
     "owl_detections": os.getenv("SUPABASE_BUCKET_DETECTIONS", "owl_detections"),
     "base_images": os.getenv("SUPABASE_BUCKET_IMAGES", "base_images")
 }
+
+# Add correct Supabase URL to Constants (as per v2.0 updates)
+SUPABASE_PUBLIC_URL = os.getenv("SUPABASE_PUBLIC_URL", "https://fkolnlmblyshbeklueyh.supabase.co")
 
 # Detection folders within the owl_detections bucket
 DETECTION_FOLDERS = {

@@ -1,24 +1,19 @@
 # File: push_to_supabase.py
 # Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
 #
-# April 2025 Update - Version 1.9.1
+# April 2025 Update - Version 2.0.0
 # - Fixed database schema alignment with image URLs
 # - Removed analysis_image_url references to match current schema
 # - Fixed column naming in push_log_to_supabase()
-# - Previous changes from v1.8.0:
-#   - Fixed format_detection_results import issue in main.py
-#   - Removed error logging to Supabase
-#   - Improved error handling with descriptive logging
-#   - Added skip check logic to prevent error records from being uploaded
-#   - Previous changes from v1.3.4:
-#     - Enhanced image URL tracking for email alerts
-#     - Added additional image URL columns in database
-#     - Improved URL handling in format_detection_results
-#     - Fixed schema-mismatch issue - removed camera field to match database structure
-#     - Removed explicit ID field to let Supabase handle ID generation
-#     - Added generate_alert_id() function for unique alert tracking
-#     - Updated create_alert_entry to include alert_id and trigger_condition
-#     - Streamlined database operations and error handling
+# - Added validation for database columns before writing
+# - Updated image URL generation to use SUPABASE_PUBLIC_URL from constants
+# - Fixed URL format for all storage references
+# - Added support for alert_id in image filenames
+# - Updated cooldown periods for different alert types
+# - Previous changes from v1.9.1:
+#   - Fixed database schema alignment with image URLs
+#   - Removed analysis_image_url references to match current schema
+#   - Fixed column naming in push_log_to_supabase()
 
 import os
 import datetime
@@ -29,7 +24,7 @@ from dotenv import load_dotenv
 
 # Import utilities
 from utilities.logging_utils import get_logger
-from utilities.constants import ALERT_PRIORITIES, SUPABASE_STORAGE, get_detection_folder
+from utilities.constants import ALERT_PRIORITIES, SUPABASE_STORAGE, get_detection_folder, SUPABASE_PUBLIC_URL
 
 # Import from database_utils
 from utilities.database_utils import get_subscribers, get_table_columns, check_column_exists
@@ -65,6 +60,22 @@ last_uploaded_entries = {}
 
 # Cache for column existence checks to avoid repeated queries
 _column_cache = {}
+
+# Define valid columns for owl_activity_log table to validate against
+VALID_COLUMNS = [
+    "lighting_condition", "base_image_age_seconds", 
+    "owl_in_box", "owl_on_box", "owl_in_area", "two_owls", "two_owls_in_box", "eggs_or_babies",
+    "owl_in_box_image_comparison_url", "owl_on_box_image_comparison_url", "owl_in_area_image_comparison_url",
+    "two_owls_image_comparison_url", "two_owls_in_box_image_comparison_url", "eggs_or_babies_image_comparison_url",
+    "pixel_change_owl_in_box", "luminance_change_owl_in_box",
+    "pixel_change_owl_on_box", "luminance_change_owl_on_box",
+    "pixel_change_owl_in_area", "luminance_change_owl_in_area",
+    "pixel_change_two_owls", "luminance_change_two_owls",
+    "pixel_change_two_owls_in_box", "luminance_change_two_owls_in_box",
+    "pixel_change_eggs_or_babies", "luminance_change_eggs_or_babies",
+    "owl_confidence_score", "consecutive_owl_frames", "confidence_threshold_used",
+    "confidence_factors", "multiple_owls", "owl_count"
+]
 
 def generate_alert_id():
     """
@@ -145,6 +156,7 @@ def create_alert_entry(alert_type, activity_log_id=None, alert_id=None, trigger_
     """
     Create a new alert entry in Supabase.
     Updated in v1.2.0 to include alert_id and trigger_condition.
+    Updated in v2.0.0 to include updated cooldown periods.
 
     Args:
         alert_type (str): Type of alert
@@ -173,12 +185,19 @@ def create_alert_entry(alert_type, activity_log_id=None, alert_id=None, trigger_
         priority = ALERT_PRIORITIES.get(alert_type, 1)  # Default to lowest priority
         
         # Calculate cooldown minutes based on priority (higher priority = shorter cooldown)
-        if priority >= 5:  # Highest priority (eggs/babies or two owls in box)
-            base_cooldown_minutes = 10
-        elif priority >= 4:  # High priority (multiple owls)
-            base_cooldown_minutes = 15
-        else:  # Standard priority
-            base_cooldown_minutes = 30
+        # Updated in v2.0 to match new cooldown periods
+        if alert_type == "Eggs Or Babies":  # Highest priority
+            base_cooldown_minutes = 5  # Was 10
+        elif alert_type == "Two Owls In Box":  # Very high priority
+            base_cooldown_minutes = 10  # Was 15
+        elif alert_type == "Two Owls":  # High priority
+            base_cooldown_minutes = 15  # No change
+        elif alert_type == "Owl In Box":
+            base_cooldown_minutes = 20  # Was 30
+        elif alert_type == "Owl On Box":
+            base_cooldown_minutes = 40  # Was 30
+        else:  # "Owl In Area" or other low priority
+            base_cooldown_minutes = 60  # Was 30
         
         # Calculate cooldown end time
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -335,15 +354,16 @@ def format_confidence_factors(confidence_factors):
         logger.error(f"Error formatting confidence factors: {e}")
         return {}
 
-def generate_image_url(local_image_path, alert_type, camera_name=None):
+def generate_image_url(local_image_path, alert_type, camera_name=None, alert_id=None):
     """
     Generate a proper Supabase URL for an image based on its alert type.
-    New in v1.1.0 to ensure images have correct URLs.
+    Updated in v2.0 to use SUPABASE_PUBLIC_URL and include alert_id.
     
     Args:
         local_image_path (str): Path to the local image file
         alert_type (str): Type of alert/detection 
         camera_name (str, optional): Name of the camera
+        alert_id (str, optional): Unique alert ID to include in the filename
         
     Returns:
         str or None: Public URL to the image or None if generation failed
@@ -358,13 +378,18 @@ def generate_image_url(local_image_path, alert_type, camera_name=None):
         # Generate a unique filename
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S%f")[:19]  # Include microseconds but truncate
         camera_part = f"{camera_name.lower().replace(' ', '_')}_" if camera_name else ""
-        filename = f"{camera_part}{timestamp}.jpg"
+        
+        # Include alert_id in filename if provided (v2.0 update)
+        if alert_id:
+            filename = f"{camera_part}{alert_id}_{timestamp}.jpg"
+        else:
+            filename = f"{camera_part}{timestamp}.jpg"
         
         # Construct the full path within the bucket
         storage_path = f"{detection_folder}/{filename}"
         
-        # Generate the public URL
-        public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_DETECTIONS}/{storage_path}"
+        # Generate the public URL - v2.0: Use SUPABASE_PUBLIC_URL instead of SUPABASE_URL
+        public_url = f"{SUPABASE_PUBLIC_URL}/storage/v1/object/public/{SUPABASE_BUCKET_DETECTIONS}/{storage_path}"
         return public_url
         
     except Exception as e:
@@ -378,6 +403,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
     Now includes confidence metrics and image URLs.
     V1.8.0: Added skip checks to prevent error records from being uploaded
     V1.9.1: Fixed database schema alignment with image URLs
+    V2.0.0: Added column validation before writing to database
     
     Args:
         detection_results (dict): Dictionary containing detection results with confidence
@@ -454,34 +480,28 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         luminance_col = f"luminance_change_{field_prefix}"
         log_entry[luminance_col] = luminance_change
         
-        # Add image URLs with proper column names - v1.9.1: Fixed to use correct column names
-        # Comparison image URL (from detection results or local path)
-        image_url_col = f"{field_prefix}_image_comparison_url"
+        # Add image URLs with proper column names
+        # Updated in v2.0 to use verified column names that exist in schema
+        comparison_url_col = f"{field_prefix}_image_comparison_url"
         comparison_path = detection_results.get('comparison_path')
         comparison_image_url = detection_results.get('comparison_image_url')
         
         # If we don't have a URL but have a local path, generate a URL
+        # Include alert_id if available (v2.0 update)
+        alert_id = detection_results.get('alert_id')
         if not comparison_image_url and comparison_path:
-            comparison_image_url = generate_image_url(comparison_path, alert_type, camera_name)
+            comparison_image_url = generate_image_url(comparison_path, alert_type, camera_name, alert_id)
             
         # Store the URL if we have it
         if comparison_image_url:
-            log_entry[image_url_col] = comparison_image_url
+            log_entry[comparison_url_col] = comparison_image_url
             
         # Make sure to also store it in detection_results for future use
         if comparison_image_url:
             detection_results['comparison_image_url'] = comparison_image_url
         
-        # Add base and current image URLs with proper column names
-        base_url_col = f"{field_prefix}_base_image_url"
-        current_url_col = f"{field_prefix}_current_image_url"
-        
-        if "base_image_url" in detection_results:
-            log_entry[base_url_col] = detection_results["base_image_url"]
-        if "current_image_url" in detection_results:
-            log_entry[current_url_col] = detection_results["current_image_url"]
-        
-        # DO NOT upload analysis images - REMOVED analysis image URL - v1.9.1
+        # DO NOT add base and current image URLs as separate columns - they don't exist in schema (v2.0 update)
+        # If needed, they should be stored in a JSON field or as part of the comparison URL
         
         # Add multiple owl detection fields
         if "multiple_owls" in detection_results:
@@ -535,9 +555,12 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
                     else:
                         log_entry[key] = str(value)
         
+        # V2.0: Filter log_entry to only include valid columns
+        filtered_entry = {k: v for k, v in log_entry.items() if k in VALID_COLUMNS}
+        
         # Send to Supabase - using insert with correct method to handle all data types
         # IMPORTANT: Let Supabase handle the ID generation
-        response = supabase_client.table('owl_activity_log').insert(log_entry).execute()
+        response = supabase_client.table('owl_activity_log').insert(filtered_entry).execute()
         
         if response and hasattr(response, 'data') and len(response.data) > 0:
             # Get the priority level for better logging
@@ -562,118 +585,6 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
     except Exception as e:
         logger.error(f"Failed to upload log to Supabase: {e}")
         return None
-
-def format_detection_results(detection_result):
-    """
-    Format detection results into a dictionary suitable for logging to Supabase.
-    Updated in v1.3.4 to ensure all image URLs are properly included.
-    Updated in v1.8.0 to skip error records.
-    Updated in v1.9.1 to remove analysis_image_url references.
-    
-    Args:
-        detection_result (dict): Dictionary containing detection results
-        
-    Returns:
-        dict: Formatted log entry
-    """
-    try:
-        # V1.8.0: Skip formatting errors or processing errors
-        if detection_result.get("status") in ["Error", "ProcessingError"] or detection_result.get("_skip_upload", False):
-            # Add a skip flag to ensure this won't be uploaded
-            detection_result["_skip_upload"] = True
-            logger.debug(f"Skipping formatting for error record: {detection_result.get('camera', 'unknown')}")
-            return detection_result
-
-        # Extract required fields
-        camera = detection_result.get("camera")
-        status = detection_result.get("status", "Unknown")
-        is_test = detection_result.get("is_test", False)
-        is_owl_present = detection_result.get("is_owl_present", False)
-        
-        # Ensure numeric metrics are properly formatted
-        formatted_entry = {
-            "camera": camera,
-            "status": status,
-            "is_test": 1 if is_test else 0,  # Use integers for booleans
-            "is_owl_present": 1 if is_owl_present else 0,  # Use integers for booleans
-            "pixel_change": float(detection_result.get("pixel_change", 0.0)),
-            "luminance_change": float(detection_result.get("luminance_change", 0.0)),
-            "timestamp": detection_result.get("timestamp", datetime.datetime.now().isoformat())
-        }
-        
-        # Add detailed criteria that qualified as an Owl Detection
-        # Include threshold values used for all criteria
-        if "confidence_factors" in detection_result:
-            formatted_entry["detection_criteria"] = {
-                "shape_confidence": detection_result.get("confidence_factors", {}).get("shape_confidence", 0.0),
-                "motion_confidence": detection_result.get("confidence_factors", {}).get("motion_confidence", 0.0),
-                "temporal_confidence": detection_result.get("confidence_factors", {}).get("temporal_confidence", 0.0),
-                "camera_confidence": detection_result.get("confidence_factors", {}).get("camera_confidence", 0.0),
-                "motion_pattern_bonus": detection_result.get("confidence_factors", {}).get("motion_pattern_bonus", 0.0),
-                "threshold_used": detection_result.get("threshold_used", 0.0),
-                "owl_confidence": detection_result.get("owl_confidence", 0.0),
-                "consecutive_frames": detection_result.get("consecutive_owl_frames", 0),
-                "consecutive_frames_required": detection_result.get("consecutive_frames_required", 2)
-            }
-        
-        # Add ALL image paths and URLs
-        if "snapshot_path" in detection_result:
-            formatted_entry["snapshot_path"] = detection_result["snapshot_path"]
-        if "comparison_path" in detection_result:
-            formatted_entry["comparison_path"] = detection_result["comparison_path"]
-        
-        # Ensure image URLs are properly included
-        if "comparison_image_url" in detection_result:
-            formatted_entry["comparison_image_url"] = detection_result["comparison_image_url"]
-        if "base_image_url" in detection_result:
-            formatted_entry["base_image_url"] = detection_result["base_image_url"]
-        if "current_image_url" in detection_result:
-            formatted_entry["current_image_url"] = detection_result["current_image_url"]
-        
-        # REMOVED: analysis_image_url reference - v1.9.1
-
-        # Add error message if present
-        if "error_message" in detection_result:
-            formatted_entry["error_message"] = detection_result["error_message"]
-            
-        # Add confidence metrics
-        formatted_entry["owl_confidence"] = float(detection_result.get("owl_confidence", 0.0))
-        formatted_entry["consecutive_owl_frames"] = int(detection_result.get("consecutive_owl_frames", 0))
-        
-        # If threshold was used for detection, include it
-        if "threshold_used" in detection_result:
-            formatted_entry["threshold_used"] = float(detection_result["threshold_used"])
-        
-        # Format confidence factors for consistency using our dedicated function
-        confidence_factors = detection_result.get("confidence_factors", {})
-        formatted_entry["confidence_factors"] = format_confidence_factors(confidence_factors)
-        
-        # Add multiple owl detection fields if present - New in v1.1.0
-        if "multiple_owls" in detection_result:
-            formatted_entry["multiple_owls"] = detection_result["multiple_owls"]
-            
-        if "owl_count" in detection_result:
-            formatted_entry["owl_count"] = detection_result["owl_count"]
-            
-        # Add eggs or babies detection if present - New in v1.1.0
-        if "eggs_or_babies" in detection_result:
-            formatted_entry["eggs_or_babies"] = detection_result["eggs_or_babies"]
-
-        logger.debug(f"Formatted detection results: {formatted_entry}")
-        return formatted_entry
-    except Exception as e:
-        logger.error(f"Error formatting detection results: {e}")
-        # V1.8.0: Instead of returning an error entry to be uploaded, mark it to be skipped
-        return {
-            "camera": detection_result.get("camera", "Unknown"),
-            "status": "ProcessingError",  # Changed from "Error" to prevent upload attempts
-            "error_message": str(e),
-            "is_test": 0,
-            "owl_confidence": 0.0,
-            "consecutive_owl_frames": 0,
-            "confidence_factors": {},
-            "_skip_upload": True  # Flag to indicate this shouldn't be uploaded
-        }
 
 def get_alert_statistics(days=1):
     """
@@ -731,6 +642,121 @@ def get_alert_statistics(days=1):
     except Exception as e:
         logger.error(f"Error getting alert statistics: {e}")
         return {}
+
+def format_detection_results(detection_result):
+    """
+    Format detection results into a dictionary suitable for logging to Supabase.
+    Updated in v1.3.4 to ensure all image URLs are properly included.
+    Updated in v1.8.0 to skip error records.
+    Updated in v1.9.1 to remove analysis_image_url references.
+    Updated in v2.0.0 to include alert_id in image URLs.
+    
+    Args:
+        detection_result (dict): Dictionary containing detection results
+        
+    Returns:
+        dict: Formatted log entry
+    """
+    try:
+        # V1.8.0: Skip formatting errors or processing errors
+        if detection_result.get("status") in ["Error", "ProcessingError"] or detection_result.get("_skip_upload", False):
+            # Add a skip flag to ensure this won't be uploaded
+            detection_result["_skip_upload"] = True
+            logger.debug(f"Skipping formatting for error record: {detection_result.get('camera', 'unknown')}")
+            return detection_result
+
+        # Extract required fields
+        camera = detection_result.get("camera")
+        status = detection_result.get("status", "Unknown")
+        is_test = detection_result.get("is_test", False)
+        is_owl_present = detection_result.get("is_owl_present", False)
+        
+        # Ensure numeric metrics are properly formatted
+        formatted_entry = {
+            "camera": camera,
+            "status": status,
+            "is_test": 1 if is_test else 0,  # Use integers for booleans
+            "is_owl_present": 1 if is_owl_present else 0,  # Use integers for booleans
+            "pixel_change": float(detection_result.get("pixel_change", 0.0)),
+            "luminance_change": float(detection_result.get("luminance_change", 0.0)),
+            "timestamp": detection_result.get("timestamp", datetime.datetime.now().isoformat())
+        }
+        
+        # Include alert_id if available (v2.0 update)
+        if "alert_id" in detection_result:
+            formatted_entry["alert_id"] = detection_result["alert_id"]
+        
+        # Add detailed criteria that qualified as an Owl Detection
+        # Include threshold values used for all criteria
+        if "confidence_factors" in detection_result:
+            formatted_entry["detection_criteria"] = {
+                "shape_confidence": detection_result.get("confidence_factors", {}).get("shape_confidence", 0.0),
+                "motion_confidence": detection_result.get("confidence_factors", {}).get("motion_confidence", 0.0),
+                "temporal_confidence": detection_result.get("confidence_factors", {}).get("temporal_confidence", 0.0),
+                "camera_confidence": detection_result.get("confidence_factors", {}).get("camera_confidence", 0.0),
+                "motion_pattern_bonus": detection_result.get("confidence_factors", {}).get("motion_pattern_bonus", 0.0),
+                "threshold_used": detection_result.get("threshold_used", 0.0),
+                "owl_confidence": detection_result.get("owl_confidence", 0.0),
+                "consecutive_frames": detection_result.get("consecutive_owl_frames", 0),
+                "consecutive_frames_required": detection_result.get("consecutive_frames_required", 2)
+            }
+        
+        # Add ALL image paths and URLs
+        if "snapshot_path" in detection_result:
+            formatted_entry["snapshot_path"] = detection_result["snapshot_path"]
+        if "comparison_path" in detection_result:
+            formatted_entry["comparison_path"] = detection_result["comparison_path"]
+        
+        # Ensure image URLs are properly included
+        if "comparison_image_url" in detection_result:
+            formatted_entry["comparison_image_url"] = detection_result["comparison_image_url"]
+        if "base_image_url" in detection_result:
+            formatted_entry["base_image_url"] = detection_result["base_image_url"]
+        if "current_image_url" in detection_result:
+            formatted_entry["current_image_url"] = detection_result["current_image_url"]
+
+        # Add error message if present
+        if "error_message" in detection_result:
+            formatted_entry["error_message"] = detection_result["error_message"]
+            
+        # Add confidence metrics
+        formatted_entry["owl_confidence"] = float(detection_result.get("owl_confidence", 0.0))
+        formatted_entry["consecutive_owl_frames"] = int(detection_result.get("consecutive_owl_frames", 0))
+        
+        # If threshold was used for detection, include it
+        if "threshold_used" in detection_result:
+            formatted_entry["threshold_used"] = float(detection_result["threshold_used"])
+        
+        # Format confidence factors for consistency using our dedicated function
+        confidence_factors = detection_result.get("confidence_factors", {})
+        formatted_entry["confidence_factors"] = format_confidence_factors(confidence_factors)
+        
+        # Add multiple owl detection fields if present - New in v1.1.0
+        if "multiple_owls" in detection_result:
+            formatted_entry["multiple_owls"] = detection_result["multiple_owls"]
+            
+        if "owl_count" in detection_result:
+            formatted_entry["owl_count"] = detection_result["owl_count"]
+            
+        # Add eggs or babies detection if present - New in v1.1.0
+        if "eggs_or_babies" in detection_result:
+            formatted_entry["eggs_or_babies"] = detection_result["eggs_or_babies"]
+
+        logger.debug(f"Formatted detection results: {formatted_entry}")
+        return formatted_entry
+    except Exception as e:
+        logger.error(f"Error formatting detection results: {e}")
+        # V1.8.0: Instead of returning an error entry to be uploaded, mark it to be skipped
+        return {
+            "camera": detection_result.get("camera", "Unknown"),
+            "status": "ProcessingError",  # Changed from "Error" to prevent upload attempts
+            "error_message": str(e),
+            "is_test": 0,
+            "owl_confidence": 0.0,
+            "consecutive_owl_frames": 0,
+            "confidence_factors": {},
+            "_skip_upload": True  # Flag to indicate this shouldn't be uploaded
+        }
 
 if __name__ == "__main__":
     try:

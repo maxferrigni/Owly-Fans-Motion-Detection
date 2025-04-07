@@ -1,11 +1,11 @@
 # File: alert_email.py
 # Purpose: Handle email alerts for the motion detection system
 #
-# March 31, 2025 Update - Version 1.4.8
-# - Enhanced image display in emails with all available image URLs
-# - Improved confidence metrics formatting and display
-# - Better validation of image URLs
-# - Fixed URL handling for base, current, and comparison images
+# April 7, 2025 Update - Version 2.0.0
+# - Enhanced image URL validation to use correct Supabase domain
+# - Added helper function to validate and correct image URLs
+# - Improved alert frequency with proper URL handling
+# - Fixed URL validation for base, current, and comparison images
 # - Streamlined image rendering in HTML emails
 
 import smtplib
@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 # Import utilities
 from utilities.logging_utils import get_logger
-from utilities.constants import ALERT_PRIORITIES
+from utilities.constants import ALERT_PRIORITIES, SUPABASE_PUBLIC_URL
 
 # Import from database_utils
 from utilities.database_utils import get_subscribers, get_admin_subscribers
@@ -42,6 +42,18 @@ if not EMAIL_PASSWORD:
     error_msg = "Email password not found in environment variables"
     logger.error(error_msg)
     raise ValueError(error_msg)
+
+def validate_image_url(url):
+    """Ensure the image URL uses the correct Supabase domain"""
+    if not url:
+        return None
+        
+    # If URL contains the incorrect domain, replace it
+    if "project-dev-123.supabase.co" in url:
+        url = url.replace("project-dev-123.supabase.co", 
+                         "fkolnlmblyshbeklueyh.supabase.co")
+    
+    return url
 
 def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", 
                      image_url=None, alert_id=None, base_image_url=None, 
@@ -97,16 +109,10 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
     if alert_id:
         subject = f"{subject} [ID: {alert_id}]"
     
-    # Ensure all URLs are valid and complete
-    def validate_url(url):
-        if url and not (url.startswith('http://') or url.startswith('https://')):
-            return f"https://{url}"
-        return url
-
-    # Validate all image URLs
-    image_url = validate_url(image_url)
-    base_image_url = validate_url(base_image_url)
-    current_image_url = validate_url(current_image_url)
+    # Validate all image URLs to ensure they use the correct domain
+    image_url = validate_image_url(image_url)
+    base_image_url = validate_image_url(base_image_url)
+    current_image_url = validate_image_url(current_image_url)
 
     # Log available images for debugging
     available_images = []
@@ -466,10 +472,10 @@ if __name__ == "__main__":
     random_suffix = ''.join(random.choices('0123456789ABCDEF', k=3))
     test_alert_id = f"OWL-{timestamp}-{random_suffix}"
     
-    # Test with image URLs
-    test_image_url = "https://project-dev-123.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_image.jpg"
-    test_base_url = "https://project-dev-123.supabase.co/storage/v1/object/public/base_images/test_base.jpg"
-    test_current_url = "https://project-dev-123.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_current.jpg"
+    # Test with image URLs - updated to use correct domain
+    test_image_url = "https://fkolnlmblyshbeklueyh.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_image.jpg"
+    test_base_url = "https://fkolnlmblyshbeklueyh.supabase.co/storage/v1/object/public/base_images/test_base.jpg"
+    test_current_url = "https://fkolnlmblyshbeklueyh.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_current.jpg"
     
     # Example confidence information
     test_confidence_info = {
@@ -551,13 +557,13 @@ if __name__ == "__main__":
     test_email = os.getenv("TEST_EMAIL", "maxferrigni@gmail.com")
     send_test_email(
         test_email,
-        "Email Alert System Test v1.4.8",
+        "Email Alert System Test v2.0.0",
         """
         <html>
             <body>
                 <h2>Email Alerting System Test</h2>
-                <p>This is a test of the email alert system for the Owl Monitoring App v1.4.8.</p>
-                <p>This version includes improved image handling and display in emails.</p>
+                <p>This is a test of the email alert system for the Owl Monitoring App v2.0.0.</p>
+                <p>This version includes improved URL validation and handling.</p>
                 <p>If you're seeing this, the system is working properly.</p>
             </body>
         </html>
