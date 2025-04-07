@@ -40,7 +40,9 @@ from utilities.image_comparison_utils import create_comparison_image
 from utilities.alert_manager import AlertManager
 from utilities.confidence_utils import reset_frame_history
 from capture_base_images import capture_base_images, get_latest_base_image
-from utilities.upload_images_to_supabase import upload_comparison_image
+
+# Import function from Scripts
+from scripts.upload_images_to_supabase import upload_comparison_image
 
 # Import function to check running state, otherwise default to True for backward compatibility
 try:
