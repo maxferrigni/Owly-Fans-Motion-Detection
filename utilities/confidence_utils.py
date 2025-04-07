@@ -9,6 +9,7 @@
 # - Updated shape confidence calculation with better weighting of important factors including solidity
 # - Modified to use more permissive and additive approach for v1.9 update
 # - Changed confidence calculation to allow strong signals in one area to compensate for weak ones
+# - Added cap for confidence score at 100% for v1.91 update
 
 import numpy as np
 from datetime import datetime
@@ -423,9 +424,24 @@ def calculate_owl_confidence(detection_data, camera_name, config):
             total_confidence
         )
         
+        # Log the raw confidence for debugging
+        logger.info(
+            f"Owl confidence for {camera_name} (raw): {total_confidence:.1f}% "
+            f"(Shape: {shape_confidence:.1f}%, Motion: {motion_confidence:.1f}%, "
+            f"Temporal: {temporal_confidence:.1f}%, Camera: {camera_confidence:.1f}%, "
+            f"Pattern: {motion_pattern_bonus:.1f}%, Pixel: {pixel_change_bonus:.1f}%, "
+            f"Position: {position_bonus:.1f}%)"
+        )
+        
+        # Cap confidence at 100% before returning the result
+        capped_confidence = min(100.0, total_confidence)
+        
+        if total_confidence > 100.0:
+            logger.info(f"Capped confidence from {total_confidence:.1f}% to 100.0%")
+        
         # Prepare comprehensive confidence results
         confidence_results = {
-            "owl_confidence": total_confidence,
+            "owl_confidence": capped_confidence,
             "consecutive_owl_frames": consecutive_frames,
             "confidence_factors": {
                 "shape_confidence": shape_confidence,
@@ -437,14 +453,6 @@ def calculate_owl_confidence(detection_data, camera_name, config):
                 "position_bonus": position_bonus
             }
         }
-        
-        logger.info(
-            f"Owl confidence for {camera_name}: {total_confidence:.1f}% "
-            f"(Shape: {shape_confidence:.1f}%, Motion: {motion_confidence:.1f}%, "
-            f"Temporal: {temporal_confidence:.1f}%, Camera: {camera_confidence:.1f}%, "
-            f"Pattern: {motion_pattern_bonus:.1f}%, Pixel: {pixel_change_bonus:.1f}%, "
-            f"Position: {position_bonus:.1f}%)"
-        )
         
         return confidence_results
         

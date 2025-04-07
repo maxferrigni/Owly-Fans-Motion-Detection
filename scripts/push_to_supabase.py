@@ -1,20 +1,24 @@
 # File: push_to_supabase.py
 # Purpose: Log owl detection data with confidence metrics to Supabase database and manage subscribers
 #
-# April 2025 Update - Version 1.8.0
-# - Fixed format_detection_results import issue in main.py
-# - Removed error logging to Supabase
-# - Improved error handling with descriptive logging
-# - Added skip check logic to prevent error records from being uploaded
-# - Previous changes from v1.3.4:
-#   - Enhanced image URL tracking for email alerts
-#   - Added additional image URL columns in database
-#   - Improved URL handling in format_detection_results
-#   - Fixed schema-mismatch issue - removed camera field to match database structure
-#   - Removed explicit ID field to let Supabase handle ID generation
-#   - Added generate_alert_id() function for unique alert tracking
-#   - Updated create_alert_entry to include alert_id and trigger_condition
-#   - Streamlined database operations and error handling
+# April 2025 Update - Version 1.9.1
+# - Fixed database schema alignment with image URLs
+# - Removed analysis_image_url references to match current schema
+# - Fixed column naming in push_log_to_supabase()
+# - Previous changes from v1.8.0:
+#   - Fixed format_detection_results import issue in main.py
+#   - Removed error logging to Supabase
+#   - Improved error handling with descriptive logging
+#   - Added skip check logic to prevent error records from being uploaded
+#   - Previous changes from v1.3.4:
+#     - Enhanced image URL tracking for email alerts
+#     - Added additional image URL columns in database
+#     - Improved URL handling in format_detection_results
+#     - Fixed schema-mismatch issue - removed camera field to match database structure
+#     - Removed explicit ID field to let Supabase handle ID generation
+#     - Added generate_alert_id() function for unique alert tracking
+#     - Updated create_alert_entry to include alert_id and trigger_condition
+#     - Streamlined database operations and error handling
 
 import os
 import datetime
@@ -352,7 +356,7 @@ def generate_image_url(local_image_path, alert_type, camera_name=None):
         detection_folder = get_detection_folder(alert_type)
         
         # Generate a unique filename
-        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S%f")[:19]  # Include microseconds but truncate
         camera_part = f"{camera_name.lower().replace(' ', '_')}_" if camera_name else ""
         filename = f"{camera_part}{timestamp}.jpg"
         
@@ -373,6 +377,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
     Checks for duplicates to prevent multiple uploads of the same data.
     Now includes confidence metrics and image URLs.
     V1.8.0: Added skip checks to prevent error records from being uploaded
+    V1.9.1: Fixed database schema alignment with image URLs
     
     Args:
         detection_results (dict): Dictionary containing detection results with confidence
@@ -449,7 +454,7 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         luminance_col = f"luminance_change_{field_prefix}"
         log_entry[luminance_col] = luminance_change
         
-        # Add all image URLs 
+        # Add image URLs with proper column names - v1.9.1: Fixed to use correct column names
         # Comparison image URL (from detection results or local path)
         image_url_col = f"{field_prefix}_image_comparison_url"
         comparison_path = detection_results.get('comparison_path')
@@ -467,17 +472,16 @@ def push_log_to_supabase(detection_results, lighting_condition=None, base_image_
         if comparison_image_url:
             detection_results['comparison_image_url'] = comparison_image_url
         
-        # Add additional image URLs with proper column names
+        # Add base and current image URLs with proper column names
         base_url_col = f"{field_prefix}_base_image_url"
         current_url_col = f"{field_prefix}_current_image_url"
-        analysis_url_col = f"{field_prefix}_analysis_image_url"
-
+        
         if "base_image_url" in detection_results:
             log_entry[base_url_col] = detection_results["base_image_url"]
         if "current_image_url" in detection_results:
             log_entry[current_url_col] = detection_results["current_image_url"]
-        if "analysis_image_url" in detection_results:
-            log_entry[analysis_url_col] = detection_results["analysis_image_url"]
+        
+        # DO NOT upload analysis images - REMOVED analysis image URL - v1.9.1
         
         # Add multiple owl detection fields
         if "multiple_owls" in detection_results:
@@ -564,6 +568,7 @@ def format_detection_results(detection_result):
     Format detection results into a dictionary suitable for logging to Supabase.
     Updated in v1.3.4 to ensure all image URLs are properly included.
     Updated in v1.8.0 to skip error records.
+    Updated in v1.9.1 to remove analysis_image_url references.
     
     Args:
         detection_result (dict): Dictionary containing detection results
@@ -617,15 +622,15 @@ def format_detection_results(detection_result):
         if "comparison_path" in detection_result:
             formatted_entry["comparison_path"] = detection_result["comparison_path"]
         
-        # Ensure ALL image URLs are properly included
+        # Ensure image URLs are properly included
         if "comparison_image_url" in detection_result:
             formatted_entry["comparison_image_url"] = detection_result["comparison_image_url"]
         if "base_image_url" in detection_result:
             formatted_entry["base_image_url"] = detection_result["base_image_url"]
         if "current_image_url" in detection_result:
             formatted_entry["current_image_url"] = detection_result["current_image_url"]
-        if "analysis_image_url" in detection_result:
-            formatted_entry["analysis_image_url"] = detection_result["analysis_image_url"]
+        
+        # REMOVED: analysis_image_url reference - v1.9.1
 
         # Add error message if present
         if "error_message" in detection_result:

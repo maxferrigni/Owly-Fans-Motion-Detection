@@ -1,12 +1,13 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
 #
-# April 2025 Update - Version 1.9.0
+# April 2025 Update - Version 1.9.1
 # - Modified confidence calculation to be more additive rather than requiring high scores in all categories
 # - Made shape detection more permissive, especially at night
 # - Added special overrides for obvious owl detections, particularly for Wyze Internal Camera
 # - Lowered thresholds across the board to improve detection rates
 # - Added significant weight to pixel change and position data as primary detection factors
+# - Fixed database schema alignment and image upload logic (v1.91)
 
 import os
 import time
@@ -39,6 +40,7 @@ from utilities.image_comparison_utils import create_comparison_image
 from utilities.alert_manager import AlertManager
 from utilities.confidence_utils import reset_frame_history
 from capture_base_images import capture_base_images, get_latest_base_image
+from utilities.upload_images_to_supabase import upload_comparison_image
 
 # Import function to check running state, otherwise default to True for backward compatibility
 try:
@@ -499,26 +501,28 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 camera_name=camera_name
             )
             
-            # Only create comparison image if either test mode or app is running
-            comparison_path = None
-            comparison_result = {}
-            if is_test or is_app_running():
-                # Create comparison image with confidence data but NO TEXT OVERLAYS
-                comparison_result = create_comparison_image(
-                    base_image, 
-                    new_image,
-                    camera_name,
-                    threshold=detection_config["luminance_threshold"] * threshold_multiplier,
-                    config=detection_config,
-                    detection_info=detection_info,
-                    is_test=is_test,
-                    timestamp=timestamp
-                )
-                
-                comparison_path = comparison_result.get("composite_path")
-            
-            # Initialize image URLs dictionary
-            image_urls = comparison_result.get("urls", {})
+            # Create comparison image for UI display regardless of detection
+            comparison_result = create_comparison_image(
+                base_image, 
+                new_image,
+                camera_name,
+                threshold=detection_config["luminance_threshold"] * threshold_multiplier,
+                config=detection_config,
+                detection_info=detection_info,
+                is_test=is_test,
+                timestamp=timestamp
+            )
+
+            comparison_path = comparison_result.get("composite_path")
+            component_paths = comparison_result.get('component_paths', {})
+
+            # Store paths in detection_results for local usage
+            detection_results['comparison_path'] = comparison_path
+            if 'component_paths' in comparison_result:
+                detection_results['component_paths'] = component_paths
+
+            # IMPORTANT: Don't upload images yet - just keep the paths for now
+            # We'll only upload images if an alert is actually triggered
             
             # Update detection results with detection info
             detection_results.update({
@@ -540,47 +544,6 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                     "pattern_score": detection_info.get("confidence_factors", {}).get("motion_pattern_bonus", 0.0)
                 }
             })
-            
-            # Make sure all image URLs are available in detection_results
-            if comparison_path:
-                comparison_image_url = image_urls.get("composite_image_url")
-                if not comparison_image_url:
-                    comparison_image_url = generate_image_url(comparison_path, alert_type, camera_name)
-                detection_results['comparison_image_url'] = comparison_image_url
-
-            # Add base and current image URLs if available
-            if 'component_paths' in comparison_result:
-                component_paths = comparison_result['component_paths']
-                
-                # Upload each component image and store URLs
-                if 'base' in component_paths:
-                    base_image_url = image_urls.get("base_image_url")
-                    if not base_image_url:
-                        base_image_url = upload_component_image(component_paths['base'], camera_name, alert_type, "base")
-                    detection_results['base_image_url'] = base_image_url
-                    
-                if 'current' in component_paths:
-                    current_image_url = image_urls.get("current_image_url")
-                    if not current_image_url:
-                        current_image_url = upload_component_image(component_paths['current'], camera_name, alert_type, "current")
-                    detection_results['current_image_url'] = current_image_url
-                
-                if 'analysis' in component_paths:
-                    analysis_image_url = image_urls.get("analysis_image_url")
-                    if not analysis_image_url:
-                        analysis_image_url = upload_component_image(component_paths['analysis'], camera_name, alert_type, "analysis")
-                    detection_results['analysis_image_url'] = analysis_image_url
-
-            # Log all available image URLs
-            available_urls = [key for key in detection_results.keys() if key.endswith('_image_url') and detection_results[key]]
-            logger.info(f"Image URLs available for {camera_name}: {', '.join(available_urls)}")
-            
-            logger.info(
-                f"Detection results for {camera_name} ({lighting_condition}): Owl Present: {is_owl_present}, "
-                f"Confidence: {detection_results['owl_confidence']:.1f}%, "
-                f"Consecutive Frames: {detection_results['consecutive_owl_frames']}, "
-                f"Threshold: {detection_results['threshold_used']}%"
-            )
 
             # MODIFIED: Special override for obvious owl detections that were missed
             # Add a safety check before returning results
@@ -607,17 +570,39 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                     detection_results["owl_confidence"] = max(detection_results["owl_confidence"], 55.0)
                     detection_results["is_owl_present"] = True
 
-            # Only push to Supabase if motion was detected or in test mode, and app is running or test mode
-            if (is_owl_present or is_test or detection_results["owl_confidence"] >= 30.0) and (is_app_running() or is_test):
-                # Only push to Supabase if owl was detected
-                if is_owl_present and not is_test:
+            # Only push to Supabase and upload images if an owl was detected and the app is running
+            if is_owl_present and (is_app_running() or is_test):
+                # NOW is when we should upload images - only if an alert will be triggered
+                # Generate and set image URLs
+                if comparison_path:
+                    comparison_image_url = generate_image_url(comparison_path, alert_type, camera_name)
+                    detection_results['comparison_image_url'] = comparison_image_url
+
+                    # Actually upload the comparison image
+                    with open(comparison_path, "rb") as file:
+                        upload_comparison_image(comparison_path, camera_name, alert_type)
+
+                # Only upload base and current images, NOT analysis image
+                if component_paths:
+                    if 'base' in component_paths:
+                        base_image_url = upload_component_image(component_paths['base'], camera_name, alert_type, "base")
+                        if base_image_url:
+                            detection_results['base_image_url'] = base_image_url
+
+                    if 'current' in component_paths:
+                        current_image_url = upload_component_image(component_paths['current'], camera_name, alert_type, "current")
+                        if current_image_url:
+                            detection_results['current_image_url'] = current_image_url
+
+                # Now process the alert with all URLs properly set
+                if not is_test:
                     alert_manager.process_detection(
                         camera_name,
                         detection_results,
                         None
                     )
             else:
-                logger.debug(f"No owl detected for {camera_name}, skipping database push")
+                logger.debug(f"No owl detected for {camera_name} or app not running, skipping alert and image uploads")
 
             return detection_results
 

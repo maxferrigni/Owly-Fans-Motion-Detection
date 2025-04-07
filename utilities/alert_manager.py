@@ -160,8 +160,7 @@ class AlertManager:
 
     def _send_email_alert_async(self, camera_name, alert_type, alert_entry, alert_id, 
                                comparison_image_url=None, base_image_url=None,
-                               current_image_url=None, analysis_image_url=None,
-                               confidence_info=None, is_test=False):
+                               current_image_url=None, confidence_info=None, is_test=False):
         """
         Background thread function to send email alerts.
         Enhanced in v1.3.1 to include all image URLs.
@@ -174,7 +173,6 @@ class AlertManager:
             comparison_image_url (str, optional): URL to the comparison image
             base_image_url (str, optional): URL to the base image
             current_image_url (str, optional): URL to the current image
-            analysis_image_url (str, optional): URL to the analysis image
             confidence_info (dict, optional): Confidence information
             is_test (bool, optional): Whether this is a test alert
         """
@@ -205,7 +203,6 @@ class AlertManager:
                         image_url=comparison_image_url,
                         base_image_url=base_image_url,
                         current_image_url=current_image_url,
-                        analysis_image_url=analysis_image_url,
                         alert_id=alert_id,
                         confidence_info=confidence_info
                     )
@@ -345,7 +342,6 @@ class AlertManager:
                     'comparison_image_url': comparison_image_url,
                     'base_image_url': base_image_url,
                     'current_image_url': current_image_url,
-                    'analysis_image_url': analysis_image_url,
                     'confidence_info': confidence_info,
                     'is_test': is_test
                 }
@@ -519,7 +515,6 @@ class AlertManager:
         comparison_image_url = detection_result.get("comparison_image_url")
         base_image_url = detection_result.get("base_image_url")
         current_image_url = detection_result.get("current_image_url")
-        analysis_image_url = detection_result.get("analysis_image_url")
             
         # Extract enhanced confidence information with additional metrics
         confidence_info = {
@@ -562,7 +557,6 @@ class AlertManager:
                 comparison_image_url=comparison_image_url,
                 base_image_url=base_image_url,
                 current_image_url=current_image_url,
-                analysis_image_url=analysis_image_url,
                 confidence_info=confidence_info, 
                 is_test=True,
                 trigger_condition=f"TEST: {trigger_condition}"
@@ -576,7 +570,6 @@ class AlertManager:
                 comparison_image_url=comparison_image_url,
                 base_image_url=base_image_url,
                 current_image_url=current_image_url,
-                analysis_image_url=analysis_image_url,
                 confidence_info=confidence_info,
                 trigger_condition=trigger_condition
             )
@@ -590,7 +583,6 @@ class AlertManager:
                     comparison_image_url=comparison_image_url,
                     base_image_url=base_image_url,
                     current_image_url=current_image_url,
-                    analysis_image_url=analysis_image_url,
                     confidence_info=confidence_info,
                     trigger_condition=trigger_condition
                 )
@@ -606,7 +598,6 @@ class AlertManager:
                     comparison_image_url=comparison_image_url,
                     base_image_url=base_image_url,
                     current_image_url=current_image_url,
-                    analysis_image_url=analysis_image_url,
                     confidence_info=confidence_info,
                     trigger_condition=trigger_condition
                 )
@@ -623,7 +614,6 @@ class AlertManager:
                     comparison_image_url=comparison_image_url,
                     base_image_url=base_image_url,
                     current_image_url=current_image_url,
-                    analysis_image_url=analysis_image_url,
                     confidence_info=confidence_info,
                     trigger_condition=trigger_condition
                 )
@@ -641,7 +631,6 @@ class AlertManager:
                     comparison_image_url=comparison_image_url,
                     base_image_url=base_image_url,
                     current_image_url=current_image_url,
-                    analysis_image_url=analysis_image_url,
                     confidence_info=confidence_info,
                     trigger_condition=trigger_condition
                 )
@@ -728,97 +717,3 @@ class AlertManager:
             "alert_counts": self.alert_counts.copy(),
             "alert_ids_count": len(self.alert_ids)
         }
-
-    def get_confidence_threshold(self, camera_name):
-        """Get the confidence threshold for a specific camera"""
-        return self.default_confidence_thresholds.get(camera_name, 60.0)
-
-    def set_confidence_threshold(self, camera_name, threshold):
-        """Set a custom confidence threshold for a camera"""
-        try:
-            # Validate threshold
-            threshold = float(threshold)
-            if threshold < 0 or threshold > 100:
-                logger.warning(f"Invalid threshold value: {threshold}. Must be between 0 and 100")
-                return False
-                
-            # Update local threshold
-            self.default_confidence_thresholds[camera_name] = threshold
-            logger.info(f"Set confidence threshold for {camera_name} to {threshold}%")
-            
-            # Try to save to database if available
-            try:
-                from utilities.database_utils import save_custom_threshold
-                save_custom_threshold(camera_name, threshold)
-            except ImportError:
-                logger.debug("Database save function not available, threshold only stored locally")
-                
-            return True
-            
-        except ValueError:
-            logger.error(f"Invalid threshold value: {threshold}. Must be a number")
-            return False
-
-    def get_alert_by_id(self, alert_id):
-        """
-        Get information about a specific alert by its ID.
-        
-        Args:
-            alert_id (str): The unique alert ID
-            
-        Returns:
-            dict: Alert information or None if not found
-        """
-        return self.alert_ids.get(alert_id)
-
-
-if __name__ == "__main__":
-    # Test the alert manager
-    try:
-        logger.info("Testing alert manager...")
-        alert_manager = AlertManager()
-
-        # Test detection processing with confidence
-        test_detection = {
-            "status": "Owl In Box",
-            "motion_detected": True,
-            "is_owl_present": True,
-            "pixel_change": 25.5,
-            "luminance_change": 30.2,
-            "owl_confidence": 85.5,  # High confidence
-            "consecutive_owl_frames": 3,  # Multiple consecutive frames
-            "confidence_factors": {
-                "shape_confidence": 35.0,
-                "motion_confidence": 30.5,
-                "temporal_confidence": 15.0,
-                "camera_confidence": 5.0
-            },
-            "comparison_image_url": "https://example.com/image.jpg",
-            "base_image_url": "https://example.com/base.jpg",
-            "current_image_url": "https://example.com/current.jpg",
-            "analysis_image_url": "https://example.com/analysis.jpg"
-        }
-
-        # Process test detection with alert ID tracking
-        result = alert_manager.process_detection(
-            camera_name="Test Camera",
-            detection_result=test_detection,
-            activity_log_id=1,  # Test ID
-            is_test=True  # Use test mode to bypass cooldown
-        )
-
-        logger.info(f"Test detection processed: Alert sent = {result}")
-        
-        # Wait a moment for the background thread to complete
-        time.sleep(2)
-        
-        # Show alert IDs
-        logger.info(f"Alert IDs tracked: {len(alert_manager.alert_ids)}")
-        for alert_id, details in alert_manager.alert_ids.items():
-            logger.info(f"Alert ID: {alert_id}, Type: {details['alert_type']}, Camera: {details['camera_name']}")
-        
-        logger.info("Alert manager test complete")
-        
-    except Exception as e:
-        logger.error(f"Alert manager test failed: {e}")
-        raise

@@ -6,6 +6,9 @@
 # - Added proper folder structure for owl_detections bucket
 # - Enhanced metadata logging for images
 # - Added support for all detection types including multiple owls
+#
+# April 7, 2025 Update - Version 1.91
+# - Updated timestamp format to include microseconds to prevent duplicate files
 
 import os
 import datetime
@@ -129,8 +132,8 @@ def upload_comparison_image(local_image_path, camera_name, detection_type):
         # Get the correct folder for this detection type
         detection_folder = get_detection_folder(detection_type)
         
-        # Generate unique filename using timestamp
-        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        # Generate unique filename using timestamp with microseconds
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S%f")[:19]  # Include microseconds but truncate
         camera_name_clean = camera_name.lower().replace(" ", "_")
         filename = f"{camera_name_clean}_{timestamp}.jpg"
         
@@ -186,8 +189,8 @@ def upload_component_image(local_image_path, camera_name, detection_type, image_
         # Get the correct folder for this detection type
         detection_folder = get_detection_folder(detection_type)
         
-        # Generate unique filename using timestamp
-        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        # Generate unique filename using timestamp with microseconds
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S%f")[:19]  # Include microseconds but truncate
         camera_name_clean = camera_name.lower().replace(" ", "_")
         filename = f"{camera_name_clean}_{image_type}_{timestamp}.jpg"
         
