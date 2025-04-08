@@ -342,7 +342,7 @@ def calculate_owl_confidence(detection_data, camera_name, config):
         
         # MODIFIED: Primary confidence calculation - ensure motion alone can trigger detection
         # Use higher of shape_confidence or motion_confidence as base, rather than sum
-        # This ensures that strong signals in one area can compensate for weak ones in another
+        # This ensures that strong signals in one area can compensate for weak ones
         primary_confidence = max(shape_confidence, motion_confidence * 1.5)
         
         # Add a portion of the other confidence metric to reward having both

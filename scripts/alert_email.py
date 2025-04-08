@@ -1,12 +1,14 @@
 # File: alert_email.py
 # Purpose: Handle email alerts for the motion detection system
 #
-# April 7, 2025 Update - Version 2.0.0
+# April 7, 2025 Update - Version 2.1.0
 # - Enhanced image URL validation to use correct Supabase domain
 # - Added helper function to validate and correct image URLs
 # - Improved alert frequency with proper URL handling
 # - Fixed URL validation for base, current, and comparison images
 # - Streamlined image rendering in HTML emails
+# - Added fallback text for missing images
+# - Improved logging of image URLs
 
 import smtplib
 from email.mime.text import MIMEText
@@ -20,7 +22,7 @@ from dotenv import load_dotenv
 
 # Import utilities
 from utilities.logging_utils import get_logger
-from utilities.constants import ALERT_PRIORITIES, SUPABASE_PUBLIC_URL
+from utilities.constants import ALERT_PRIORITIES, SUPABASE_PUBLIC_URL, SUPABASE_STORAGE_URL
 
 # Import from database_utils
 from utilities.database_utils import get_subscribers, get_admin_subscribers
@@ -44,16 +46,69 @@ if not EMAIL_PASSWORD:
     raise ValueError(error_msg)
 
 def validate_image_url(url):
-    """Ensure the image URL uses the correct Supabase domain"""
+    """
+    Validate an image URL to ensure it uses the correct Supabase domain.
+    
+    Args:
+        url (str): Image URL to validate
+        
+    Returns:
+        str: Corrected URL or None if invalid
+    """
     if not url:
         return None
         
-    # If URL contains the incorrect domain, replace it
-    if "project-dev-123.supabase.co" in url:
-        url = url.replace("project-dev-123.supabase.co", 
-                         "fkolnlmblyshbeklueyh.supabase.co")
+    try:
+        # Check if using wrong domain and fix it
+        wrong_domain = "project-dev-123.supabase.co"
+        if wrong_domain in url:
+            url = url.replace(wrong_domain, 
+                             SUPABASE_PUBLIC_URL.replace("https://", ""))
+            logger.info(f"Fixed incorrect domain in URL: {url}")
+        
+        # Make sure URL starts with proper protocol
+        if not url.startswith("http"):
+            url = f"https://{url}"
+        
+        # Simple check if URL seems valid
+        if "supabase" not in url or ".co" not in url:
+            logger.warning(f"URL doesn't look like a valid Supabase URL: {url}")
+            return None
+            
+        return url
+        
+    except Exception as e:
+        logger.error(f"Error validating URL: {e}")
+        return None
+
+def get_image_html(url, image_type):
+    """
+    Generate HTML for an image with fallback for missing images.
     
-    return url
+    Args:
+        url (str): URL of the image
+        image_type (str): Type of image (Base, Current, Comparison)
+        
+    Returns:
+        str: HTML string for the image section
+    """
+    if url:
+        return f"""
+            <div style="flex: 1; min-width: 300px;">
+                <p><strong>{image_type} Image:</strong></p>
+                <a href="{url}" target="_blank">
+                    <img src="{url}" alt="{image_type} Image" style="max-width: 100%; max-height: 300px;" />
+                </a>
+                <p><small><a href="{url}" target="_blank">Open {image_type} Image</a></small></p>
+            </div>
+        """
+    else:
+        return f"""
+            <div style="flex: 1; min-width: 300px;">
+                <p><strong>{image_type} Image:</strong></p>
+                <p style="color: #777;">{image_type} image not available</p>
+            </div>
+        """
 
 def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="", 
                      image_url=None, alert_id=None, base_image_url=None, 
@@ -113,6 +168,9 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
     image_url = validate_image_url(image_url)
     base_image_url = validate_image_url(base_image_url)
     current_image_url = validate_image_url(current_image_url)
+
+    # Log the URLs being used
+    logger.info(f"Using validated URLs in email - Base: {base_image_url}, Current: {current_image_url}, Comparison: {image_url}")
 
     # Log available images for debugging
     available_images = []
@@ -254,41 +312,15 @@ def send_email_alert(camera_name, alert_type, is_test=False, test_prefix="",
                     html_content += "<h3>Detection Images:</h3>"
                     html_content += '<div style="display: flex; flex-wrap: wrap; gap: 10px;">'
                     
-                    # Base image (if available)
+                    # Use the image HTML generator function for each image type
                     if base_image_url:
-                        html_content += f"""
-                            <div style="flex: 1; min-width: 300px;">
-                                <p><strong>Base Image:</strong></p>
-                                <a href="{base_image_url}" target="_blank">
-                                    <img src="{base_image_url}" alt="Base Image" style="max-width: 100%; max-height: 300px;" />
-                                </a>
-                                <p><small><a href="{base_image_url}" target="_blank">Open Base Image</a></small></p>
-                            </div>
-                        """
+                        html_content += get_image_html(base_image_url, "Base")
                     
-                    # Current image (if available)
                     if current_image_url:
-                        html_content += f"""
-                            <div style="flex: 1; min-width: 300px;">
-                                <p><strong>Current Image:</strong></p>
-                                <a href="{current_image_url}" target="_blank">
-                                    <img src="{current_image_url}" alt="Current Image" style="max-width: 100%; max-height: 300px;" />
-                                </a>
-                                <p><small><a href="{current_image_url}" target="_blank">Open Current Image</a></small></p>
-                            </div>
-                        """
+                        html_content += get_image_html(current_image_url, "Current")
                     
-                    # Comparison image (if available)
                     if image_url:
-                        html_content += f"""
-                            <div style="flex: 1; min-width: 300px;">
-                                <p><strong>Comparison Image:</strong></p>
-                                <a href="{image_url}" target="_blank">
-                                    <img src="{image_url}" alt="Comparison Image" style="max-width: 100%; max-height: 300px;" />
-                                </a>
-                                <p><small><a href="{image_url}" target="_blank">Open Comparison Image</a></small></p>
-                            </div>
-                        """
+                        html_content += get_image_html(image_url, "Comparison")
                     
                     html_content += '</div>'
                 else:
@@ -473,9 +505,9 @@ if __name__ == "__main__":
     test_alert_id = f"OWL-{timestamp}-{random_suffix}"
     
     # Test with image URLs - updated to use correct domain
-    test_image_url = "https://fkolnlmblyshbeklueyh.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_image.jpg"
-    test_base_url = "https://fkolnlmblyshbeklueyh.supabase.co/storage/v1/object/public/base_images/test_base.jpg"
-    test_current_url = "https://fkolnlmblyshbeklueyh.supabase.co/storage/v1/object/public/owl_detections/owl_in_box/test_current.jpg"
+    test_image_url = f"{SUPABASE_STORAGE_URL}/owl_detections/owl_in_box/test_image.jpg"
+    test_base_url = f"{SUPABASE_STORAGE_URL}/base_images/test_base.jpg"
+    test_current_url = f"{SUPABASE_STORAGE_URL}/owl_detections/owl_in_box/test_current.jpg"
     
     # Example confidence information
     test_confidence_info = {
@@ -557,13 +589,13 @@ if __name__ == "__main__":
     test_email = os.getenv("TEST_EMAIL", "maxferrigni@gmail.com")
     send_test_email(
         test_email,
-        "Email Alert System Test v2.0.0",
+        "Email Alert System Test v2.1.0",
         """
         <html>
             <body>
                 <h2>Email Alerting System Test</h2>
-                <p>This is a test of the email alert system for the Owl Monitoring App v2.0.0.</p>
-                <p>This version includes improved URL validation and handling.</p>
+                <p>This is a test of the email alert system for the Owl Monitoring App v2.1.0.</p>
+                <p>This version includes improved URL validation and handling, with fallbacks for missing images.</p>
                 <p>If you're seeing this, the system is working properly.</p>
             </body>
         </html>

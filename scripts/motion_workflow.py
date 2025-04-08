@@ -1,13 +1,14 @@
 # File: scripts/motion_workflow.py
 # Purpose: Handle motion detection with adaptive lighting conditions and confidence-based detection
 #
-# April 2025 Update - Version 1.9.1
+# April 2025 Update - Version 2.1
 # - Modified confidence calculation to be more additive rather than requiring high scores in all categories
 # - Made shape detection more permissive, especially at night
 # - Added special overrides for obvious owl detections, particularly for Wyze Internal Camera
 # - Lowered thresholds across the board to improve detection rates
 # - Added significant weight to pixel change and position data as primary detection factors
 # - Fixed database schema alignment and image upload logic (v1.91)
+# - V2.1 Updates: Fixed false positives, image URL problems, and upload function errors
 
 import os
 import time
@@ -25,7 +26,9 @@ from utilities.constants import (
     get_comparison_image_path,
     CAMERA_MAPPINGS,
     get_base_image_path,
-    VERSION
+    VERSION,
+    SUPABASE_PUBLIC_URL,
+    SUPABASE_STORAGE_URL
 )
 from utilities.logging_utils import get_logger
 from utilities.time_utils import (
@@ -42,7 +45,8 @@ from utilities.confidence_utils import reset_frame_history
 from capture_base_images import capture_base_images, get_latest_base_image
 
 # Import function from Scripts
-from scripts.upload_images_to_supabase import upload_comparison_image
+from scripts.upload_images_to_supabase import upload_comparison_image, upload_component_image, upload_detection_images
+from scripts.push_to_supabase import generate_alert_id
 
 # Import function to check running state, otherwise default to True for backward compatibility
 try:
@@ -139,9 +143,9 @@ def initialize_system(camera_configs, is_test=False):
                 # Create day/night settings from legacy configuration for backward compatibility
                 migrate_legacy_config(config)
                 
-            # Ensure consecutive frames threshold is set - MODIFIED: Default to 1 instead of 2
+            # Ensure consecutive frames threshold is set
             if "consecutive_frames_threshold" not in config:
-                config["consecutive_frames_threshold"] = 1  # CHANGED: Lowered from 2 to 1 for more sensitivity
+                config["consecutive_frames_threshold"] = 2  # Increased from 1
                 
         # Verify base images directory based on local saving setting
         if not os.path.exists(BASE_IMAGES_DIR):
@@ -348,8 +352,8 @@ def generate_image_url(image_path, alert_type, camera_name):
         # Format alert type for URL path (lowercase, underscores)
         alert_type_path = alert_type.lower().replace(' ', '_')
         
-        # Generate URL using standard Supabase storage pattern
-        url = f"https://project-dev-123.supabase.co/storage/v1/object/public/owl_detections/{alert_type_path}/{file_name}"
+        # Use the standardized Supabase URL from constants
+        url = f"{SUPABASE_STORAGE_URL}/owl_detections/{alert_type_path}/{file_name}"
         
         logger.debug(f"Generated URL for {image_path}: {url}")
         return url
@@ -357,33 +361,39 @@ def generate_image_url(image_path, alert_type, camera_name):
         logger.error(f"Error generating image URL: {e}")
         return None
 
-def upload_component_image(image_path, camera_name, alert_type, component_type):
+def validate_image_url(url):
     """
-    Upload a component image (base, current) to storage and return the URL.
+    Validate an image URL to ensure it uses the correct Supabase domain.
     
     Args:
-        image_path (str): Path to the component image
-        camera_name (str): Name of the camera
-        alert_type (str): Type of alert
-        component_type (str): Type of component ('base', 'current', etc.)
+        url (str): Image URL to validate
         
     Returns:
-        str: URL to the uploaded image
+        str: Corrected URL or None if invalid
     """
+    if not url:
+        return None
+    
     try:
-        if not image_path or not os.path.exists(image_path):
-            logger.warning(f"Cannot upload {component_type} image: file not found at {image_path}")
+        # Check if using wrong domain and fix it
+        wrong_domain = "project-dev-123.supabase.co"
+        if wrong_domain in url:
+            url = url.replace(wrong_domain, SUPABASE_PUBLIC_URL.replace("https://", ""))
+            logger.info(f"Fixed incorrect domain in URL: {url}")
+            
+        # Make sure URL starts with proper protocol
+        if not url.startswith("http"):
+            url = f"https://{url}"
+            
+        # Simple check if URL seems valid
+        if "supabase" not in url or ".co" not in url:
+            logger.warning(f"URL doesn't look like a valid Supabase URL: {url}")
             return None
             
-        # Generate URL for the uploaded image
-        url = generate_image_url(image_path, alert_type, camera_name)
-        
-        # Log the image upload
-        logger.info(f"Uploaded {component_type} image for {camera_name} ({alert_type}): {url}")
-        
         return url
+        
     except Exception as e:
-        logger.error(f"Error uploading {component_type} image: {e}")
+        logger.error(f"Error validating URL: {e}")
         return None
 
 def process_camera(camera_name, config, lighting_info=None, test_images=None):
@@ -494,6 +504,30 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
             # This effectively lowers all thresholds
             threshold_multiplier = threshold_multiplier * 0.8  # 20% reduction
             
+            # Increase thresholds, especially for day conditions
+            if lighting_condition == 'day' and 'day_settings' in config:
+                # Get base threshold
+                threshold = detection_config.get("owl_confidence_threshold", 55.0)
+                # Increase for daytime (when false positives are more common)
+                threshold = threshold * 1.25  # 25% increase for daytime
+                detection_config["owl_confidence_threshold"] = threshold
+                logger.debug(f"Increased day threshold to {threshold:.1f}%")
+            elif lighting_condition == 'night' and 'night_settings' in config:
+                # Get base threshold
+                threshold = detection_config.get("owl_confidence_threshold", 50.0)
+                # Slight increase for night
+                threshold = threshold * 1.1  # 10% increase for night
+                detection_config["owl_confidence_threshold"] = threshold
+                logger.debug(f"Increased night threshold to {threshold:.1f}%")
+                
+            # Require more consecutive frames for all cameras
+            if "consecutive_frames_threshold" not in detection_config:
+                detection_config["consecutive_frames_threshold"] = 2  # Increased from 1
+                
+            # Apply higher threshold for day conditions
+            if lighting_condition == 'day':
+                detection_config["consecutive_frames_threshold"] = 3  # Even more consecutive frames required for day
+            
             # Pass camera name to detect_owl_in_box for temporal confidence
             is_owl_present, detection_info = detect_owl_in_box(
                 new_image, 
@@ -547,64 +581,51 @@ def process_camera(camera_name, config, lighting_info=None, test_images=None):
                 }
             })
 
-            # MODIFIED: Special override for obvious owl detections that were missed
-            # Add a safety check before returning results
-            if not is_owl_present and camera_name == "Wyze Internal Camera":
-                # Get metrics for override decisions
-                pixel_change = detection_info.get("pixel_change", 0)
-                luminance_change = detection_info.get("luminance_change", 0)
-                consecutive_frames = detection_info.get("consecutive_owl_frames", 0)
-                
-                # Apply special overrides for Wyze Internal Camera
-                if pixel_change > 35.0:
-                    logger.info(f"WORKFLOW OVERRIDE: High pixel change ({pixel_change:.1f}%) in Wyze camera - forcing detection")
-                    is_owl_present = True
-                    # Also boost confidence for database record
-                    detection_results["owl_confidence"] = max(detection_results["owl_confidence"], 60.0)
-                    detection_results["is_owl_present"] = True
-                elif pixel_change > 25.0 and luminance_change > 15.0 and consecutive_frames >= 1:
-                    logger.info(
-                        f"WORKFLOW OVERRIDE: Significant changes with frame persistence in Wyze camera "
-                        f"(pixel: {pixel_change:.1f}%, luminance: {luminance_change:.1f}%, frames: {consecutive_frames}) - forcing detection"
-                    )
-                    is_owl_present = True
-                    # Also boost confidence for database record
-                    detection_results["owl_confidence"] = max(detection_results["owl_confidence"], 55.0)
-                    detection_results["is_owl_present"] = True
-
-            # Only push to Supabase and upload images if an owl was detected and the app is running
+            # ONLY upload images when an alert is actually triggered and active (not in cooldown)
             if is_owl_present and (is_app_running() or is_test):
-                # NOW is when we should upload images - only if an alert will be triggered
-                # Generate and set image URLs
-                if comparison_path:
-                    comparison_image_url = generate_image_url(comparison_path, alert_type, camera_name)
-                    detection_results['comparison_image_url'] = comparison_image_url
-
-                    # Actually upload the comparison image
-                    with open(comparison_path, "rb") as file:
-                        upload_comparison_image(comparison_path, camera_name, alert_type)
-
-                # Only upload base and current images, NOT analysis image
-                if component_paths:
-                    if 'base' in component_paths:
-                        base_image_url = upload_component_image(component_paths['base'], camera_name, alert_type, "base")
-                        if base_image_url:
-                            detection_results['base_image_url'] = base_image_url
-
-                    if 'current' in component_paths:
-                        current_image_url = upload_component_image(component_paths['current'], camera_name, alert_type, "current")
-                        if current_image_url:
-                            detection_results['current_image_url'] = current_image_url
-
-                # Now process the alert with all URLs properly set
+                # Generate alert ID first for tracking
+                alert_id = generate_alert_id()  # Import this from push_to_supabase
+                detection_results['alert_id'] = alert_id
+                
+                # Now decide whether to send an alert
+                alert_triggered = False
                 if not is_test:
-                    alert_manager.process_detection(
+                    alert_triggered = alert_manager.process_detection(
                         camera_name,
                         detection_results,
                         None
                     )
-            else:
-                logger.debug(f"No owl detected for {camera_name} or app not running, skipping alert and image uploads")
+                    
+                # Only upload images if an alert was actually triggered or this is a test
+                if alert_triggered or is_test:
+                    logger.info(f"Alert was triggered - uploading images with alert ID: {alert_id}")
+                    
+                    # Upload only two essential images: comparison and current
+                    if comparison_path:
+                        comparison_image_url = upload_comparison_image(
+                            comparison_path,
+                            camera_name,
+                            alert_type,
+                            alert_id  # Include alert ID in filename
+                        )
+                        detection_results['comparison_image_url'] = comparison_image_url
+                        
+                    # Upload current image for context
+                    if 'component_paths' in comparison_result and 'current' in comparison_result['component_paths']:
+                        current_path = comparison_result['component_paths']['current']
+                        current_image_url = upload_component_image(
+                            current_path,
+                            camera_name,
+                            alert_type,
+                            "current",
+                            alert_id  # Include alert ID in filename
+                        )
+                        detection_results['current_image_url'] = current_image_url
+                        
+                    # No need to upload base image every time as it rarely changes
+                    # Skip uploading analysis image - it's not needed in emails or database
+                else:
+                    logger.info(f"No alert triggered for {camera_name} - skipping image uploads")
 
             return detection_results
 

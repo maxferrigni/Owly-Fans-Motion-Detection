@@ -15,6 +15,12 @@
 # - Added support for alert ID in image filenames
 # - Updated upload function parameters to fix mismatch issues
 # - Enhanced image-alert association
+#
+# April 7, 2025 Update - Version 2.1
+# - Standardized URL construction using constants
+# - Fixed type mismatch in upload_detection_images function
+# - Improved error handling for component paths
+# - Enhanced alert ID integration in filenames
 
 import os
 import datetime
@@ -30,7 +36,8 @@ from utilities.constants import (
     SUPABASE_STORAGE, 
     get_detection_folder, 
     ALERT_PRIORITIES,
-    SUPABASE_PUBLIC_URL  # Added in v2.0
+    SUPABASE_PUBLIC_URL,  # Added in v2.0
+    SUPABASE_STORAGE_URL  # Added in v2.1
 )
 
 # Initialize logger
@@ -133,6 +140,10 @@ def upload_comparison_image(local_image_path, camera_name, detection_type, alert
         str or None: Public URL of the uploaded image or None if failed
     """
     try:
+        if not local_image_path:
+            logger.error(f"Comparison image path is empty")
+            return None
+
         if not os.path.exists(local_image_path):
             logger.error(f"Comparison image not found: {local_image_path}")
             return None
@@ -171,8 +182,8 @@ def upload_comparison_image(local_image_path, camera_name, detection_type, alert
                 file_options={"content-type": mime_type}
             )
 
-        # Generate and return public URL - FIXED IN V2.0 to use SUPABASE_PUBLIC_URL
-        public_url = f"{SUPABASE_PUBLIC_URL}/storage/v1/object/public/{SUPABASE_BUCKET_DETECTIONS}/{storage_path}"
+        # Use the standardized constant for URL generation (v2.1 change)
+        public_url = f"{SUPABASE_STORAGE_URL}/{SUPABASE_BUCKET_DETECTIONS}/{storage_path}"
         logger.info(f"Image successfully uploaded to {detection_folder}: {public_url}")
         
         return public_url
@@ -183,19 +194,23 @@ def upload_comparison_image(local_image_path, camera_name, detection_type, alert
 
 def upload_component_image(local_image_path, camera_name, detection_type, image_type, alert_id=None):
     """
-    Upload an individual component image (base, current, analysis) to Supabase Storage.
+    Upload an individual component image (base, current) to Supabase Storage.
     
     Args:
         local_image_path (str): Path to the image file
         camera_name (str): Name of the camera
-        detection_type (str): Type of detection ("Owl In Box", "Owl On Box", "Owl In Area", etc.)
-        image_type (str): Type of image ("base", "current", "analysis")
-        alert_id (str, optional): Alert ID for tracking
+        detection_type (str): Type of detection
+        image_type (str): Type of image ("base", "current")
+        alert_id (str, optional): ID of the alert for tracking
     
     Returns:
         str or None: Public URL of the uploaded image or None if failed
     """
     try:
+        if not local_image_path:
+            logger.error(f"{image_type.capitalize()} image path is empty")
+            return None
+
         if not os.path.exists(local_image_path):
             logger.error(f"{image_type.capitalize()} image not found: {local_image_path}")
             return None
@@ -203,13 +218,13 @@ def upload_component_image(local_image_path, camera_name, detection_type, image_
         # Get the correct folder for this detection type
         detection_folder = get_detection_folder(detection_type)
         
-        # Generate unique filename using timestamp with microseconds
+        # Generate unique filename using timestamp and alert ID
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S%f")[:19]  # Include microseconds but truncate
         camera_name_clean = camera_name.lower().replace(" ", "_")
         
-        # Include alert ID in filename if provided
+        # Include alert ID in filename if available
         if alert_id:
-            filename = f"{camera_name_clean}_{alert_id}_{image_type}_{timestamp}.jpg"
+            filename = f"{camera_name_clean}_{image_type}_{alert_id}_{timestamp}.jpg"
         else:
             filename = f"{camera_name_clean}_{image_type}_{timestamp}.jpg"
         
@@ -234,8 +249,8 @@ def upload_component_image(local_image_path, camera_name, detection_type, image_
                 file_options={"content-type": mime_type}
             )
 
-        # Generate and return public URL - FIXED IN V2.0 to use SUPABASE_PUBLIC_URL
-        public_url = f"{SUPABASE_PUBLIC_URL}/storage/v1/object/public/{SUPABASE_BUCKET_DETECTIONS}/{storage_path}"
+        # Use the standardized constant for URL generation (v2.1 change)
+        public_url = f"{SUPABASE_STORAGE_URL}/{SUPABASE_BUCKET_DETECTIONS}/{storage_path}"
         logger.info(f"{image_type.capitalize()} image successfully uploaded to {detection_folder}: {public_url}")
         
         return public_url
@@ -258,6 +273,10 @@ def upload_base_image(local_image_path, supabase_filename, camera_name, lighting
         str or None: Public URL of the uploaded image or None if failed
     """
     try:
+        if not local_image_path:
+            logger.error(f"Base image path is empty")
+            return None
+            
         if not os.path.exists(local_image_path):
             logger.error(f"Base image not found: {local_image_path}")
             return None
@@ -278,8 +297,8 @@ def upload_base_image(local_image_path, supabase_filename, camera_name, lighting
                 file_options={"content-type": mime_type}
             )
 
-        # Generate public URL - FIXED IN V2.0 to use SUPABASE_PUBLIC_URL
-        public_url = f"{SUPABASE_PUBLIC_URL}/storage/v1/object/public/{SUPABASE_BUCKET_IMAGES}/{supabase_filename}"
+        # Use the standardized constant for URL generation (v2.1 change)
+        public_url = f"{SUPABASE_STORAGE_URL}/{SUPABASE_BUCKET_IMAGES}/{supabase_filename}"
         
         # Log base image metadata to Supabase
         log_base_image_to_supabase(local_image_path, camera_name, lighting_condition, public_url)
@@ -291,20 +310,16 @@ def upload_base_image(local_image_path, supabase_filename, camera_name, lighting
         logger.error(f"Error uploading base image to Supabase: {e}")
         return None
 
-def upload_detection_images(component_paths, camera_name, detection_type, 
-                           base_image_url=None, current_image_url=None, 
-                           analysis_image_url=None, alert_id=None):
+def upload_detection_images(component_paths, camera_name, detection_type, alert_id=None, *args, **kwargs):
     """
     Upload all component images (base, current, analysis) for a detection event.
     
     Args:
         component_paths (dict): Paths to the different component images
         camera_name (str): Name of the camera
-        detection_type (str): Type of detection ("Owl In Box", "Owl On Box", "Owl In Area", etc.)
-        base_image_url (str, optional): URL of existing base image
-        current_image_url (str, optional): URL of existing current image
-        analysis_image_url (str, optional): URL of existing analysis image
+        detection_type (str): Type of detection
         alert_id (str, optional): Alert ID for tracking
+        *args, **kwargs: Additional arguments are ignored (prevents parameter mismatch errors)
     
     Returns:
         dict: Dictionary with URLs of the uploaded images
@@ -312,18 +327,29 @@ def upload_detection_images(component_paths, camera_name, detection_type,
     try:
         image_urls = {}
         
-        # Add any existing image URLs
-        if base_image_url:
-            image_urls["base_image_url"] = base_image_url
-        if current_image_url:
-            image_urls["current_image_url"] = current_image_url
-        if analysis_image_url:
-            image_urls["analysis_image_url"] = analysis_image_url
+        # Type checking to prevent errors
+        if not isinstance(component_paths, dict):
+            logger.error(f"Component paths must be a dictionary, got {type(component_paths)}")
+            if isinstance(component_paths, str):
+                logger.error(f"Received string instead of dictionary: {component_paths}")
+            return {}
         
         # Upload each component if it exists
         for image_type, local_path in component_paths.items():
+            # Skip analysis images - we don't want to upload these
+            if image_type == "analysis":
+                logger.debug(f"Skipping upload of analysis image - not needed")
+                continue
+                
             if local_path and os.path.exists(local_path):
-                url = upload_component_image(local_path, camera_name, detection_type, image_type, alert_id)
+                # Include alert_id in upload if available
+                if image_type == "base":
+                    url = upload_component_image(local_path, camera_name, detection_type, "base", alert_id)
+                elif image_type == "current":
+                    url = upload_component_image(local_path, camera_name, detection_type, "current", alert_id)
+                else:
+                    url = upload_component_image(local_path, camera_name, detection_type, image_type, alert_id)
+                    
                 if url:
                     image_urls[f"{image_type}_image_url"] = url
         
@@ -415,6 +441,41 @@ def initialize_supabase_storage():
     except Exception as e:
         logger.error(f"Error initializing Supabase storage: {e}")
         return False
+
+def validate_image_url(url):
+    """
+    Validate an image URL to ensure it uses the correct Supabase domain.
+    
+    Args:
+        url (str): Image URL to validate
+        
+    Returns:
+        str: Corrected URL or None if invalid
+    """
+    if not url:
+        return None
+        
+    try:
+        # Check if using wrong domain and fix it
+        wrong_domain = "project-dev-123.supabase.co"
+        if wrong_domain in url:
+            url = url.replace(wrong_domain, SUPABASE_PUBLIC_URL.replace("https://", ""))
+            logger.info(f"Fixed incorrect domain in URL: {url}")
+            
+        # Make sure URL starts with proper protocol
+        if not url.startswith("http"):
+            url = f"https://{url}"
+            
+        # Simple check if URL seems valid
+        if "supabase" not in url or ".co" not in url:
+            logger.warning(f"URL doesn't look like a valid Supabase URL: {url}")
+            return None
+            
+        return url
+        
+    except Exception as e:
+        logger.error(f"Error validating URL: {e}")
+        return None
 
 # Example usage and testing
 if __name__ == "__main__":
